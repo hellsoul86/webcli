@@ -441,6 +441,20 @@ pre {
   color: inherit;
 }
 
+.workspace-row__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-row__title svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
 .workspace-row__main strong {
   overflow: hidden;
   text-overflow: ellipsis;

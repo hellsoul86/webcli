@@ -16,8 +16,8 @@ import type {
   ReviewOutputEvent,
   ServerWsMessage,
   Thread,
-  ThreadReadResponse,
   ThreadListEntry,
+  ThreadResumeResponse,
   ThreadStartResponse,
   Turn,
   TurnStartResponse,
@@ -32,6 +32,7 @@ import type { PluginListResponse } from "../../../packages/codex-protocol/src/ge
 import type { SkillsListResponse } from "../../../packages/codex-protocol/src/generated/v2/SkillsListResponse";
 import type { ThreadArchiveResponse } from "../../../packages/codex-protocol/src/generated/v2/ThreadArchiveResponse";
 import type { ThreadForkResponse } from "../../../packages/codex-protocol/src/generated/v2/ThreadForkResponse";
+import type { ThreadLoadedListResponse } from "../../../packages/codex-protocol/src/generated/v2/ThreadLoadedListResponse";
 import type { ThreadRollbackResponse } from "../../../packages/codex-protocol/src/generated/v2/ThreadRollbackResponse";
 import type { ThreadSetNameResponse } from "../../../packages/codex-protocol/src/generated/v2/ThreadSetNameResponse";
 import type { ThreadUnarchiveResponse } from "../../../packages/codex-protocol/src/generated/v2/ThreadUnarchiveResponse";
@@ -130,6 +131,7 @@ export function App() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const requestedThreadIdRef = useRef<string | null>(null);
   const sidebarResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const expandedWorkspacesInitializedRef = useRef(false);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -221,6 +223,11 @@ export function App() {
         archived: true,
       }),
   });
+  const loadedThreadsQuery = useQuery({
+    queryKey: ["loaded-threads"],
+    queryFn: listLoadedThreadIds,
+    refetchInterval: 5_000,
+  });
   const authStatusQuery = useQuery({
     queryKey: ["auth-status"],
     queryFn: () =>
@@ -275,15 +282,28 @@ export function App() {
   const activeThreadEntries = activeThreadsQuery.data?.data ?? [];
   const archivedThreadEntries = archivedThreadsQuery.data?.data ?? [];
   const allThreadEntries = dedupeThreads([...activeThreadEntries, ...archivedThreadEntries]);
+  const loadedThreadIds = loadedThreadsQuery.data ?? [];
+  const loadedThreadIdSet = useMemo(() => new Set(loadedThreadIds), [loadedThreadIds]);
+  const activeThreadEntry = allThreadEntries.find((thread) => thread.id === activeThreadId) ?? null;
+  const sidebarThreadsReady =
+    workspacesQuery.isFetched && activeThreadsQuery.isFetched && loadedThreadsQuery.isFetched;
   const workspaceTree = useMemo(
     () =>
-      workspaces.map((workspace) => ({
-        workspace,
-        threads: activeThreadEntries.filter((thread) => thread.workspaceId === workspace.id),
-      })),
-    [activeThreadEntries, workspaces],
+      workspaces.map((workspace) => {
+        const activeThreads = activeThreadEntries.filter((thread) => thread.workspaceId === workspace.id);
+        const loadedThreads = allThreadEntries.filter(
+          (thread) => thread.workspaceId === workspace.id && loadedThreadIdSet.has(thread.id),
+        );
+
+        return {
+          workspace,
+          threads: dedupeThreads([...loadedThreads, ...activeThreads]).sort(
+            (left, right) => right.updatedAt - left.updatedAt,
+          ),
+        };
+      }),
+    [activeThreadEntries, allThreadEntries, loadedThreadIdSet, workspaces],
   );
-  const activeThreadEntry = allThreadEntries.find((thread) => thread.id === activeThreadId) ?? null;
   const activeThreadView = activeThreadId ? threads[activeThreadId] ?? null : null;
   const activeThreadArchived = activeThreadEntry?.archived ?? activeThreadView?.archived ?? false;
   const selectedWorkspace =
@@ -362,6 +382,21 @@ export function App() {
   }, [allThreadEntries, markThreadArchived, threads]);
 
   useEffect(() => {
+    if (expandedWorkspacesInitializedRef.current) {
+      return;
+    }
+
+    if (!sidebarThreadsReady || workspaceTree.length === 0) {
+      return;
+    }
+
+    setExpandedWorkspaceIds(
+      workspaceTree.filter((group) => group.threads.length > 0).map((group) => group.workspace.id),
+    );
+    expandedWorkspacesInitializedRef.current = true;
+  }, [sidebarThreadsReady, workspaceTree]);
+
+  useEffect(() => {
     if (activeWorkspaceId === "all") {
       return;
     }
@@ -431,15 +466,17 @@ export function App() {
     }
 
     requestedThreadIdRef.current = activeThreadId;
-    void readThread(activeThreadId)
+    const threadPath = allThreadEntries.find((thread) => thread.id === activeThreadId)?.path ?? null;
+    void resumeThread(activeThreadId, threadPath)
       .then((thread) => {
         if (requestedThreadIdRef.current !== activeThreadId) {
           return;
         }
         hydrateThread(thread);
+        void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
       })
       .catch(() => {});
-  }, [activeThreadId, hydrateThread, threads]);
+  }, [activeThreadId, allThreadEntries, hydrateThread, queryClient, threads]);
 
   function handleSidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>): void {
     if (window.innerWidth <= 1120) {
@@ -717,6 +754,7 @@ export function App() {
       setActiveThread(threadId);
       hydrateThread(response.thread);
       void queryClient.invalidateQueries({ queryKey: ["threads"] });
+      void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
     }
 
     const response = await codexClient.call<TurnStartResponse, "turn/start">("turn/start", {
@@ -737,30 +775,29 @@ export function App() {
     threadId: string,
     workspaceId: string | "all" = "all",
   ): Promise<void> {
+    const threadEntry = allThreadEntries.find((thread) => thread.id === threadId) ?? null;
+    const resolvedWorkspaceId =
+      workspaceId === "all" ? (threadEntry?.workspaceId ?? "all") : workspaceId;
+
     requestedThreadIdRef.current = threadId;
     setThreadMenuId(null);
-    setActiveWorkspace(workspaceId);
+    setActiveWorkspace(resolvedWorkspaceId);
     setActiveThread(threadId);
-
-    const cachedThread = threads[threadId];
-    if (cachedThread) {
-      void readThread(threadId)
-        .then((thread) => {
-          if (requestedThreadIdRef.current !== threadId) {
-            return;
-          }
-          hydrateThread(thread);
-        })
-        .catch(() => {});
-      return;
+    if (resolvedWorkspaceId !== "all") {
+      setExpandedWorkspaceIds((current) =>
+        current.includes(resolvedWorkspaceId) ? current : [...current, resolvedWorkspaceId],
+      );
     }
 
     try {
-      const thread = await readThread(threadId);
+      const threadPath = threadEntry?.path ?? null;
+      const thread = await resumeThread(threadId, threadPath);
       if (requestedThreadIdRef.current !== threadId) {
         return;
       }
       hydrateThread(thread);
+      void queryClient.invalidateQueries({ queryKey: ["threads"] });
+      void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
     } catch {}
   }
 
@@ -803,6 +840,7 @@ export function App() {
       setArchivedMode("archived");
     }
     void queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
   }
 
   async function handleUnarchiveThread(thread: ThreadListEntry): Promise<void> {
@@ -818,6 +856,7 @@ export function App() {
       setArchivedMode("active");
     }
     void queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
   }
 
   async function handleForkThread(thread: ThreadListEntry): Promise<void> {
@@ -830,6 +869,7 @@ export function App() {
     setActiveThread(response.thread.id);
     setArchivedMode("active");
     void queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
   }
 
   async function handleCompactThread(threadId: string): Promise<void> {
@@ -861,6 +901,7 @@ export function App() {
     );
     hydrateThread(response.thread);
     void queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
   }
 
   async function handleInterrupt(): Promise<void> {
@@ -1038,15 +1079,31 @@ export function App() {
     action.run();
   }
 
-  async function readThread(threadId: string): Promise<Thread> {
-    const response = await codexClient.call<ThreadReadResponse, "thread/read">(
-      "thread/read",
-      {
-        threadId,
-        includeTurns: true,
-      },
-    );
-    return response.thread;
+  async function resumeThread(threadId: string, path: string | null = null): Promise<Thread> {
+    try {
+      const response = await codexClient.call<ThreadResumeResponse, "thread/resume">(
+        "thread/resume",
+        {
+          threadId,
+          persistExtendedHistory: true,
+        },
+      );
+      return response.thread;
+    } catch (error) {
+      if (!path) {
+        throw error;
+      }
+
+      const response = await codexClient.call<ThreadResumeResponse, "thread/resume">(
+        "thread/resume",
+        {
+          threadId,
+          path,
+          persistExtendedHistory: true,
+        },
+      );
+      return response.thread;
+    }
   }
 
   return (
@@ -1116,12 +1173,14 @@ export function App() {
                   </div>
                 ) : null}
                 {expandedWorkspaceIds.includes(workspace.id) && workspaceThreads.length === 0 ? (
-                  <div className="sidebar-empty-state sidebar-empty-state--nested">还没有活跃会话。</div>
+                  <div className="sidebar-empty-state sidebar-empty-state--nested">
+                    这个工作台里还没有打开会话。
+                  </div>
                 ) : null}
               </div>
             ))}
-            {activeThreadEntries.length === 0 ? (
-              <div className="sidebar-empty-state">当前没有活跃会话。</div>
+            {workspaceTree.every((group) => group.threads.length === 0) ? (
+              <div className="sidebar-empty-state">当前工作台里还没有打开会话。</div>
             ) : null}
           </div>
         </section>
@@ -1527,6 +1586,7 @@ function handleServerMessage(
   if (message.method === "thread/started") {
     context.upsertThread((message.params as { thread: Thread }).thread);
     void context.queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void context.queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
     return;
   }
 
@@ -1560,6 +1620,7 @@ function handleServerMessage(
       context.setArchivedMode("archived");
     }
     void context.queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void context.queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
     return;
   }
 
@@ -1567,6 +1628,7 @@ function handleServerMessage(
     const { threadId } = message.params as { threadId: string };
     context.markThreadArchived(threadId, false);
     void context.queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void context.queryClient.invalidateQueries({ queryKey: ["loaded-threads"] });
     return;
   }
 
@@ -1717,9 +1779,15 @@ function WorkspaceListRow(props: {
 }) {
   return (
     <div className={props.active ? "workspace-row workspace-row--active" : "workspace-row"}>
-      <button className="workspace-row__main" onClick={props.onSelect}>
-        <strong>{props.workspace.name}</strong>
-        <span>{compactPath(props.workspace.absPath, 4)}</span>
+      <button
+        className="workspace-row__main"
+        onClick={props.onSelect}
+        title={props.workspace.absPath}
+      >
+        <div className="workspace-row__title">
+          <FolderIcon />
+          <strong>{props.workspace.name}</strong>
+        </div>
       </button>
       <div className="workspace-row__actions">
         {props.onEdit ? (
@@ -1742,6 +1810,20 @@ function WorkspaceListRow(props: {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path
+        d="M2.5 6a2 2 0 0 1 2-2h3.1c.34 0 .66.16.85.42l.95 1.28c.19.26.5.42.84.42h5.25a2 2 0 0 1 2 2v5.75a2 2 0 0 1-2 2H4.5a2 2 0 0 1-2-2z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -3344,4 +3426,26 @@ async function listAllApps(threadId: string | null) {
   } while (cursor);
 
   return data;
+}
+
+async function listLoadedThreadIds(): Promise<Array<string>> {
+  const ids: Array<string> = [];
+  let cursor: string | null = null;
+
+  do {
+    const response: ThreadLoadedListResponse = await codexClient.call<
+      ThreadLoadedListResponse,
+      "thread/loaded/list"
+    >(
+      "thread/loaded/list",
+      {
+        cursor,
+        limit: 200,
+      },
+    );
+    ids.push(...response.data);
+    cursor = response.nextCursor;
+  } while (cursor);
+
+  return ids;
 }
