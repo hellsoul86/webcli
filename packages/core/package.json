@@ -1,5 +1,5 @@
 {
-  "name": "@webcli/codex-protocol",
+  "name": "@webcli/core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,8 +13,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
-    "regen": "codex app-server generate-ts --out src/generated"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@webcli/contracts": "file:../contracts",
+    "better-sqlite3": "^12.4.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12"
   }
 }
-

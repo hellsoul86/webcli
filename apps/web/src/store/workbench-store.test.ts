@@ -1,43 +1,57 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Thread } from "@webcli/codex-protocol";
+import type { WorkbenchThread } from "@webcli/contracts";
 import {
   resetWorkbenchPersistStorage,
   selectTimeline,
   useWorkbenchStore,
 } from "./workbench-store";
 
-function makeThread(): Thread {
+function makeThread(): WorkbenchThread {
   return {
-    id: "thread-1",
-    preview: "Test",
-    ephemeral: false,
-    modelProvider: "openai",
-    createdAt: 1,
-    updatedAt: 2,
-    status: { type: "idle" },
-    path: null,
-    cwd: "/srv/project",
-    cliVersion: "0.111.0",
-    source: "appServer",
-    agentNickname: null,
-    agentRole: null,
-    gitInfo: null,
-    name: "Demo thread",
-    turns: [
-      {
-        id: "turn-1",
-        status: "completed",
-        error: null,
-        items: [
-          {
-            type: "agentMessage",
+    thread: {
+      id: "thread-1",
+      name: "Demo thread",
+      preview: "Test",
+      archived: false,
+      cwd: "/srv/project",
+      createdAt: 1,
+      updatedAt: 2,
+      status: { type: "idle" },
+      modelProvider: "openai",
+      source: "appServer",
+      agentNickname: null,
+      agentRole: null,
+      gitInfo: null,
+      path: null,
+      ephemeral: false,
+      workspaceId: "workspace-1",
+      workspaceName: "Workspace",
+    },
+    archived: false,
+    turnOrder: ["turn-1"],
+    turns: {
+      "turn-1": {
+        turn: {
+          id: "turn-1",
+          status: "completed",
+          errorMessage: null,
+        },
+        itemOrder: ["item-1"],
+        items: {
+          "item-1": {
             id: "item-1",
-            text: "Hello",
-            phase: null,
+            turnId: "turn-1",
+            kind: "agentMessage",
+            title: "Codex",
+            body: "Hello",
+            raw: { id: "item-1", type: "agentMessage" },
           },
-        ],
+        },
       },
-    ],
+    },
+    latestDiff: "",
+    latestPlan: null,
+    review: null,
   };
 }
 
@@ -95,7 +109,8 @@ describe("workbench store", () => {
     const store = useWorkbenchStore.getState();
     store.hydrateThread({
       ...makeThread(),
-      turns: [],
+      turnOrder: [],
+      turns: {},
     });
     store.appendDelta("thread-1", "turn-1", "item-2", "agentMessage", "Part A");
     store.appendDelta("thread-1", "turn-1", "item-2", "agentMessage", " + Part B");
@@ -103,6 +118,39 @@ describe("workbench store", () => {
     const timeline = selectTimeline(useWorkbenchStore.getState().threads["thread-1"]);
     expect(timeline).toHaveLength(1);
     expect(timeline[0].body).toContain("Part A + Part B");
+  });
+
+  it("merges turn snapshots without discarding streamed items", () => {
+    const store = useWorkbenchStore.getState();
+    store.hydrateThread({
+      ...makeThread(),
+      turnOrder: [],
+      turns: {},
+    });
+
+    store.appendDelta("thread-1", "turn-1", "item-2", "agentMessage", "Streaming reply");
+    store.applyTurn("thread-1", {
+      turn: {
+        id: "turn-1",
+        status: "completed",
+        errorMessage: null,
+      },
+      itemOrder: ["item-1"],
+      items: {
+        "item-1": {
+          id: "item-1",
+          turnId: "turn-1",
+          kind: "userMessage",
+          title: "You",
+          body: "Prompt",
+          raw: { id: "item-1", type: "userMessage" },
+        },
+      },
+    });
+
+    const timeline = selectTimeline(useWorkbenchStore.getState().threads["thread-1"]);
+    expect(timeline.map((entry) => entry.id)).toEqual(["item-1", "item-2"]);
+    expect(timeline.find((entry) => entry.id === "item-2")?.body).toBe("Streaming reply");
   });
 
   it("tracks archived thread lifecycle state", () => {

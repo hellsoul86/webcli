@@ -1,68 +1,56 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { extname } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import type {
-  AccountResponse,
-  BridgeStatus,
-  ClientWsMessage,
+  AppClientMessage,
+  BootstrapResponse,
   HealthResponse,
-  Model,
-  ModelsResponse,
   PathSuggestionsResponse,
-  ThreadsResponse,
   WorkspaceCreateInput,
   WorkspaceDismissInput,
+  WorkspaceRecord,
   WorkspaceUpdateInput,
-} from "@webcli/codex-protocol";
-import { buildWorkspaceCatalog, decorateThread } from "./path-utils.js";
-import { WorkspaceRepo } from "./workspace-repo.js";
-import { CodexBridge } from "./codex-bridge.js";
-import type { AppEnv } from "./env.js";
+} from "@webcli/contracts";
 import {
-  ensureHomeScopedDirectory,
+  WorkbenchService,
+  WorkspaceRepo,
   ensureHomeScopedPath,
-  listHomePathSuggestions,
-  resolveHomeDirectory,
-} from "./home-paths.js";
-
-export type BridgeClient = {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  getStatus(): BridgeStatus;
-  getAccountSummary(force?: boolean): Promise<AccountResponse>;
-  listModels(): Promise<Array<Model>>;
-  listThreads(
-    archived?: boolean | "all",
-  ): Promise<Array<import("@webcli/codex-protocol").Thread>>;
-  registerConnection(connectionId: string, sender: (message: unknown) => void): void;
-  unregisterConnection(connectionId: string): void;
-  handleClientMessage(connectionId: string, message: ClientWsMessage): Promise<void>;
-};
+  type SessionRuntime,
+} from "@webcli/core";
+import { CodexRuntime } from "@webcli/runtime-codex";
+import type { AppEnv } from "./env.js";
 
 type AppContext = {
   app: FastifyInstance;
-  bridge: BridgeClient;
+  service: WorkbenchService;
+  runtime: SessionRuntime;
   workspaceRepo: WorkspaceRepo;
 };
 
 export async function createApp(
   env: AppEnv,
-  overrides?: { bridge?: BridgeClient; workspaceRepo?: WorkspaceRepo },
+  overrides?: {
+    runtime?: SessionRuntime;
+    workspaceRepo?: WorkspaceRepo;
+    service?: WorkbenchService;
+  },
 ): Promise<AppContext> {
   mkdirSync(env.dataDir, { recursive: true });
-  const homePath = resolveHomeDirectory();
   const app = Fastify({ logger: false });
-  const bridge =
-    overrides?.bridge ?? new CodexBridge({ codexCommand: env.codexCommand });
+  const runtime =
+    overrides?.runtime ?? new CodexRuntime({ codexCommand: env.codexCommand });
   const workspaceRepo = overrides?.workspaceRepo ?? new WorkspaceRepo(env.dbPath);
+  const service =
+    overrides?.service ?? new WorkbenchService(runtime, workspaceRepo);
 
   app.addHook("onClose", async () => {
-    await bridge.stop();
-    workspaceRepo.close();
+    await service.stop();
   });
 
-  await bridge.start();
+  await service.start();
   await app.register(fastifyWebsocket);
 
   const webDistExists = existsSync(env.webDistDir);
@@ -76,43 +64,55 @@ export async function createApp(
   }
 
   app.get("/api/health", async () => {
-    const response: HealthResponse = {
-      status: "ok",
-      bridge: bridge.getStatus(),
-      codexCommand: env.codexCommand,
-    };
+    const response: HealthResponse = service.createHealthResponse(env.codexCommand);
     return response;
   });
 
-  app.get("/api/account", async () => {
-    const response: AccountResponse = await bridge.getAccountSummary(true);
-    return response;
-  });
-
-  app.get("/api/models", async () => {
-    const response: ModelsResponse = {
-      data: await bridge.listModels(),
-    };
+  app.get("/api/bootstrap", async () => {
+    const response: BootstrapResponse = await service.getBootstrap();
     return response;
   });
 
   app.get("/api/workspaces", async () => {
-    const savedWorkspaces = workspaceRepo.list();
-    const ignoredPaths = workspaceRepo.listIgnoredPaths();
-    const snapshot = await loadThreadSnapshot(bridge);
-    return buildWorkspaceCatalog(savedWorkspaces, snapshot.allThreads, homePath, ignoredPaths);
+    return service.listWorkspaces();
   });
+
   app.get("/api/workspace-path-suggestions", async (request) => {
     const query = request.query as { query?: string };
-    const response: PathSuggestionsResponse = listHomePathSuggestions(query.query, homePath);
+    const response: PathSuggestionsResponse = service.listPathSuggestions(query.query);
     return response;
+  });
+
+  app.get("/api/resource", async (request, reply) => {
+    try {
+      const query = request.query as { path?: string };
+      const requestedPath = query.path?.trim();
+      if (!requestedPath) {
+        reply.code(400);
+        return { message: "Resource path is required" };
+      }
+
+      const absPath = ensureHomeScopedPath(requestedPath);
+      const stats = statSync(absPath, { throwIfNoEntry: false });
+      if (!stats || !stats.isFile()) {
+        reply.code(404);
+        return { message: "Resource not found" };
+      }
+
+      reply.header("Cache-Control", "private, max-age=60");
+      reply.header("Content-Disposition", "inline");
+      reply.type(contentTypeForPath(absPath));
+      return reply.send(createReadStream(absPath));
+    } catch (error) {
+      reply.code(400);
+      return { message: error instanceof Error ? error.message : "Invalid resource path" };
+    }
   });
 
   app.post("/api/workspaces", async (request, reply) => {
     try {
       const payload = request.body as WorkspaceCreateInput;
-      const normalized = validateWorkspaceInput(payload, homePath);
-      const created = workspaceRepo.create(normalized);
+      const created = service.createWorkspace(payload);
       reply.code(201);
       return created;
     } catch (error) {
@@ -124,8 +124,7 @@ export async function createApp(
   app.post("/api/workspaces/dismiss", async (request, reply) => {
     try {
       const payload = request.body as WorkspaceDismissInput;
-      const absPath = ensureHomeScopedPath(payload.absPath, homePath);
-      workspaceRepo.ignorePath(absPath);
+      service.dismissWorkspace(payload);
       reply.code(204);
       return null;
     } catch (error) {
@@ -137,8 +136,7 @@ export async function createApp(
   app.patch<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {
     try {
       const payload = request.body as WorkspaceUpdateInput;
-      const normalized = validateWorkspaceUpdate(payload, homePath);
-      const updated = workspaceRepo.update(request.params.id, normalized);
+      const updated = service.updateWorkspace(request.params.id, payload);
       if (!updated) {
         reply.code(404);
         return { message: "Workspace not found" };
@@ -152,7 +150,7 @@ export async function createApp(
   });
 
   app.delete<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {
-    const deleted = workspaceRepo.delete(request.params.id);
+    const deleted = service.deleteWorkspace(request.params.id);
     if (!deleted) {
       reply.code(404);
       return { message: "Workspace not found" };
@@ -162,39 +160,21 @@ export async function createApp(
     return null;
   });
 
-  app.get("/api/threads", async (request) => {
-    const query = request.query as { workspaceId?: string; archived?: string };
-    const archivedFilter = normalizeArchivedFilter(query.archived);
-    const savedWorkspaces = workspaceRepo.list();
-    const ignoredPaths = workspaceRepo.listIgnoredPaths();
-    const snapshot = await loadThreadSnapshot(bridge);
-    const workspaces = buildWorkspaceCatalog(
-      savedWorkspaces,
-      snapshot.allThreads,
-      homePath,
-      ignoredPaths,
-    );
-    const decorated = decorateThreads(snapshot, workspaces, archivedFilter);
-    const filtered = filterThreadsByWorkspaceScope(decorated, query.workspaceId);
+  app.get("/ws", { websocket: true }, (socket, request) => {
+    const query = request.query as { clientSessionId?: string };
+    const clientSessionId = query.clientSessionId?.trim() || randomUUID();
+    const connectionId = randomUUID();
 
-    filtered.sort((left, right) => right.updatedAt - left.updatedAt);
-
-    const response: ThreadsResponse = { data: filtered };
-    return response;
-  });
-
-  app.get("/ws", { websocket: true }, (socket) => {
-    const connectionId = crypto.randomUUID();
-    bridge.registerConnection(connectionId, (message) => {
+    service.registerConnection(clientSessionId, connectionId, (message) => {
       socket.send(JSON.stringify(message));
     });
 
     socket.on("message", (raw: Buffer) => {
-      void handleWsMessage(bridge, connectionId, raw.toString(), socket.send.bind(socket));
+      void handleWsMessage(service, clientSessionId, raw.toString(), socket.send.bind(socket));
     });
 
     socket.on("close", () => {
-      bridge.unregisterConnection(connectionId);
+      service.unregisterConnection(connectionId);
     });
   });
 
@@ -204,68 +184,81 @@ export async function createApp(
     });
   }
 
-  return { app, bridge, workspaceRepo };
+  return { app, service, runtime, workspaceRepo };
 }
 
-async function loadThreadSnapshot(
-  bridge: BridgeClient,
-): Promise<{
-  activeThreads: Array<import("@webcli/codex-protocol").Thread>;
-  archivedThreads: Array<import("@webcli/codex-protocol").Thread>;
-  allThreads: Array<import("@webcli/codex-protocol").Thread>;
-}> {
-  const [activeThreads, archivedThreads] = await Promise.all([
-    bridge.listThreads(false),
-    bridge.listThreads(true),
-  ]);
-
-  return {
-    activeThreads,
-    archivedThreads,
-    allThreads: [...activeThreads, ...archivedThreads],
-  };
-}
-
-function decorateThreads(
-  snapshot: {
-    activeThreads: Array<import("@webcli/codex-protocol").Thread>;
-    archivedThreads: Array<import("@webcli/codex-protocol").Thread>;
-    allThreads: Array<import("@webcli/codex-protocol").Thread>;
-  },
-  workspaces: Array<import("@webcli/codex-protocol").WorkspaceRecord>,
-  archivedFilter: boolean | "all",
-): Array<import("@webcli/codex-protocol").ThreadListEntry> {
-  if (archivedFilter === "all") {
-    return [
-      ...snapshot.activeThreads.map((thread) => decorateThread(thread, workspaces, false)),
-      ...snapshot.archivedThreads.map((thread) => decorateThread(thread, workspaces, true)),
-    ];
+function contentTypeForPath(value: string): string {
+  const extension = extname(value).toLowerCase();
+  if (extension === ".png") {
+    return "image/png";
+  }
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  if (extension === ".svg") {
+    return "image/svg+xml";
+  }
+  if (extension === ".bmp") {
+    return "image/bmp";
+  }
+  if (extension === ".ico") {
+    return "image/x-icon";
+  }
+  if (extension === ".avif") {
+    return "image/avif";
+  }
+  if (extension === ".mp3") {
+    return "audio/mpeg";
+  }
+  if (extension === ".wav") {
+    return "audio/wav";
+  }
+  if (extension === ".ogg" || extension === ".oga") {
+    return "audio/ogg";
+  }
+  if (extension === ".m4a") {
+    return "audio/mp4";
+  }
+  if (extension === ".aac") {
+    return "audio/aac";
+  }
+  if (extension === ".flac") {
+    return "audio/flac";
+  }
+  if (extension === ".mp4" || extension === ".m4v") {
+    return "video/mp4";
+  }
+  if (extension === ".webm") {
+    return "video/webm";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  if (extension === ".md") {
+    return "text/markdown; charset=utf-8";
+  }
+  if (extension === ".txt") {
+    return "text/plain; charset=utf-8";
   }
 
-  const threads = archivedFilter ? snapshot.archivedThreads : snapshot.activeThreads;
-  return threads.map((thread) => decorateThread(thread, workspaces, archivedFilter));
-}
-
-function filterThreadsByWorkspaceScope(
-  threads: Array<import("@webcli/codex-protocol").ThreadListEntry>,
-  workspaceId: string | undefined,
-): Array<import("@webcli/codex-protocol").ThreadListEntry> {
-  if (!workspaceId || workspaceId === "all") {
-    return threads.filter((thread) => thread.workspaceId !== null);
-  }
-
-  return threads.filter((thread) => thread.workspaceId === workspaceId);
+  return "application/octet-stream";
 }
 
 async function handleWsMessage(
-  bridge: BridgeClient,
-  connectionId: string,
+  service: WorkbenchService,
+  sessionId: string,
   raw: string,
   send: (data: string) => void,
 ): Promise<void> {
-  let message: ClientWsMessage;
+  let message: AppClientMessage;
   try {
-    message = JSON.parse(raw) as ClientWsMessage;
+    message = JSON.parse(raw) as AppClientMessage;
   } catch {
     send(
       JSON.stringify({
@@ -281,7 +274,14 @@ async function handleWsMessage(
   }
 
   try {
-    await bridge.handleClientMessage(connectionId, message);
+    const result = await service.handleClientCall(sessionId, message);
+    send(
+      JSON.stringify({
+        type: "server.response",
+        id: message.id,
+        result,
+      }),
+    );
   } catch (error) {
     send(
       JSON.stringify({
@@ -289,78 +289,9 @@ async function handleWsMessage(
         id: message.id,
         error: {
           code: -32000,
-          message: error instanceof Error ? error.message : "Bridge request failed",
+          message: error instanceof Error ? error.message : "Workbench request failed",
         },
       }),
     );
   }
-}
-
-function validateWorkspaceInput(
-  input: WorkspaceCreateInput,
-  homePath: string,
-): WorkspaceCreateInput {
-  if (!input || typeof input !== "object") {
-    throw new Error("Workspace payload is required");
-  }
-
-  if (!input.name?.trim()) {
-    throw new Error("Workspace name is required");
-  }
-
-  if (!input.absPath?.trim()) {
-    throw new Error("Workspace path is required");
-  }
-
-  const absPath = ensureHomeScopedDirectory(input.absPath, homePath);
-
-  return {
-    name: input.name.trim(),
-    absPath,
-    defaultModel: input.defaultModel ?? null,
-    approvalPolicy: input.approvalPolicy ?? "on-request",
-    sandboxMode: input.sandboxMode ?? "danger-full-access",
-  };
-}
-
-function validateWorkspaceUpdate(
-  input: WorkspaceUpdateInput,
-  homePath: string,
-): WorkspaceUpdateInput {
-  if (!input || typeof input !== "object") {
-    return {};
-  }
-
-  if (input.absPath) {
-    ensureHomeScopedDirectory(input.absPath, homePath);
-  }
-
-  return {
-    name: input.name?.trim(),
-    absPath: input.absPath
-      ? ensureHomeScopedDirectory(input.absPath, homePath)
-      : undefined,
-    defaultModel:
-      input.defaultModel === undefined ? undefined : (input.defaultModel ?? null),
-    approvalPolicy: input.approvalPolicy,
-    sandboxMode: input.sandboxMode,
-  };
-}
-
-function normalizeArchivedFilter(
-  value: string | undefined,
-): boolean | "all" {
-  if (!value) {
-    return false;
-  }
-
-  if (value === "true") {
-    return true;
-  }
-
-  if (value === "all") {
-    return "all";
-  }
-
-  return false;
 }

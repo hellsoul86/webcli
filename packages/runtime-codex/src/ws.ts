@@ -35,6 +35,7 @@ export type ServerRequestResultMap = {
   "item/fileChange/requestApproval": import("./generated/v2/FileChangeRequestApprovalResponse").FileChangeRequestApprovalResponse;
   "item/tool/requestUserInput": import("./generated/v2/ToolRequestUserInputResponse").ToolRequestUserInputResponse;
   "mcpServer/elicitation/request": import("./generated/v2/McpServerElicitationRequestResponse").McpServerElicitationRequestResponse;
+  "item/permissions/requestApproval": import("./generated/v2/PermissionsRequestApprovalResponse").PermissionsRequestApprovalResponse;
   "item/tool/call": import("./generated/v2/DynamicToolCallResponse").DynamicToolCallResponse;
   "account/chatgptAuthTokens/refresh": import("./generated/v2/ChatgptAuthTokensRefreshResponse").ChatgptAuthTokensRefreshResponse;
   applyPatchApproval: import("./generated/ApplyPatchApprovalResponse").ApplyPatchApprovalResponse;

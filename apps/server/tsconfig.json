@@ -5,7 +5,9 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@webcli/codex-protocol": ["../../packages/codex-protocol/src/index.ts"]
+      "@webcli/contracts": ["../../packages/contracts/src/index.ts"],
+      "@webcli/core": ["../../packages/core/src/index.ts"],
+      "@webcli/runtime-codex": ["../../packages/runtime-codex/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]

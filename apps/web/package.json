@@ -13,10 +13,12 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.66.9",
-    "@webcli/codex-protocol": "file:../../packages/codex-protocol",
+    "@webcli/contracts": "file:../../packages/contracts",
     "monaco-editor": "^0.52.2",
     "react": "^19.0.0",
+    "react-markdown": "^10.1.0",
     "react-dom": "^19.0.0",
+    "remark-gfm": "^4.0.1",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

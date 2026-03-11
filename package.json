@@ -8,7 +8,7 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run build -w @webcli/codex-protocol && concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @webcli/server\" \"npm run dev -w @webcli/web\"",
+    "dev": "npm run build -w @webcli/contracts && npm run build -w @webcli/core && npm run build -w @webcli/runtime-codex && concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @webcli/server\" \"npm run dev -w @webcli/web\"",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

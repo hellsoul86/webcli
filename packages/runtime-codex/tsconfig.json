@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@webcli/contracts": ["../contracts/src/index.ts"],
+      "@webcli/core": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

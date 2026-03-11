@@ -7,7 +7,12 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "paths": {}
+    "baseUrl": ".",
+    "paths": {
+      "@webcli/contracts": ["../../packages/contracts/dist/index.d.ts"],
+      "@webcli/core": ["../../packages/core/dist/index.d.ts"],
+      "@webcli/runtime-codex": ["../../packages/runtime-codex/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

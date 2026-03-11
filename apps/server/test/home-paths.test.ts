@@ -7,7 +7,7 @@ import {
   ensureHomeScopedPath,
   listHomePathSuggestions,
   toDisplayPath,
-} from "../src/home-paths.js";
+} from "@webcli/core";
 
 const tempDirs: Array<string> = [];
 

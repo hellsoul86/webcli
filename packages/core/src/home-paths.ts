@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { PathSuggestion, PathSuggestionsResponse } from "@webcli/codex-protocol";
+import type { PathSuggestionsResponse } from "@webcli/contracts";
 
 export function resolveHomeDirectory(): string {
   return resolve(homedir());
@@ -53,7 +53,6 @@ export function ensureHomeScopedDirectory(
   homePath = resolveHomeDirectory(),
 ): string {
   const normalized = ensureHomeScopedPath(value, homePath);
-
   const stats = statSync(normalized, { throwIfNoEntry: false });
   if (!stats || !stats.isDirectory()) {
     throw new Error(`Workspace path is not a directory: ${value}`);
@@ -114,7 +113,7 @@ export function listHomePathSuggestions(
     .filter((entry) => entry.name.toLowerCase().startsWith(prefixLower))
     .sort((left, right) => left.name.localeCompare(right.name))
     .slice(0, 12)
-    .map<PathSuggestion>((entry) => {
+    .map((entry) => {
       const absPath = join(search.directory, entry.name);
       return {
         value: toDisplayPath(absPath, homePath),

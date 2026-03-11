@@ -1,16 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Thread, WorkspaceRecord } from "@webcli/codex-protocol";
+import type { WorkspaceRecord } from "@webcli/contracts";
 import {
-  buildWorkspaceCatalog,
-  decorateThread,
-  matchWorkspaceForPath,
-} from "../src/path-utils.js";
+  ThreadProjectionService,
+  WorkspaceCatalogService,
+  type RuntimeThreadRecord,
+} from "@webcli/core";
 
-function makeWorkspace(
-  id: string,
-  absPath: string,
-  name = id,
-): WorkspaceRecord {
+function makeWorkspace(id: string, absPath: string, name = id): WorkspaceRecord {
   const now = new Date().toISOString();
   return {
     id,
@@ -25,30 +21,31 @@ function makeWorkspace(
   };
 }
 
-function makeThread(cwd: string): Thread {
+function makeThread(cwd: string, archived = false): RuntimeThreadRecord {
   return {
-    id: "thread-1",
+    id: `thread:${cwd}`,
+    name: "Test thread",
     preview: "Preview",
-    ephemeral: false,
-    modelProvider: "openai",
+    archived,
+    cwd,
     createdAt: 1,
     updatedAt: 2,
     status: { type: "idle" },
-    path: null,
-    cwd,
-    cliVersion: "0.111.0",
+    modelProvider: "openai",
     source: "appServer",
     agentNickname: null,
     agentRole: null,
     gitInfo: null,
-    name: "Test thread",
+    path: null,
+    ephemeral: false,
     turns: [],
   };
 }
 
-describe("path utils", () => {
+describe("workspace projection helpers", () => {
   it("matches the longest workspace prefix", () => {
-    const winner = matchWorkspaceForPath(
+    const catalog = new WorkspaceCatalogService();
+    const winner = catalog.matchWorkspaceForPath(
       [
         makeWorkspace("root", "/srv/repos"),
         makeWorkspace("nested", "/srv/repos/nested"),
@@ -59,20 +56,23 @@ describe("path utils", () => {
     expect(winner?.id).toBe("nested");
   });
 
-  it("decorates thread with workspace metadata", () => {
-    const decorated = decorateThread(
-      makeThread("/srv/repos/nested/project"),
-      [makeWorkspace("root", "/srv/repos"), makeWorkspace("nested", "/srv/repos/nested")],
-      true,
+  it("decorates thread summaries with workspace metadata", () => {
+    const projection = new ThreadProjectionService();
+    const summary = projection.toThreadSummary(
+      makeThread("/srv/repos/nested/project", true),
+      [
+        makeWorkspace("root", "/srv/repos"),
+        makeWorkspace("nested", "/srv/repos/nested"),
+      ],
     );
 
-    expect(decorated.workspaceId).toBe("nested");
-    expect(decorated.workspaceName).toBe("nested");
-    expect(decorated.archived).toBe(true);
+    expect(summary.workspaceId).toBe("nested");
+    expect(summary.workspaceName).toBe("nested");
+    expect(summary.archived).toBe(true);
   });
 
   it("builds derived workspaces for home-scoped threads outside saved projects", () => {
-    const catalog = buildWorkspaceCatalog(
+    const catalog = new WorkspaceCatalogService().buildWorkspaceCatalog(
       [makeWorkspace("saved", "/Users/roy/Development/webcli")],
       [
         makeThread("/Users/roy"),
@@ -93,7 +93,7 @@ describe("path utils", () => {
   });
 
   it("skips derived workspaces inside ignored paths", () => {
-    const catalog = buildWorkspaceCatalog(
+    const catalog = new WorkspaceCatalogService().buildWorkspaceCatalog(
       [],
       [makeThread("/Users/roy/Documents"), makeThread("/Users/roy/Documents/nested")],
       "/Users/roy",

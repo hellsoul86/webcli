@@ -2,14 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { WorkspaceRepo } from "../src/workspace-repo.js";
+import { WorkspaceRepo } from "@webcli/core";
 
 const tempDirs: Array<string> = [];
 
 afterEach(() => {
   while (tempDirs.length > 0) {
-    const dir = tempDirs.pop()!;
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
   }
 });
 

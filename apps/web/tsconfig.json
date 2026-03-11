@@ -5,7 +5,7 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@webcli/codex-protocol": ["../../packages/codex-protocol/src/index.ts"]
+      "@webcli/contracts": ["../../packages/contracts/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],

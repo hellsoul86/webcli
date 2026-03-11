@@ -1,12 +1,8 @@
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
-import type {
-  WorkspaceCreateInput,
-  WorkspaceRecord,
-  WorkspaceUpdateInput,
-} from "@webcli/codex-protocol";
+import type { WorkspaceCreateInput, WorkspaceRecord, WorkspaceUpdateInput } from "@webcli/contracts";
 
 type WorkspaceRow = {
   id: string;
