@@ -40,6 +40,7 @@ import type { ReviewStartResponse } from "./generated/v2/ReviewStartResponse";
 import type { SandboxMode as RuntimeSandboxMode } from "./generated/v2/SandboxMode";
 import type { SkillsListResponse } from "./generated/v2/SkillsListResponse";
 import type { Thread } from "./generated/v2/Thread";
+import type { ThreadLoadedListResponse } from "./generated/v2/ThreadLoadedListResponse";
 import type { ThreadListResponse } from "./generated/v2/ThreadListResponse";
 import type { ThreadItem } from "./generated/v2/ThreadItem";
 import type { ThreadForkResponse } from "./generated/v2/ThreadForkResponse";
@@ -179,6 +180,15 @@ export class CodexRuntime implements SessionRuntime {
       sortKey: "updated_at",
     });
     return threads.map((thread) => mapRuntimeThread(thread, archived));
+  }
+
+  async listLoadedThreadIds(): Promise<Array<string>> {
+    return this.collectPages<ThreadLoadedListResponse, "thread/loaded/list">(
+      "thread/loaded/list",
+      {
+        limit: 200,
+      },
+    );
   }
 
   async openThread(input: RuntimeThreadConfig): Promise<RuntimeThreadRecord> {
@@ -1078,7 +1088,7 @@ export class CodexRuntime implements SessionRuntime {
 
   private async collectPages<
     TResult extends { data: Array<unknown>; nextCursor: string | null },
-    TMethod extends "model/list" | "thread/list",
+    TMethod extends "model/list" | "thread/list" | "thread/loaded/list",
   >(
     method: TMethod,
     params: ClientRequestParams<TMethod>,

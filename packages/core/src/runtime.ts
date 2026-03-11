@@ -131,6 +131,7 @@ export interface SessionRuntime {
   getAccountSummary(force?: boolean): Promise<AccountSummary>;
   listModels(): Promise<Array<ModelOption>>;
   listThreads(archived: boolean): Promise<Array<RuntimeThreadRecord>>;
+  listLoadedThreadIds(): Promise<Array<string>>;
   openThread(input: RuntimeThreadConfig): Promise<RuntimeThreadRecord>;
   resumeThread(threadId: string, path?: string | null): Promise<RuntimeThreadRecord>;
   renameThread(threadId: string, name: string): Promise<void>;

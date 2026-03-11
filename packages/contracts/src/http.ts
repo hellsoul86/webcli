@@ -20,6 +20,7 @@ export type BootstrapResponse = {
   workspaces: Array<WorkspaceRecord>;
   activeThreads: Array<ThreadSummary>;
   archivedThreads: Array<ThreadSummary>;
+  loadedThreadIds: Array<string>;
   settings: BootstrapSettingsSummary;
 };
 

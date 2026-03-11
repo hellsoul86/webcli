@@ -92,6 +92,25 @@ describe("workspace projection helpers", () => {
     expect(catalog.find((workspace) => workspace.absPath === "/Users/roy")?.name).toBe("~");
   });
 
+  it("still infers nested projects when home root itself is saved", () => {
+    const catalog = new WorkspaceCatalogService().buildWorkspaceCatalog(
+      [makeWorkspace("home", "/Users/roy", "根目录")],
+      [makeThread("/Users/roy/Development/cl_grid")],
+      "/Users/roy",
+    );
+
+    expect(catalog.map((workspace) => workspace.absPath).sort()).toEqual([
+      "/Users/roy",
+      "/Users/roy/Development/cl_grid",
+    ]);
+    expect(
+      catalog.find((workspace) => workspace.absPath === "/Users/roy/Development/cl_grid"),
+    ).toMatchObject({
+      source: "derived",
+      name: "cl_grid",
+    });
+  });
+
   it("skips derived workspaces inside ignored paths", () => {
     const catalog = new WorkspaceCatalogService().buildWorkspaceCatalog(
       [],

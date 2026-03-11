@@ -40,8 +40,9 @@ export async function createApp(
 ): Promise<AppContext> {
   mkdirSync(env.dataDir, { recursive: true });
   const app = Fastify({ logger: false });
-  const runtime =
-    overrides?.runtime ?? new CodexRuntime({ codexCommand: env.codexCommand });
+  const runtime: SessionRuntime =
+    overrides?.runtime ??
+    (new CodexRuntime({ codexCommand: env.codexCommand }) as SessionRuntime);
   const workspaceRepo = overrides?.workspaceRepo ?? new WorkspaceRepo(env.dbPath);
   const service =
     overrides?.service ?? new WorkbenchService(runtime, workspaceRepo);

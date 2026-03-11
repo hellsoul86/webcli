@@ -125,28 +125,20 @@ pre {
   display: flex;
   align-items: stretch;
   justify-content: center;
-  min-width: 10px;
+  min-width: 12px;
   cursor: col-resize;
   touch-action: none;
   outline: none;
 }
 
 .sidebar-resizer::before {
-  content: "";
-  width: 2px;
-  margin: 8px 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  transition:
-    background 120ms ease,
-    opacity 120ms ease;
-  opacity: 0.9;
+  display: none;
 }
 
-.sidebar-resizer:hover::before,
-.sidebar-resizer:focus-visible::before,
-.sidebar-resizer--active::before {
-  background: rgba(127, 205, 255, 0.55);
+.sidebar-resizer:hover,
+.sidebar-resizer:focus-visible,
+.sidebar-resizer--active {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .sidebar-brand {
@@ -328,6 +320,7 @@ pre {
   border-radius: 999px;
   border: 1px solid transparent;
   color: inherit;
+  min-width: 0;
 }
 
 .sidebar-header-button,
@@ -748,6 +741,7 @@ pre {
 .workbench-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -757,6 +751,7 @@ pre {
 .window-toolbar {
   align-items: center;
   justify-content: flex-end;
+  min-width: 0;
   padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: #090a0d;
@@ -772,6 +767,17 @@ pre {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.window-toolbar__actions {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.window-toolbar__actions > * {
+  min-width: 0;
 }
 
 .window-toolbar__stats {
@@ -804,7 +810,8 @@ pre {
 
 .window-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 388px;
+  grid-template-columns: minmax(0, 1fr) clamp(296px, 31vw, 388px);
+  min-width: 0;
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -1653,10 +1660,21 @@ pre {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
+  min-width: 0;
   min-height: 0;
   padding: 14px;
   border-left: 1px solid var(--border);
   background: var(--bg-panel-strong);
+}
+
+.status-pill {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-pill--slate {
+  max-width: min(240px, 100%);
 }
 
 .inspector-tabs {
@@ -2020,11 +2038,11 @@ pre {
 
 @media (max-width: 1360px) {
   .window-body {
-    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-columns: minmax(0, 1fr) clamp(280px, 30vw, 340px);
   }
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 980px) {
   .desktop-shell {
     grid-template-columns: 1fr;
   }

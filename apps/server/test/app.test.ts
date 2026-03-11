@@ -115,6 +115,10 @@ class FakeRuntime implements SessionRuntime {
     return archived ? [...this.archivedThreads] : [...this.activeThreads];
   }
 
+  async listLoadedThreadIds(): Promise<Array<string>> {
+    return this.activeThreads.map((thread) => thread.id);
+  }
+
   async openThread(input: RuntimeThreadConfig): Promise<RuntimeThreadRecord> {
     const thread = makeRuntimeThread(input.cwd, {
       id: `thread-opened-${this.nextThreadId++}`,
@@ -357,6 +361,9 @@ describe("createApp", () => {
     expect(bootstrap.workspaces).toHaveLength(2);
     expect(bootstrap.activeThreads).toHaveLength(3);
     expect(bootstrap.archivedThreads).toHaveLength(1);
+    expect(bootstrap.loadedThreadIds).toEqual(
+      bootstrap.activeThreads.map((thread: { id: string }) => thread.id),
+    );
     expect(
       bootstrap.activeThreads
         .map((thread: { workspaceName: string | null }) => thread.workspaceName)

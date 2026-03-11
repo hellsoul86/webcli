@@ -184,11 +184,15 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const autoOpenedWorkspaceModalRef = useRef(false);
   const sidebarResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const sidebarResizeFrameRef = useRef<number | null>(null);
+  const liveSidebarWidthRef = useRef(sidebarWidth);
+  const desktopShellRef = useRef<HTMLDivElement | null>(null);
   const conversationBodyRef = useRef<HTMLDivElement | null>(null);
   const autoFollowTimelineRef = useRef(true);
   const previousActiveThreadIdRef = useRef<string | null>(null);
   const previousThreadStatusesRef = useRef<Record<string, ThreadSummary["status"]>>({});
   const queuedDispatchingThreadsRef = useRef(new Set<string>());
+  const restoredThreadIdRef = useRef<string | null>(null);
 
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap"],
@@ -405,6 +409,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    liveSidebarWidthRef.current = sidebarWidth;
+    desktopShellRef.current?.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
     window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
 
@@ -424,12 +430,32 @@ export function App() {
         return;
       }
 
-      setSidebarWidth(
-        clampSidebarWidth(state.startWidth + event.clientX - state.startX, window.innerWidth),
+      const nextWidth = clampSidebarWidth(
+        state.startWidth + event.clientX - state.startX,
+        window.innerWidth,
       );
+      liveSidebarWidthRef.current = nextWidth;
+
+      if (sidebarResizeFrameRef.current !== null) {
+        return;
+      }
+
+      sidebarResizeFrameRef.current = window.requestAnimationFrame(() => {
+        sidebarResizeFrameRef.current = null;
+        desktopShellRef.current?.style.setProperty(
+          "--sidebar-width",
+          `${liveSidebarWidthRef.current}px`,
+        );
+      });
     };
 
     const stopResizing = () => {
+      if (sidebarResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(sidebarResizeFrameRef.current);
+        sidebarResizeFrameRef.current = null;
+      }
+
+      setSidebarWidth(liveSidebarWidthRef.current);
       sidebarResizeStateRef.current = null;
       setSidebarResizing(false);
     };
@@ -441,6 +467,10 @@ export function App() {
     return () => {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
+      if (sidebarResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(sidebarResizeFrameRef.current);
+        sidebarResizeFrameRef.current = null;
+      }
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", stopResizing);
       window.removeEventListener("pointercancel", stopResizing);
@@ -667,6 +697,36 @@ export function App() {
   }, [blocking, bootstrap, workspaceModalOpen, workspaces.length]);
 
   useEffect(() => {
+    if (!bootstrap || !activeThreadId) {
+      restoredThreadIdRef.current = null;
+      return;
+    }
+
+    if (threads[activeThreadId]?.turnOrder.length) {
+      restoredThreadIdRef.current = null;
+      return;
+    }
+
+    const summary = allThreadEntries.find((thread) => thread.id === activeThreadId);
+    if (!summary || restoredThreadIdRef.current === activeThreadId) {
+      return;
+    }
+
+    restoredThreadIdRef.current = activeThreadId;
+    if (summary.workspaceId) {
+      setActiveWorkspace(summary.workspaceId);
+    }
+
+    setBusyMessage("正在恢复线程...");
+    void runAction(async () => {
+      const response = await codexClient.call("thread.resume", {
+        threadId: activeThreadId,
+      });
+      hydrateThread(response.thread);
+    });
+  }, [activeThreadId, allThreadEntries, bootstrap, hydrateThread, setActiveWorkspace, threads]);
+
+  useEffect(() => {
     const snapshot = integrationsQuery.data?.snapshot;
     if (snapshot) {
       setIntegrationSnapshot(snapshot);
@@ -830,10 +890,12 @@ export function App() {
   }
 
   function handleSidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     sidebarResizeStateRef.current = {
       startX: event.clientX,
       startWidth: sidebarWidth,
     };
+    liveSidebarWidthRef.current = sidebarWidth;
     setSidebarResizing(true);
   }
 
@@ -1443,7 +1505,12 @@ export function App() {
   }
 
   return (
-    <div className="desktop-shell" data-testid="desktop-shell" style={desktopShellStyle}>
+    <div
+      className="desktop-shell"
+      data-testid="desktop-shell"
+      ref={desktopShellRef}
+      style={desktopShellStyle}
+    >
       <aside className="sidebar-shell">
         <div className="sidebar-brand">
           <div className="sidebar-brand__mark">C</div>

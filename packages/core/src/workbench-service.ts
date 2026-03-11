@@ -83,11 +83,12 @@ export class WorkbenchService {
   }
 
   async getBootstrap(): Promise<BootstrapResponse> {
-    const [account, models, activeThreads, archivedThreads, config] = await Promise.all([
+    const [account, models, activeThreads, archivedThreads, loadedThreadIds, config] = await Promise.all([
       this.runtime.getAccountSummary(true),
       this.runtime.listModels(),
       this.runtime.listThreads(false),
       this.runtime.listThreads(true),
+      this.runtime.listLoadedThreadIds(),
       this.runtime.readConfigSnapshot(),
     ]);
     const workspaces = this.workspaceCatalog.buildWorkspaceCatalog(
@@ -113,6 +114,7 @@ export class WorkbenchService {
       workspaces,
       activeThreads: activeSummaries,
       archivedThreads: archivedSummaries,
+      loadedThreadIds,
       settings: {
         config,
       },

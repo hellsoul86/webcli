@@ -140,6 +140,13 @@ export class FakeRuntime implements SessionRuntime {
       .map((thread) => cloneThread(thread));
   }
 
+  async listLoadedThreadIds(): Promise<Array<string>> {
+    return [...this.threads.values()]
+      .filter((thread) => !thread.archived)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((thread) => thread.id);
+  }
+
   async openThread(input: RuntimeThreadConfig): Promise<RuntimeThreadRecord> {
     const now = Math.floor(Date.now() / 1000);
     const thread: RuntimeThreadRecord = {

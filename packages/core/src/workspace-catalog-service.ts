@@ -47,6 +47,7 @@ export class WorkspaceCatalogService {
     ignoredPaths: Array<string> = [],
   ): Array<WorkspaceRecord> {
     const catalog = [...savedWorkspaces];
+    const normalizedHomePath = normalizePath(homePath);
     const knownPaths = new Set(savedWorkspaces.map((workspace) => normalizePath(workspace.absPath)));
     const normalizedIgnoredPaths = ignoredPaths.map((path) => normalizePath(path));
     const inferredByPath = new Map<string, WorkspaceRecord>();
@@ -61,7 +62,11 @@ export class WorkspaceCatalogService {
         continue;
       }
 
-      if (this.matchWorkspaceForPath(savedWorkspaces, normalizedCwd)) {
+      const matchedSavedWorkspace = this.matchWorkspaceForPath(savedWorkspaces, normalizedCwd);
+      if (
+        matchedSavedWorkspace &&
+        normalizePath(matchedSavedWorkspace.absPath) !== normalizedHomePath
+      ) {
         continue;
       }
 
@@ -83,7 +88,7 @@ export class WorkspaceCatalogService {
 
       inferredByPath.set(normalizedCwd, {
         id: `derived:${normalizedCwd}`,
-        name: normalizedCwd === normalizePath(homePath) ? "~" : basename(normalizedCwd),
+        name: normalizedCwd === normalizedHomePath ? "~" : basename(normalizedCwd),
         absPath: normalizedCwd,
         source: "derived",
         defaultModel: null,
