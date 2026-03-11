@@ -1,0 +1,1 @@
+{"version":3,"file":"AgentMessageEvent.d.ts","sourceRoot":"","sources":["AgentMessageEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,gBAAgB,CAAC;AAEnD,MAAM,MAAM,iBAAiB,GAAG;IAAE,OAAO,EAAE,MAAM,CAAC;IAAC,KAAK,EAAE,YAAY,GAAG,IAAI,CAAC;CAAE,CAAC"}

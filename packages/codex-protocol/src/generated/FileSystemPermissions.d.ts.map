@@ -1,0 +1,1 @@
+{"version":3,"file":"FileSystemPermissions.d.ts","sourceRoot":"","sources":["FileSystemPermissions.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,mBAAmB,CAAC;AAEzD,MAAM,MAAM,qBAAqB,GAAG;IAAE,IAAI,EAAE,KAAK,CAAC,eAAe,CAAC,GAAG,IAAI,CAAC;IAAC,KAAK,EAAE,KAAK,CAAC,eAAe,CAAC,GAAG,IAAI,CAAC;CAAE,CAAC"}

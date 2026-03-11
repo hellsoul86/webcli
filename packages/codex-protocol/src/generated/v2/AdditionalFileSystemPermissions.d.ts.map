@@ -1,0 +1,1 @@
+{"version":3,"file":"AdditionalFileSystemPermissions.d.ts","sourceRoot":"","sources":["AdditionalFileSystemPermissions.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,oBAAoB,CAAC;AAE1D,MAAM,MAAM,+BAA+B,GAAG;IAAE,IAAI,EAAE,KAAK,CAAC,eAAe,CAAC,GAAG,IAAI,CAAC;IAAC,KAAK,EAAE,KAAK,CAAC,eAAe,CAAC,GAAG,IAAI,CAAC;CAAE,CAAC"}

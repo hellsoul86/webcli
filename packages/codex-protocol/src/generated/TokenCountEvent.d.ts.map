@@ -1,0 +1,1 @@
+{"version":3,"file":"TokenCountEvent.d.ts","sourceRoot":"","sources":["TokenCountEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,qBAAqB,CAAC;AAC7D,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,kBAAkB,CAAC;AAEvD,MAAM,MAAM,eAAe,GAAG;IAAE,IAAI,EAAE,cAAc,GAAG,IAAI,CAAC;IAAC,WAAW,EAAE,iBAAiB,GAAG,IAAI,CAAC;CAAE,CAAC"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"RealtimeHandoffRequested.d.ts","sourceRoot":"","sources":["RealtimeHandoffRequested.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,sBAAsB,EAAE,MAAM,0BAA0B,CAAC;AAEvE,MAAM,MAAM,wBAAwB,GAAG;IAAE,UAAU,EAAE,MAAM,CAAC;IAAC,OAAO,EAAE,MAAM,CAAC;IAAC,gBAAgB,EAAE,MAAM,CAAC;IAAC,QAAQ,EAAE,KAAK,CAAC,sBAAsB,CAAC,CAAC;CAAE,CAAC"}

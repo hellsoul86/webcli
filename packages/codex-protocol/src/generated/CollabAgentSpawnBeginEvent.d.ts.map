@@ -1,0 +1,1 @@
+{"version":3,"file":"CollabAgentSpawnBeginEvent.d.ts","sourceRoot":"","sources":["CollabAgentSpawnBeginEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,YAAY,CAAC;AAE3C,MAAM,MAAM,0BAA0B,GAAG;IACzC;;OAEG;IACH,OAAO,EAAE,MAAM,CAAC;IAChB;;OAEG;IACH,gBAAgB,EAAE,QAAQ,CAAC;IAC3B;;;OAGG;IACH,MAAM,EAAE,MAAM,CAAC;CAAE,CAAC"}

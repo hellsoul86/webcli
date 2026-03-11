@@ -1,0 +1,1 @@
+{"version":3,"file":"RequestPermissionsEvent.d.ts","sourceRoot":"","sources":["RequestPermissionsEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,qBAAqB,CAAC;AAE7D,MAAM,MAAM,uBAAuB,GAAG;IACtC;;OAEG;IACH,OAAO,EAAE,MAAM,CAAC;IAChB;;;OAGG;IACH,OAAO,EAAE,MAAM,CAAC;IAAC,MAAM,EAAE,MAAM,GAAG,IAAI,CAAC;IAAC,WAAW,EAAE,iBAAiB,CAAC;CAAE,CAAC"}

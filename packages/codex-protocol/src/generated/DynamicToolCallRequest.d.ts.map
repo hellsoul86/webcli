@@ -1,0 +1,1 @@
+{"version":3,"file":"DynamicToolCallRequest.d.ts","sourceRoot":"","sources":["DynamicToolCallRequest.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,wBAAwB,CAAC;AAExD,MAAM,MAAM,sBAAsB,GAAG;IAAE,MAAM,EAAE,MAAM,CAAC;IAAC,MAAM,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,MAAM,CAAC;IAAC,SAAS,EAAE,SAAS,CAAC;CAAE,CAAC"}

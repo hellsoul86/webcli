@@ -1,0 +1,1 @@
+{"version":3,"file":"GetHistoryEntryResponseEvent.d.ts","sourceRoot":"","sources":["GetHistoryEntryResponseEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,gBAAgB,CAAC;AAEnD,MAAM,MAAM,4BAA4B,GAAG;IAAE,MAAM,EAAE,MAAM,CAAC;IAAC,MAAM,EAAE,MAAM,CAAC;IAC5E;;OAEG;IACH,KAAK,EAAE,YAAY,GAAG,IAAI,CAAC;CAAE,CAAC"}

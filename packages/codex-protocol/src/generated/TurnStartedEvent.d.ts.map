@@ -1,0 +1,1 @@
+{"version":3,"file":"TurnStartedEvent.d.ts","sourceRoot":"","sources":["TurnStartedEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,YAAY,CAAC;AAE3C,MAAM,MAAM,gBAAgB,GAAG;IAAE,OAAO,EAAE,MAAM,CAAC;IAAC,oBAAoB,EAAE,MAAM,GAAG,IAAI,CAAC;IAAC,uBAAuB,EAAE,QAAQ,CAAC;CAAE,CAAC"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"CollabCloseBeginEvent.d.ts","sourceRoot":"","sources":["CollabCloseBeginEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,YAAY,CAAC;AAE3C,MAAM,MAAM,qBAAqB,GAAG;IACpC;;OAEG;IACH,OAAO,EAAE,MAAM,CAAC;IAChB;;OAEG;IACH,gBAAgB,EAAE,QAAQ,CAAC;IAC3B;;OAEG;IACH,kBAAkB,EAAE,QAAQ,CAAC;CAAE,CAAC"}

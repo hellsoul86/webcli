@@ -1,0 +1,1 @@
+{"version":3,"file":"TokenUsageInfo.d.ts","sourceRoot":"","sources":["TokenUsageInfo.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,cAAc,CAAC;AAE/C,MAAM,MAAM,cAAc,GAAG;IAAE,iBAAiB,EAAE,UAAU,CAAC;IAAC,gBAAgB,EAAE,UAAU,CAAC;IAAC,oBAAoB,EAAE,MAAM,GAAG,IAAI,CAAC;CAAE,CAAC"}

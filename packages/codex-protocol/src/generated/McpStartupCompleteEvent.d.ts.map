@@ -1,0 +1,1 @@
+{"version":3,"file":"McpStartupCompleteEvent.d.ts","sourceRoot":"","sources":["McpStartupCompleteEvent.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,qBAAqB,CAAC;AAE7D,MAAM,MAAM,uBAAuB,GAAG;IAAE,KAAK,EAAE,KAAK,CAAC,MAAM,CAAC,CAAC;IAAC,MAAM,EAAE,KAAK,CAAC,iBAAiB,CAAC,CAAC;IAAC,SAAS,EAAE,KAAK,CAAC,MAAM,CAAC,CAAC;CAAE,CAAC"}

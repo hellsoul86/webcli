@@ -1,0 +1,1 @@
+{"version":3,"file":"SkillsRemoteReadParams.d.ts","sourceRoot":"","sources":["SkillsRemoteReadParams.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,iBAAiB,CAAC;AACrD,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,kBAAkB,CAAC;AAEvD,MAAM,MAAM,sBAAsB,GAAG;IAAE,aAAa,EAAE,aAAa,CAAC;IAAC,cAAc,EAAE,cAAc,CAAC;IAAC,OAAO,EAAE,OAAO,CAAC;CAAE,CAAC"}

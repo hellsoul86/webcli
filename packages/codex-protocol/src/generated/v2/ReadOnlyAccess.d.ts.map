@@ -1,0 +1,1 @@
+{"version":3,"file":"ReadOnlyAccess.d.ts","sourceRoot":"","sources":["ReadOnlyAccess.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,oBAAoB,CAAC;AAE1D,MAAM,MAAM,cAAc,GAAG;IAAE,MAAM,EAAE,YAAY,CAAC;IAAC,uBAAuB,EAAE,OAAO,CAAC;IAAC,aAAa,EAAE,KAAK,CAAC,eAAe,CAAC,CAAC;CAAE,GAAG;IAAE,MAAM,EAAE,YAAY,CAAA;CAAE,CAAC"}
