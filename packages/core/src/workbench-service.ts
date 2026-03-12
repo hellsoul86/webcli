@@ -242,9 +242,11 @@ export class WorkbenchService {
         }
         return { ok: true };
       case "thread.archive":
-        await this.runtime.archiveThread(
-          (message.params as AppRequestParams<"thread.archive">).threadId,
-        );
+        {
+          const params = message.params as AppRequestParams<"thread.archive">;
+          const summary = this.threadSummaries.get(params.threadId);
+          await this.runtime.archiveThread(params.threadId, summary?.path ?? null);
+        }
         return { ok: true };
       case "thread.unarchive":
         return this.handleThreadUnarchive(

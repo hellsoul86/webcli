@@ -282,7 +282,7 @@ export class FakeRuntime implements SessionRuntime {
     });
   }
 
-  async archiveThread(threadId: string): Promise<void> {
+  async archiveThread(threadId: string, _path?: string | null): Promise<void> {
     const thread = this.requireThread(threadId);
     thread.archived = true;
     thread.updatedAt = Math.floor(Date.now() / 1000);

@@ -147,7 +147,7 @@ export interface SessionRuntime {
   openThread(input: RuntimeThreadConfig): Promise<RuntimeThreadRecord>;
   resumeThread(threadId: string, path?: string | null): Promise<RuntimeThreadRecord>;
   renameThread(threadId: string, name: string): Promise<void>;
-  archiveThread(threadId: string): Promise<void>;
+  archiveThread(threadId: string, path?: string | null): Promise<void>;
   unarchiveThread(threadId: string): Promise<RuntimeThreadRecord>;
   forkThread(threadId: string, cwd: string): Promise<RuntimeThreadRecord>;
   compactThread(threadId: string): Promise<void>;

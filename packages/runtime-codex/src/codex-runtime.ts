@@ -351,8 +351,17 @@ export class CodexRuntime implements SessionRuntime {
     await this.call("thread/name/set", { threadId, name });
   }
 
-  async archiveThread(threadId: string): Promise<void> {
-    await this.call("thread/archive", { threadId });
+  async archiveThread(threadId: string, path?: string | null): Promise<void> {
+    try {
+      await this.call("thread/archive", { threadId });
+    } catch (error) {
+      if (!path) {
+        throw error;
+      }
+
+      await this.resumeThread(threadId, path);
+      await this.call("thread/archive", { threadId });
+    }
   }
 
   async unarchiveThread(threadId: string): Promise<RuntimeThreadRecord> {
