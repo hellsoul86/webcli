@@ -1,12 +1,15 @@
 import type {
+  ApiErrorResponse,
   BootstrapResponse,
   HealthResponse,
   PathSuggestionsResponse,
+  ThreadSummaryPageResponse,
   WorkspaceCreateInput,
   WorkspaceDismissInput,
   WorkspaceRecord,
   WorkspaceUpdateInput,
 } from "@webcli/contracts";
+import { AppError as RemoteAppError } from "@webcli/contracts";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -20,7 +23,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
     try {
-      const parsed = JSON.parse(body) as { message?: string };
+      const parsed = JSON.parse(body) as ApiErrorResponse;
+      if (parsed.code) {
+        throw new RemoteAppError(
+          parsed.code,
+          parsed.message || `${response.status} ${response.statusText}`,
+          parsed.params,
+        );
+      }
       throw new Error(parsed.message || `${response.status} ${response.statusText}`);
     } catch (error) {
       if (error instanceof Error && error.message !== body) {
@@ -56,6 +66,23 @@ export class WorkbenchApiClient {
 
   bootstrap(): Promise<BootstrapResponse> {
     return request("/api/bootstrap");
+  }
+
+  threadSummaries(input: {
+    archived: boolean;
+    cursor?: string | null;
+    limit?: number;
+    workspaceId?: string | "all";
+  }): Promise<ThreadSummaryPageResponse> {
+    const params = new URLSearchParams({
+      archived: String(input.archived),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      ...(input.limit ? { limit: String(input.limit) } : {}),
+      ...(input.workspaceId && input.workspaceId !== "all"
+        ? { workspaceId: input.workspaceId }
+        : {}),
+    });
+    return request(`/api/thread-summaries?${params.toString()}`);
   }
 
   workspacePathSuggestions(query: string): Promise<PathSuggestionsResponse> {

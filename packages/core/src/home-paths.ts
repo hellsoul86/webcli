@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { PathSuggestionsResponse } from "@webcli/contracts";
+import { AppError, type PathSuggestionsResponse } from "@webcli/contracts";
 
 export function resolveHomeDirectory(): string {
   return resolve(homedir());
@@ -55,7 +55,7 @@ export function ensureHomeScopedDirectory(
   const normalized = ensureHomeScopedPath(value, homePath);
   const stats = statSync(normalized, { throwIfNoEntry: false });
   if (!stats || !stats.isDirectory()) {
-    throw new Error(`Workspace path is not a directory: ${value}`);
+    throw new AppError("workspace.not_directory", `Workspace path is not a directory: ${value}`);
   }
 
   return normalized;
@@ -67,7 +67,11 @@ export function ensureHomeScopedPath(
 ): string {
   const normalized = resolveWorkspacePath(value, homePath);
   if (!isWithinHomePath(normalized, homePath)) {
-    throw new Error(`Workspace path must stay inside ${toDisplayPath(homePath, homePath)}`);
+    throw new AppError(
+      "workspace.outside_home",
+      `Workspace path must stay inside ${toDisplayPath(homePath, homePath)}`,
+      { homePath: toDisplayPath(homePath, homePath) },
+    );
   }
 
   return normalized;

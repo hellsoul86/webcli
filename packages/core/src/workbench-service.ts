@@ -1,22 +1,25 @@
 import { randomUUID } from "node:crypto";
+import { AppError } from "@webcli/contracts";
 import type {
   AppClientCallEnvelope,
   AppClientMessage,
   AppEventMethod,
   AppEventParams,
-  AppRequestParams,
   AppRequestMethod,
+  AppRequestParams,
   AppRequestResult,
   AppServerMessage,
   AppServerNotificationEnvelope,
   BootstrapResponse,
   CommandSessionSnapshot,
   ConfigSnapshot,
+  GitWorkingTreeSnapshot,
   HealthResponse,
   IntegrationSnapshot,
   PendingApproval,
   RequestId,
   ThreadSummary,
+  ThreadSummaryPageResponse,
   WorkbenchThread,
   WorkspaceCreateInput,
   WorkspaceDismissInput,
@@ -43,6 +46,9 @@ type ConnectionRecord = {
   sender: ConnectionSender;
 };
 
+const MAX_RETAINED_THREAD_VIEWS = 5;
+const DEFAULT_THREAD_PAGE_SIZE = 50;
+
 export class WorkbenchService {
   private readonly homePath: string;
   private readonly workspaceCatalog = new WorkspaceCatalogService();
@@ -53,6 +59,9 @@ export class WorkbenchService {
   private readonly sessionConnections = new Map<string, Set<string>>();
   private readonly threadViews = new Map<string, WorkbenchThread>();
   private readonly threadSummaries = new Map<string, ThreadSummary>();
+  private readonly workspaceGitSnapshots = new Map<string, GitWorkingTreeSnapshot>();
+  private summaryCacheInitialized = false;
+  private cachedWorkspaceCatalog: Array<WorkspaceRecord> | null = null;
 
   constructor(
     private readonly runtime: SessionRuntime,
@@ -83,29 +92,17 @@ export class WorkbenchService {
   }
 
   async getBootstrap(): Promise<BootstrapResponse> {
-    const [account, models, activeThreads, archivedThreads, loadedThreadIds, config] = await Promise.all([
+    await this.ensureThreadSummaryCache();
+    const [account, models, config] = await Promise.all([
       this.runtime.getAccountSummary(true),
       this.runtime.listModels(),
-      this.runtime.listThreads(false),
-      this.runtime.listThreads(true),
-      this.runtime.listLoadedThreadIds(),
       this.runtime.readConfigSnapshot(),
     ]);
-    const workspaces = this.workspaceCatalog.buildWorkspaceCatalog(
-      this.workspaceRepo.list(),
-      [...activeThreads, ...archivedThreads],
-      this.homePath,
-      this.workspaceRepo.listIgnoredPaths(),
-    );
-
-    const activeSummaries = activeThreads.map((thread) =>
-      this.threadProjection.toThreadSummary(thread, workspaces),
-    );
-    const archivedSummaries = archivedThreads.map((thread) =>
-      this.threadProjection.toThreadSummary(thread, workspaces),
-    );
-
-    this.replaceThreadSummaryCache(activeSummaries, archivedSummaries);
+    const workspaces = await this.getWorkspaceCatalog();
+    this.reprojectThreadSummaries(workspaces);
+    const summaries = this.getSortedThreadSummaries();
+    const activeSummaries = summaries.filter((thread) => !thread.archived);
+    const archivedThreadCount = summaries.length - activeSummaries.length;
 
     return {
       runtime: this.runtime.getStatus(),
@@ -113,16 +110,40 @@ export class WorkbenchService {
       models,
       workspaces,
       activeThreads: activeSummaries,
-      archivedThreads: archivedSummaries,
-      loadedThreadIds,
+      archivedThreadCount,
       settings: {
         config,
       },
     };
   }
 
-  listWorkspaces(): Promise<Array<WorkspaceRecord>> {
-    return this.buildWorkspaceCatalog();
+  async listWorkspaces(): Promise<Array<WorkspaceRecord>> {
+    await this.ensureThreadSummaryCache();
+    return this.getWorkspaceCatalog();
+  }
+
+  async listThreadSummaries(input: {
+    archived: boolean;
+    cursor?: string | null;
+    limit?: number | null;
+    workspaceId?: string | undefined;
+  }): Promise<ThreadSummaryPageResponse> {
+    await this.ensureThreadSummaryCache();
+    const workspaces = await this.getWorkspaceCatalog();
+    this.reprojectThreadSummaries(workspaces);
+    const filtered = this.workspaceCatalog
+      .filterThreadsByWorkspaceScope(
+        this.getSortedThreadSummaries().filter((thread) => thread.archived === input.archived),
+        input.workspaceId,
+      );
+    const offset = parseThreadPageCursor(input.cursor);
+    const pageSize = clampThreadPageSize(input.limit);
+    const items = filtered.slice(offset, offset + pageSize);
+    const nextCursor = offset + pageSize < filtered.length ? String(offset + pageSize) : null;
+    return {
+      items,
+      nextCursor,
+    };
   }
 
   listPathSuggestions(query: string | undefined) {
@@ -131,21 +152,28 @@ export class WorkbenchService {
 
   createWorkspace(input: WorkspaceCreateInput): WorkspaceRecord {
     const normalized = this.validateWorkspaceInput(input);
-    return this.workspaceRepo.create(normalized);
+    const created = this.workspaceRepo.create(normalized);
+    this.invalidateWorkspaceCatalog();
+    return created;
   }
 
   dismissWorkspace(input: WorkspaceDismissInput): void {
     const absPath = ensureHomeScopedPath(input.absPath, this.homePath);
     this.workspaceRepo.ignorePath(absPath);
+    this.invalidateWorkspaceCatalog();
   }
 
   updateWorkspace(id: string, input: WorkspaceUpdateInput): WorkspaceRecord | null {
     const normalized = this.validateWorkspaceUpdate(input);
-    return this.workspaceRepo.update(id, normalized);
+    const updated = this.workspaceRepo.update(id, normalized);
+    this.invalidateWorkspaceCatalog();
+    return updated;
   }
 
   deleteWorkspace(id: string): boolean {
-    return this.workspaceRepo.delete(id);
+    const deleted = this.workspaceRepo.delete(id);
+    this.invalidateWorkspaceCatalog();
+    return deleted;
   }
 
   registerConnection(sessionId: string, connectionId: string, sender: ConnectionSender): void {
@@ -303,6 +331,7 @@ export class WorkbenchService {
           await this.runtime.saveSettings({
             model: params.model,
             reasoningEffort: params.reasoningEffort,
+            serviceTier: params.serviceTier,
             approvalPolicy: normalizeNullableEnum(params.approvalPolicy),
             sandboxMode: normalizeNullableEnum(params.sandboxMode),
           } as ConfigSnapshot);
@@ -310,6 +339,18 @@ export class WorkbenchService {
         return {
           snapshot: await this.refreshIntegrations(),
         };
+      case "workspace.git.read":
+        return this.handleWorkspaceGitRead(
+          message.params as AppRequestParams<"workspace.git.read">,
+        );
+      case "workspace.git.branches.read":
+        return this.handleWorkspaceGitBranchesRead(
+          message.params as AppRequestParams<"workspace.git.branches.read">,
+        );
+      case "workspace.git.branch.switch":
+        return this.handleWorkspaceGitBranchSwitch(
+          message.params as AppRequestParams<"workspace.git.branch.switch">,
+        );
       case "workspace.searchFiles":
         return this.handleWorkspaceSearch(
           message.params as AppRequestParams<"workspace.searchFiles">,
@@ -325,7 +366,7 @@ export class WorkbenchService {
   ): Promise<{ thread: WorkbenchThread }> {
     const workspace = await this.resolveWorkspace(params.workspaceId);
     if (!workspace) {
-      throw new Error("Workspace not found");
+      throw new AppError("workspace.not_found", "Workspace not found");
     }
 
     const runtimeThread = await this.runtime.openThread({
@@ -336,10 +377,13 @@ export class WorkbenchService {
     });
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
 
-    const workspaces = await this.buildWorkspaceCatalog();
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
+    ]);
     const thread = this.threadProjection.toWorkbenchThread(runtimeThread, workspaces);
-    this.threadViews.set(thread.thread.id, thread);
+    this.setThreadView(thread);
     this.threadSummaries.set(thread.thread.id, thread.thread);
+    this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return { thread };
   }
@@ -352,14 +396,17 @@ export class WorkbenchService {
     const runtimeThread = await this.runtime.resumeThread(params.threadId, existing?.path ?? null);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
 
-    const workspaces = await this.buildWorkspaceCatalog();
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
+    ]);
     const thread = this.threadProjection.toWorkbenchThread(
       runtimeThread,
       workspaces,
       this.threadViews.get(runtimeThread.id),
     );
-    this.threadViews.set(thread.thread.id, thread);
+    this.setThreadView(thread);
     this.threadSummaries.set(thread.thread.id, thread.thread);
+    this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return { thread };
   }
@@ -370,14 +417,17 @@ export class WorkbenchService {
   ): Promise<{ thread: WorkbenchThread }> {
     const runtimeThread = await this.runtime.unarchiveThread(params.threadId);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-    const workspaces = await this.buildWorkspaceCatalog();
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
+    ]);
     const thread = this.threadProjection.toWorkbenchThread(
       runtimeThread,
       workspaces,
       this.threadViews.get(runtimeThread.id),
     );
-    this.threadViews.set(thread.thread.id, thread);
+    this.setThreadView(thread);
     this.threadSummaries.set(thread.thread.id, thread.thread);
+    this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return { thread };
   }
@@ -388,15 +438,18 @@ export class WorkbenchService {
   ): Promise<{ thread: WorkbenchThread }> {
     const summary = this.threadSummaries.get(params.threadId);
     if (!summary) {
-      throw new Error("Thread not found");
+      throw new AppError("thread.not_found", "Thread not found");
     }
 
     const runtimeThread = await this.runtime.forkThread(params.threadId, summary.cwd);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-    const workspaces = await this.buildWorkspaceCatalog();
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
+    ]);
     const thread = this.threadProjection.toWorkbenchThread(runtimeThread, workspaces);
-    this.threadViews.set(thread.thread.id, thread);
+    this.setThreadView(thread);
     this.threadSummaries.set(thread.thread.id, thread.thread);
+    this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return { thread };
   }
@@ -407,14 +460,17 @@ export class WorkbenchService {
   ): Promise<{ thread: WorkbenchThread }> {
     const runtimeThread = await this.runtime.rollbackThread(params.threadId, params.numTurns);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-    const workspaces = await this.buildWorkspaceCatalog();
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
+    ]);
     const thread = this.threadProjection.toWorkbenchThread(
       runtimeThread,
       workspaces,
       this.threadViews.get(runtimeThread.id),
     );
-    this.threadViews.set(thread.thread.id, thread);
+    this.setThreadView(thread);
     this.threadSummaries.set(thread.thread.id, thread.thread);
+    this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return { thread };
   }
@@ -430,7 +486,7 @@ export class WorkbenchService {
     const projected = this.threadProjection.toWorkbenchTurn(turn);
     const existing = this.threadViews.get(params.threadId);
     if (existing) {
-      this.threadViews.set(params.threadId, this.threadProjection.applyTurn(existing, turn));
+      this.setThreadView(this.threadProjection.applyTurn(existing, turn));
     }
     return { turn: projected };
   }
@@ -446,7 +502,7 @@ export class WorkbenchService {
     const projected = this.threadProjection.toWorkbenchTurn(turn);
     const existing = this.threadViews.get(params.threadId);
     if (existing) {
-      this.threadViews.set(params.threadId, this.threadProjection.applyTurn(existing, turn));
+      this.setThreadView(this.threadProjection.applyTurn(existing, turn));
     }
     return { turn: projected };
   }
@@ -457,7 +513,7 @@ export class WorkbenchService {
   ): Promise<{ session: CommandSessionSnapshot }> {
     const workspace = await this.resolveWorkspace(params.workspaceId);
     if (!workspace) {
-      throw new Error("Workspace not found");
+      throw new AppError("workspace.not_found", "Workspace not found");
     }
 
     const processId = randomUUID();
@@ -485,7 +541,7 @@ export class WorkbenchService {
   ): Promise<{ ok: true }> {
     const approval = this.approvalBroker.get(requestId);
     if (!approval) {
-      throw new Error("Approval no longer pending");
+      throw new AppError("approval.not_pending", "Approval no longer pending");
     }
 
     await this.runtime.resolveApproval(approval, decision);
@@ -499,7 +555,7 @@ export class WorkbenchService {
   ): Promise<{ search: import("@webcli/contracts").FuzzySearchSnapshot }> {
     const workspace = await this.resolveWorkspace(params.workspaceId);
     if (!workspace) {
-      throw new Error("Workspace not found");
+      throw new AppError("workspace.not_found", "Workspace not found");
     }
 
     return {
@@ -510,22 +566,88 @@ export class WorkbenchService {
     };
   }
 
+  private async handleWorkspaceGitRead(
+    params: { workspaceId: string },
+  ): Promise<{ snapshot: GitWorkingTreeSnapshot }> {
+    const workspace = await this.resolveWorkspace(params.workspaceId);
+    if (!workspace) {
+      throw new AppError("workspace.not_found", "Workspace not found");
+    }
+
+    const snapshot = await this.runtime.readWorkspaceGitSnapshot(
+      workspace.absPath,
+      workspace.id,
+      workspace.name,
+    );
+    this.workspaceGitSnapshots.set(workspace.id, snapshot);
+    this.broadcast("workspace.git.updated", { snapshot });
+    return { snapshot };
+  }
+
+  private async handleWorkspaceGitBranchesRead(
+    params: { workspaceId: string },
+  ): Promise<{
+    branches: Array<import("@webcli/contracts").GitBranchReference>;
+    currentBranch: string | null;
+  }> {
+    const workspace = await this.resolveWorkspace(params.workspaceId);
+    if (!workspace) {
+      throw new AppError("workspace.not_found", "Workspace not found");
+    }
+
+    return this.runtime.readWorkspaceGitBranches(workspace.absPath);
+  }
+
+  private async handleWorkspaceGitBranchSwitch(
+    params: { workspaceId: string; branch: string },
+  ): Promise<{
+    snapshot: GitWorkingTreeSnapshot;
+    branches: Array<import("@webcli/contracts").GitBranchReference>;
+    currentBranch: string | null;
+  }> {
+    const workspace = await this.resolveWorkspace(params.workspaceId);
+    if (!workspace) {
+      throw new AppError("workspace.not_found", "Workspace not found");
+    }
+
+    await this.runtime.switchWorkspaceGitBranch(workspace.absPath, params.branch);
+    const snapshot = await this.runtime.readWorkspaceGitSnapshot(
+      workspace.absPath,
+      workspace.id,
+      workspace.name,
+    );
+    this.workspaceGitSnapshots.set(workspace.id, snapshot);
+    this.broadcast("workspace.git.updated", { snapshot });
+    const branchState = await this.runtime.readWorkspaceGitBranches(workspace.absPath);
+
+    return {
+      snapshot,
+      branches: branchState.branches,
+      currentBranch: branchState.currentBranch,
+    };
+  }
+
   private async handleRuntimeEvent(event: SessionRuntimeEvent): Promise<void> {
     switch (event.type) {
       case "status.changed":
         this.broadcast("runtime.statusChanged", { runtime: event.status });
         return;
+      case "account.updated":
+        this.broadcast("account.updated", { account: event.account });
+        return;
       case "thread.updated": {
-        const workspaces = await this.buildWorkspaceCatalog();
+        const workspaces = await this.getWorkspaceCatalog([
+          { cwd: event.thread.cwd, updatedAt: event.thread.updatedAt },
+        ]);
         const summary = this.threadProjection.toThreadSummary(event.thread, workspaces);
         this.threadSummaries.set(summary.id, summary);
         const existing = this.threadViews.get(summary.id);
         if (existing) {
-          this.threadViews.set(
-            summary.id,
+          this.setThreadView(
             this.threadProjection.toWorkbenchThread(event.thread, workspaces, existing),
           );
         }
+        this.invalidateWorkspaceCatalog();
         this.broadcast("thread.updated", { thread: summary });
         return;
       }
@@ -543,12 +665,15 @@ export class WorkbenchService {
         this.threadSummaries.set(event.threadId, next);
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(event.threadId, {
+          this.setThreadView({
             ...existing,
             thread: next,
           });
         }
         this.broadcast("thread.updated", { thread: next });
+        if (!isThreadRunning(event.status)) {
+          void this.refreshWorkspaceGitSnapshotForWorkspaceId(next.workspaceId);
+        }
         return;
       }
       case "thread.name.changed": {
@@ -560,7 +685,7 @@ export class WorkbenchService {
         this.threadSummaries.set(event.threadId, next);
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(event.threadId, {
+          this.setThreadView({
             ...existing,
             thread: next,
           });
@@ -577,7 +702,7 @@ export class WorkbenchService {
         this.threadSummaries.set(event.threadId, next);
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(event.threadId, {
+          this.setThreadView({
             ...existing,
             archived: event.archived,
             thread: next,
@@ -589,10 +714,7 @@ export class WorkbenchService {
       case "turn.updated": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(
-            event.threadId,
-            this.threadProjection.applyTurn(existing, event.turn),
-          );
+          this.setThreadView(this.threadProjection.applyTurn(existing, event.turn));
         }
         this.broadcast("turn.updated", {
           threadId: event.threadId,
@@ -603,10 +725,7 @@ export class WorkbenchService {
       case "timeline.item": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(
-            event.threadId,
-            this.threadProjection.applyTimelineItem(existing, event.item),
-          );
+          this.setThreadView(this.threadProjection.applyTimelineItem(existing, event.item));
         }
         this.broadcast("timeline.item", {
           threadId: event.threadId,
@@ -617,10 +736,7 @@ export class WorkbenchService {
       case "timeline.delta": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(
-            event.threadId,
-            this.threadProjection.appendTimelineDelta(existing, event.item),
-          );
+          this.setThreadView(this.threadProjection.appendTimelineDelta(existing, event.item));
         }
         this.broadcast("timeline.delta", {
           threadId: event.threadId,
@@ -631,19 +747,21 @@ export class WorkbenchService {
       case "diff.updated": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(event.threadId, this.threadProjection.applyDiff(existing, event.diff));
+          this.setThreadView(this.threadProjection.applyDiff(existing, event.diff));
         }
         this.broadcast("diff.updated", { threadId: event.threadId, diff: event.diff });
+        void this.refreshWorkspaceGitSnapshotForThread(event.threadId);
         return;
       }
       case "plan.updated": {
         const plan = {
+          turnId: event.turnId,
           explanation: event.explanation,
           plan: event.plan,
         };
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(event.threadId, this.threadProjection.applyPlan(existing, plan));
+          this.setThreadView(this.threadProjection.applyPlan(existing, plan));
         }
         this.broadcast("plan.updated", { threadId: event.threadId, plan });
         return;
@@ -651,10 +769,7 @@ export class WorkbenchService {
       case "review.updated": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
-          this.threadViews.set(
-            event.threadId,
-            this.threadProjection.applyReview(existing, event.review),
-          );
+          this.setThreadView(this.threadProjection.applyReview(existing, event.review));
         }
         this.broadcast("review.updated", { threadId: event.threadId, review: event.review });
         return;
@@ -698,6 +813,7 @@ export class WorkbenchService {
           text: "",
           session,
         });
+        void this.refreshWorkspaceGitSnapshotForPath(session?.cwd ?? null);
         return;
       }
     }
@@ -720,22 +836,59 @@ export class WorkbenchService {
       return saved;
     }
 
-    const workspaces = await this.buildWorkspaceCatalog();
+    await this.ensureThreadSummaryCache();
+    const workspaces = await this.getWorkspaceCatalog();
     return workspaces.find((workspace) => workspace.id === id) ?? null;
   }
 
-  private async buildWorkspaceCatalog(): Promise<Array<WorkspaceRecord>> {
-    const [activeThreads, archivedThreads] = await Promise.all([
-      this.runtime.listThreads(false),
-      this.runtime.listThreads(true),
-    ]);
+  private async refreshWorkspaceGitSnapshotForThread(threadId: string): Promise<void> {
+    const summary = this.threadSummaries.get(threadId);
+    if (!summary) {
+      return;
+    }
 
-    return this.workspaceCatalog.buildWorkspaceCatalog(
-      this.workspaceRepo.list(),
-      [...activeThreads, ...archivedThreads],
-      this.homePath,
-      this.workspaceRepo.listIgnoredPaths(),
+    await this.refreshWorkspaceGitSnapshotForWorkspaceId(summary.workspaceId);
+  }
+
+  private async refreshWorkspaceGitSnapshotForPath(cwd: string | null | undefined): Promise<void> {
+    if (!cwd) {
+      return;
+    }
+
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd, updatedAt: Math.floor(Date.now() / 1000) },
+    ]);
+    const workspace = this.workspaceCatalog.matchWorkspaceForPath(workspaces, cwd);
+    if (!workspace) {
+      return;
+    }
+
+    await this.refreshWorkspaceGitSnapshot(workspace);
+  }
+
+  private async refreshWorkspaceGitSnapshotForWorkspaceId(
+    workspaceId: string | null | undefined,
+  ): Promise<void> {
+    if (!workspaceId) {
+      return;
+    }
+
+    const workspace = await this.resolveWorkspace(workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    await this.refreshWorkspaceGitSnapshot(workspace);
+  }
+
+  private async refreshWorkspaceGitSnapshot(workspace: WorkspaceRecord): Promise<void> {
+    const snapshot = await this.runtime.readWorkspaceGitSnapshot(
+      workspace.absPath,
+      workspace.id,
+      workspace.name,
     );
+    this.workspaceGitSnapshots.set(workspace.id, snapshot);
+    this.broadcast("workspace.git.updated", { snapshot });
   }
 
   private replaceThreadSummaryCache(
@@ -748,17 +901,145 @@ export class WorkbenchService {
     }
   }
 
+  private async ensureThreadSummaryCache(): Promise<void> {
+    if (this.summaryCacheInitialized) {
+      return;
+    }
+
+    await this.refreshThreadSummaryCache();
+  }
+
+  private async refreshThreadSummaryCache(): Promise<void> {
+    const [activeThreads, archivedThreads] = await Promise.all([
+      this.runtime.listThreads(false),
+      this.runtime.listThreads(true),
+    ]);
+    const workspaces = this.workspaceCatalog.buildWorkspaceCatalog(
+      this.workspaceRepo.list(),
+      [...activeThreads, ...archivedThreads],
+      this.homePath,
+      this.workspaceRepo.listIgnoredPaths(),
+    );
+    this.cachedWorkspaceCatalog = workspaces;
+    this.replaceThreadSummaryCache(
+      activeThreads.map((thread) => this.threadProjection.toThreadSummary(thread, workspaces)),
+      archivedThreads.map((thread) => this.threadProjection.toThreadSummary(thread, workspaces)),
+    );
+    this.summaryCacheInitialized = true;
+  }
+
+  private async getWorkspaceCatalog(
+    extraThreads: Array<{ cwd: string; updatedAt: number }> = [],
+  ): Promise<Array<WorkspaceRecord>> {
+    await this.ensureThreadSummaryCache();
+    if (extraThreads.length === 0 && this.cachedWorkspaceCatalog) {
+      return this.cachedWorkspaceCatalog;
+    }
+
+    const workspaces = this.workspaceCatalog.buildWorkspaceCatalog(
+      this.workspaceRepo.list(),
+      [
+        ...Array.from(this.threadSummaries.values()).map((thread) => ({
+          cwd: thread.cwd,
+          updatedAt: thread.updatedAt,
+        })),
+        ...extraThreads,
+      ],
+      this.homePath,
+      this.workspaceRepo.listIgnoredPaths(),
+    );
+
+    if (extraThreads.length === 0) {
+      this.cachedWorkspaceCatalog = workspaces;
+    }
+
+    return workspaces;
+  }
+
+  private getSortedThreadSummaries(): Array<ThreadSummary> {
+    return [...this.threadSummaries.values()].sort(
+      (left, right) =>
+        right.updatedAt - left.updatedAt ||
+        right.createdAt - left.createdAt ||
+        left.id.localeCompare(right.id),
+    );
+  }
+
+  private invalidateWorkspaceCatalog(): void {
+    this.cachedWorkspaceCatalog = null;
+  }
+
+  private reprojectThreadSummaries(workspaces: Array<WorkspaceRecord>): void {
+    for (const [threadId, summary] of this.threadSummaries.entries()) {
+      const workspace = this.workspaceCatalog.matchWorkspaceForPath(workspaces, summary.cwd);
+      if (
+        summary.workspaceId === (workspace?.id ?? null) &&
+        summary.workspaceName === (workspace?.name ?? null)
+      ) {
+        continue;
+      }
+
+      const next = {
+        ...summary,
+        workspaceId: workspace?.id ?? null,
+        workspaceName: workspace?.name ?? null,
+      };
+      this.threadSummaries.set(threadId, next);
+      const existing = this.threadViews.get(threadId);
+      if (existing) {
+        this.setThreadView({
+          ...existing,
+          thread: next,
+        });
+      }
+    }
+  }
+
+  private setThreadView(thread: WorkbenchThread): void {
+    this.threadViews.delete(thread.thread.id);
+    this.threadViews.set(thread.thread.id, thread);
+    this.pruneThreadViews();
+  }
+
+  private pruneThreadViews(): void {
+    if (this.threadViews.size <= MAX_RETAINED_THREAD_VIEWS) {
+      return;
+    }
+
+    const pinnedThreadIds = new Set<string>();
+    for (const approval of this.approvalBroker.list()) {
+      if (approval.threadId) {
+        pinnedThreadIds.add(approval.threadId);
+      }
+    }
+    for (const summary of this.threadSummaries.values()) {
+      if (isThreadRunning(summary)) {
+        pinnedThreadIds.add(summary.id);
+      }
+    }
+
+    for (const threadId of this.threadViews.keys()) {
+      if (this.threadViews.size <= MAX_RETAINED_THREAD_VIEWS) {
+        break;
+      }
+      if (pinnedThreadIds.has(threadId)) {
+        continue;
+      }
+      this.threadViews.delete(threadId);
+    }
+  }
+
   private validateWorkspaceInput(input: WorkspaceCreateInput): WorkspaceCreateInput {
     if (!input || typeof input !== "object") {
-      throw new Error("Workspace payload is required");
+      throw new AppError("workspace.payload_required", "Workspace payload is required");
     }
 
     if (!input.name?.trim()) {
-      throw new Error("Workspace name is required");
+      throw new AppError("workspace.name_required", "Workspace name is required");
     }
 
     if (!input.absPath?.trim()) {
-      throw new Error("Workspace path is required");
+      throw new AppError("workspace.path_required", "Workspace path is required");
     }
 
     return {
@@ -827,4 +1108,26 @@ export class WorkbenchService {
 
 function normalizeNullableEnum<T extends string>(value: T | null): T | null {
   return value ?? null;
+}
+
+function clampThreadPageSize(value: number | null | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_THREAD_PAGE_SIZE;
+  }
+
+  return Math.min(Math.max(Math.floor(value ?? DEFAULT_THREAD_PAGE_SIZE), 1), 200);
+}
+
+function parseThreadPageCursor(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function isThreadRunning(threadOrStatus: ThreadSummary | ThreadSummary["status"]): boolean {
+  const status = "status" in threadOrStatus ? threadOrStatus.status : threadOrStatus;
+  return status.type === "active";
 }

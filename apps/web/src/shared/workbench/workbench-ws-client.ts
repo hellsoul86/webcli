@@ -1,4 +1,5 @@
 import type {
+  AppErrorPayload,
   AppClientMessage,
   AppRequestMethod,
   AppRequestParams,
@@ -6,6 +7,7 @@ import type {
   AppServerMessage,
   RequestId,
 } from "@webcli/contracts";
+import { AppError } from "@webcli/contracts";
 
 type Listener = (message: AppServerMessage) => void;
 type ConnectionListener = (connected: boolean) => void;
@@ -78,7 +80,12 @@ export class WorkbenchClient {
           }
 
           if (message.error) {
-            pending.reject(new Error(message.error.message));
+            const payload = message.error.data as AppErrorPayload | undefined;
+            if (payload?.code) {
+              pending.reject(new AppError(payload.code, message.error.message, payload.params));
+            } else {
+              pending.reject(new Error(message.error.message));
+            }
           } else {
             pending.resolve(message.result);
           }

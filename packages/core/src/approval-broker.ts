@@ -52,4 +52,8 @@ export class ApprovalBroker {
       .filter((entry) => entry.sessionId === sessionId)
       .map((entry) => entry.approval);
   }
+
+  list(): Array<PendingApproval> {
+    return Array.from(this.pendingById.values()).map((entry) => entry.approval);
+  }
 }

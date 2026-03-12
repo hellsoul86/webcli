@@ -1,7 +1,11 @@
 import { basename, resolve, sep } from "node:path";
 import type { ThreadSummary, WorkspaceRecord } from "@webcli/contracts";
 import { isWithinHomePath } from "./home-paths.js";
-import type { RuntimeThreadRecord } from "./runtime.js";
+
+type WorkspaceCatalogThread = {
+  cwd: string;
+  updatedAt: number;
+};
 
 function normalizePath(value: string): string {
   return resolve(value);
@@ -42,7 +46,7 @@ export class WorkspaceCatalogService {
 
   buildWorkspaceCatalog(
     savedWorkspaces: Array<WorkspaceRecord>,
-    threads: Array<RuntimeThreadRecord>,
+    threads: Array<WorkspaceCatalogThread>,
     homePath: string,
     ignoredPaths: Array<string> = [],
   ): Array<WorkspaceRecord> {

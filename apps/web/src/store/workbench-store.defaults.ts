@@ -1,7 +1,7 @@
 import type { IntegrationState } from "./workbench-store.types";
 
 export const WORKBENCH_STORAGE_KEY = "webcli-workbench";
-export const WORKBENCH_STORAGE_VERSION = 2;
+export const WORKBENCH_STORAGE_VERSION = 3;
 
 export const defaultConnection = {
   connected: false,

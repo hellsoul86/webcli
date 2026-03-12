@@ -1,5 +1,5 @@
 import type { StateStorage } from "zustand/middleware";
-import type { ThreadSummary, WorkbenchTurn } from "@webcli/contracts";
+import type { PendingApproval, ThreadSummary, WorkbenchTurn } from "@webcli/contracts";
 import {
   WORKBENCH_STORAGE_KEY,
   defaultIntegrations,
@@ -55,14 +55,61 @@ export function resetWorkbenchPersistStorage(): void {
 }
 
 export function selectTimeline(threadView: ThreadView | null | undefined): Array<TimelineEntry> {
+  return selectTimelineWindow(threadView, Number.POSITIVE_INFINITY);
+}
+
+export function countTimelineEntries(threadView: ThreadView | null | undefined): number {
   if (!threadView) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const turnId of threadView.turnOrder) {
+    const turn = threadView.turns[turnId];
+    if (turn) {
+      total += turn.itemOrder.length;
+    }
+  }
+  return total;
+}
+
+export function selectTimelineWindow(
+  threadView: ThreadView | null | undefined,
+  limit: number,
+): Array<TimelineEntry> {
+  if (!threadView || limit <= 0) {
     return [];
   }
 
-  return threadView.turnOrder.flatMap((turnId) => {
+  if (!Number.isFinite(limit)) {
+    return threadView.turnOrder.flatMap((turnId) => {
+      const turn = threadView.turns[turnId];
+      return turn ? turn.itemOrder.map((itemId) => turn.items[itemId]).filter(Boolean) : [];
+    });
+  }
+
+  const remainingItems: Array<TimelineEntry> = [];
+  let remaining = Math.floor(limit);
+
+  for (let turnIndex = threadView.turnOrder.length - 1; turnIndex >= 0 && remaining > 0; turnIndex -= 1) {
+    const turnId = threadView.turnOrder[turnIndex];
     const turn = threadView.turns[turnId];
-    return turn ? turn.itemOrder.map((itemId) => turn.items[itemId]).filter(Boolean) : [];
-  });
+    if (!turn) {
+      continue;
+    }
+
+    for (let itemIndex = turn.itemOrder.length - 1; itemIndex >= 0 && remaining > 0; itemIndex -= 1) {
+      const itemId = turn.itemOrder[itemIndex];
+      const item = turn.items[itemId];
+      if (!item) {
+        continue;
+      }
+      remainingItems.push(item);
+      remaining -= 1;
+    }
+  }
+
+  return remainingItems.reverse();
 }
 
 export function cloneThreadView(thread: ThreadView): ThreadView {
@@ -77,6 +124,7 @@ export function cloneThreadView(thread: ThreadView): ThreadView {
     },
     latestPlan: thread.latestPlan
       ? {
+          turnId: thread.latestPlan.turnId,
           explanation: thread.latestPlan.explanation,
           plan: [...thread.latestPlan.plan],
         }
@@ -125,10 +173,13 @@ export function mergeTurn(existing: WorkbenchTurn | undefined, incoming: Workben
   };
 }
 
-export function mergeThreadSummary(existing: ThreadView | undefined, thread: ThreadSummary): ThreadView {
+export function mergeHydratedThreadSummary(
+  existing: ThreadView | undefined,
+  thread: ThreadSummary,
+): ThreadView {
   if (!existing) {
     return {
-      ...createEmptyThreadView(thread.id),
+      ...createEmptyThreadView(thread.id, thread),
       archived: thread.archived,
       thread,
     };
@@ -144,10 +195,25 @@ export function mergeThreadSummary(existing: ThreadView | undefined, thread: Thr
   };
 }
 
-export function createEmptyThreadView(threadId: string): ThreadView {
+export function upsertThreadSummary(
+  existing: ThreadSummary | undefined,
+  thread: ThreadSummary,
+): ThreadSummary {
+  return existing
+    ? {
+        ...existing,
+        ...thread,
+      }
+    : thread;
+}
+
+export function createEmptyThreadView(
+  threadId: string,
+  summary?: ThreadSummary | null,
+): ThreadView {
   return {
-    thread: createPlaceholderThreadSummary(threadId),
-    archived: false,
+    thread: summary ?? createPlaceholderThreadSummary(threadId),
+    archived: summary?.archived ?? false,
     turnOrder: [],
     turns: {},
     latestDiff: "",
@@ -226,6 +292,17 @@ export function resetFuzzySearchState() {
     ...defaultIntegrations.fuzzySearch,
     results: [...defaultIntegrations.fuzzySearch.results],
   };
+}
+
+export function touchOrderedIds(ids: Array<string>, target: string): Array<string> {
+  return [target, ...ids.filter((candidate) => candidate !== target)];
+}
+
+export function hasPendingApprovalForThread(
+  approvals: Array<PendingApproval>,
+  threadId: string,
+): boolean {
+  return approvals.some((approval) => approval.threadId === threadId);
 }
 
 function createPlaceholderThreadSummary(threadId: string): ThreadSummary {

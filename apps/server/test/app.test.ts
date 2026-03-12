@@ -10,6 +10,7 @@ import type {
   ApprovalPolicy,
   ConfigSnapshot,
   FuzzySearchSnapshot,
+  GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
   PendingApproval,
@@ -51,6 +52,20 @@ class FakeRuntime implements SessionRuntime {
     accountType: "chatgpt",
     email: "user@example.com",
     planType: "pro",
+    usageWindows: [
+      {
+        label: "5h",
+        remainingPercent: 75,
+        usedPercent: 25,
+        resetsAt: 1_710_000_000,
+      },
+      {
+        label: "1w",
+        remainingPercent: 48,
+        usedPercent: 52,
+        resetsAt: 1_710_604_800,
+      },
+    ],
   };
 
   models: Array<ModelOption> = [
@@ -75,6 +90,7 @@ class FakeRuntime implements SessionRuntime {
   config: ConfigSnapshot = {
     model: "gpt-5-codex",
     reasoningEffort: "high",
+    serviceTier: null,
     approvalPolicy: "on-request",
     sandboxMode: "danger-full-access",
   };
@@ -251,6 +267,14 @@ class FakeRuntime implements SessionRuntime {
     this.config = { ...input };
   }
 
+  async readWorkspaceGitSnapshot(
+    cwd: string,
+    workspaceId: string,
+    workspaceName: string,
+  ): Promise<GitWorkingTreeSnapshot> {
+    return makeGitSnapshot(workspaceId, workspaceName, cwd);
+  }
+
   async loginMcp(): Promise<string> {
     return "https://example.com/auth";
   }
@@ -357,19 +381,33 @@ describe("createApp", () => {
       response.json(),
     );
     expect(bootstrap.account.email).toBe("user@example.com");
+    expect(bootstrap.account.usageWindows).toEqual([
+      expect.objectContaining({ label: "5h", remainingPercent: 75 }),
+      expect.objectContaining({ label: "1w", remainingPercent: 48 }),
+    ]);
     expect(bootstrap.models).toHaveLength(1);
     expect(bootstrap.workspaces).toHaveLength(2);
     expect(bootstrap.activeThreads).toHaveLength(3);
-    expect(bootstrap.archivedThreads).toHaveLength(1);
-    expect(bootstrap.loadedThreadIds).toEqual(
-      bootstrap.activeThreads.map((thread: { id: string }) => thread.id),
-    );
+    expect(bootstrap.archivedThreadCount).toBe(1);
     expect(
       bootstrap.activeThreads
         .map((thread: { workspaceName: string | null }) => thread.workspaceName)
         .filter(Boolean)
         .sort(),
     ).toEqual(["Workspace", "derived-project"]);
+
+    const archivedPage = await fetch(
+      `http://${env.host}:${port}/api/thread-summaries?archived=true&limit=1`,
+    ).then((response) => response.json());
+    expect(archivedPage.items).toHaveLength(1);
+    expect(archivedPage.items[0].id).toBe("thread-archived");
+    expect(archivedPage.nextCursor).toBeNull();
+
+    const filteredArchivedPage = await fetch(
+      `http://${env.host}:${port}/api/thread-summaries?archived=true&workspaceId=${savedWorkspace.id}`,
+    ).then((response) => response.json());
+    expect(filteredArchivedPage.items).toHaveLength(1);
+    expect(filteredArchivedPage.items[0].workspaceId).toBe(savedWorkspace.id);
 
     const suggestions = await fetch(
       `http://${env.host}:${port}/api/workspace-path-suggestions?query=~/`,
@@ -419,6 +457,27 @@ describe("createApp", () => {
     await waitFor(() => hasResponse(sessionAMessages, "open-1"));
     const openResponse = getResponse(sessionAMessages, "open-1");
     expect(openResponse?.result && "thread" in openResponse.result).toBe(true);
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "git-read-1",
+        method: "workspace.git.read",
+        params: {
+          workspaceId: savedWorkspace.id,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "git-read-1"));
+    const gitReadResponse = getResponse(sessionAMessages, "git-read-1");
+    expect(gitReadResponse?.result && "snapshot" in gitReadResponse.result).toBe(true);
+    const gitSnapshot = (
+      gitReadResponse?.result && "snapshot" in gitReadResponse.result
+        ? gitReadResponse.result.snapshot
+        : null
+    ) as GitWorkingTreeSnapshot | null;
+    expect(gitSnapshot?.workspaceId).toBe(savedWorkspace.id);
 
     const openedThreadId = runtime.activeThreads[0]?.id;
     expect(openedThreadId).toBeTruthy();
@@ -473,6 +532,21 @@ describe("createApp", () => {
       approval,
       decision: "accept",
     });
+
+    runtime.emit({
+      type: "diff.updated",
+      threadId: "thread-1",
+      diff: "diff --git a/README.md b/README.md\n+changed",
+    });
+
+    await waitFor(() =>
+      sessionAMessages.some(
+        (message) =>
+          message.type === "server.notification" &&
+          message.method === "workspace.git.updated" &&
+          message.params.snapshot.workspaceId === savedWorkspace.id,
+      ),
+    );
 
     wsA.close();
     wsB.close();
@@ -574,6 +648,37 @@ function makeRuntimeThread(
     path: null,
     ephemeral: false,
     turns: [],
+  };
+}
+
+function makeGitSnapshot(
+  workspaceId: string,
+  workspaceName: string,
+  cwd: string,
+): GitWorkingTreeSnapshot {
+  return {
+    workspaceId,
+    workspaceName,
+    repoRoot: cwd,
+    branch: "main",
+    isGitRepository: true,
+    clean: false,
+    stagedCount: 1,
+    unstagedCount: 1,
+    untrackedCount: 0,
+    generatedAt: Date.now(),
+    files: [
+      {
+        path: "README.md",
+        status: "modified",
+        staged: true,
+        unstaged: true,
+        additions: 2,
+        deletions: 1,
+        patch: "diff --git a/README.md b/README.md\n@@ -1 +1,2 @@\n-old\n+new\n+line",
+        oldPath: null,
+      },
+    ],
   };
 }
 

@@ -4,11 +4,15 @@ import { extname } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
+import { AppError, isAppError } from "@webcli/contracts";
 import type {
+  ApiErrorResponse,
   AppClientMessage,
+  AppErrorPayload,
   BootstrapResponse,
   HealthResponse,
   PathSuggestionsResponse,
+  ThreadSummaryPageResponse,
   WorkspaceCreateInput,
   WorkspaceDismissInput,
   WorkspaceRecord,
@@ -74,6 +78,27 @@ export async function createApp(
     return response;
   });
 
+  app.get("/api/thread-summaries", async (request, reply) => {
+    try {
+      const query = request.query as {
+        archived?: string;
+        cursor?: string;
+        limit?: string;
+        workspaceId?: string;
+      };
+      const response: ThreadSummaryPageResponse = await service.listThreadSummaries({
+        archived: query.archived === "true",
+        cursor: query.cursor ?? null,
+        limit: query.limit ? Number.parseInt(query.limit, 10) : null,
+        workspaceId: query.workspaceId && query.workspaceId !== "all" ? query.workspaceId : undefined,
+      });
+      return response;
+    } catch (error) {
+      reply.code(400);
+      return toApiErrorResponse(error, "Invalid thread summary query");
+    }
+  });
+
   app.get("/api/workspaces", async () => {
     return service.listWorkspaces();
   });
@@ -90,14 +115,20 @@ export async function createApp(
       const requestedPath = query.path?.trim();
       if (!requestedPath) {
         reply.code(400);
-        return { message: "Resource path is required" };
+        return toApiErrorResponse(
+          new AppError("resource.path_required", "Resource path is required"),
+          "Resource path is required",
+        );
       }
 
       const absPath = ensureHomeScopedPath(requestedPath);
       const stats = statSync(absPath, { throwIfNoEntry: false });
       if (!stats || !stats.isFile()) {
         reply.code(404);
-        return { message: "Resource not found" };
+        return toApiErrorResponse(
+          new AppError("resource.not_found", "Resource not found"),
+          "Resource not found",
+        );
       }
 
       reply.header("Cache-Control", "private, max-age=60");
@@ -106,7 +137,7 @@ export async function createApp(
       return reply.send(createReadStream(absPath));
     } catch (error) {
       reply.code(400);
-      return { message: error instanceof Error ? error.message : "Invalid resource path" };
+      return toApiErrorResponse(error, "Invalid resource path");
     }
   });
 
@@ -118,7 +149,7 @@ export async function createApp(
       return created;
     } catch (error) {
       reply.code(400);
-      return { message: error instanceof Error ? error.message : "Invalid workspace payload" };
+      return toApiErrorResponse(error, "Invalid workspace payload");
     }
   });
 
@@ -130,7 +161,7 @@ export async function createApp(
       return null;
     } catch (error) {
       reply.code(400);
-      return { message: error instanceof Error ? error.message : "Invalid workspace path" };
+      return toApiErrorResponse(error, "Invalid workspace path");
     }
   });
 
@@ -140,13 +171,16 @@ export async function createApp(
       const updated = service.updateWorkspace(request.params.id, payload);
       if (!updated) {
         reply.code(404);
-        return { message: "Workspace not found" };
+        return toApiErrorResponse(
+          new AppError("workspace.not_found", "Workspace not found"),
+          "Workspace not found",
+        );
       }
 
       return updated;
     } catch (error) {
       reply.code(400);
-      return { message: error instanceof Error ? error.message : "Invalid workspace payload" };
+      return toApiErrorResponse(error, "Invalid workspace payload");
     }
   });
 
@@ -154,7 +188,10 @@ export async function createApp(
     const deleted = service.deleteWorkspace(request.params.id);
     if (!deleted) {
       reply.code(404);
-      return { message: "Workspace not found" };
+      return toApiErrorResponse(
+        new AppError("workspace.not_found", "Workspace not found"),
+        "Workspace not found",
+      );
     }
 
     reply.code(204);
@@ -268,6 +305,10 @@ async function handleWsMessage(
         error: {
           code: -32700,
           message: "Invalid JSON payload",
+          data: toAppErrorPayload(
+            new AppError("invalid.json", "Invalid JSON payload"),
+            "Invalid JSON payload",
+          ),
         },
       }),
     );
@@ -291,8 +332,32 @@ async function handleWsMessage(
         error: {
           code: -32000,
           message: error instanceof Error ? error.message : "Workbench request failed",
+          data: toAppErrorPayload(error, "Workbench request failed"),
         },
       }),
     );
   }
+}
+
+function toAppErrorPayload(error: unknown, fallbackMessage: string): AppErrorPayload | undefined {
+  if (isAppError(error)) {
+    return error.toPayload();
+  }
+
+  return undefined;
+}
+
+function toApiErrorResponse(error: unknown, fallbackMessage: string): ApiErrorResponse {
+  if (isAppError(error)) {
+    const payload = error.toPayload();
+    return {
+      message: payload.message,
+      code: payload.code,
+      ...(payload.params ? { params: payload.params } : {}),
+    };
+  }
+
+  return {
+    message: error instanceof Error ? error.message : fallbackMessage,
+  };
 }

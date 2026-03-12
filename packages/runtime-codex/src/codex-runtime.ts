@@ -1,10 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import type {
+  AccountUsageWindow,
   AccountSummary,
   ApprovalPolicy,
   ConfigSnapshot,
   FuzzySearchSnapshot,
+  GitBranchReference,
+  GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
   PendingApproval,
@@ -31,6 +34,7 @@ import type { AskForApproval } from "./generated/v2/AskForApproval";
 import type { CommandExecResponse } from "./generated/v2/CommandExecResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
 import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
+import type { GetAccountRateLimitsResponse } from "./generated/v2/GetAccountRateLimitsResponse";
 import type { ListMcpServerStatusResponse } from "./generated/v2/ListMcpServerStatusResponse";
 import type { McpServerOauthLoginResponse } from "./generated/v2/McpServerOauthLoginResponse";
 import type { ModelListResponse } from "./generated/v2/ModelListResponse";
@@ -56,6 +60,7 @@ import {
   type JsonRpcError,
   type JsonRpcMessage,
 } from "./jsonrpc.js";
+import { readGitBranches, readGitWorkingTreeSnapshot, switchGitBranch } from "./git-working-tree.js";
 import {
   type ClientRequestMethod,
   type ClientRequestParams,
@@ -101,6 +106,7 @@ export class CodexRuntime implements SessionRuntime {
     accountType: "unknown",
     email: null,
     planType: null,
+    usageWindows: [],
   };
   private status: RuntimeStatus = {
     connected: false,
@@ -391,6 +397,7 @@ export class CodexRuntime implements SessionRuntime {
     return {
       model: response.config.model ?? null,
       reasoningEffort: response.config.model_reasoning_effort ?? null,
+      serviceTier: response.config.service_tier ?? null,
       approvalPolicy: normalizeApprovalPolicy(response.config.approval_policy),
       sandboxMode: normalizeSandboxMode(response.config.sandbox_mode),
     };
@@ -463,6 +470,11 @@ export class CodexRuntime implements SessionRuntime {
         mergeStrategy: "replace",
       }),
       this.call("config/value/write", {
+        keyPath: "service_tier",
+        value: input.serviceTier,
+        mergeStrategy: "replace",
+      }),
+      this.call("config/value/write", {
         keyPath: "approval_policy",
         value: input.approvalPolicy,
         mergeStrategy: "replace",
@@ -513,6 +525,28 @@ export class CodexRuntime implements SessionRuntime {
         score: file.score,
       })),
     };
+  }
+
+  async readWorkspaceGitSnapshot(
+    cwd: string,
+    workspaceId: string,
+    workspaceName: string,
+  ): Promise<GitWorkingTreeSnapshot> {
+    return readGitWorkingTreeSnapshot({
+      cwd,
+      workspaceId,
+      workspaceName,
+    });
+  }
+
+  async readWorkspaceGitBranches(
+    cwd: string,
+  ): Promise<{ branches: Array<GitBranchReference>; currentBranch: string | null }> {
+    return readGitBranches(cwd);
+  }
+
+  async switchWorkspaceGitBranch(cwd: string, branch: string): Promise<void> {
+    await switchGitBranch(cwd, branch);
   }
 
   async resolveApproval(
@@ -731,7 +765,11 @@ export class CodexRuntime implements SessionRuntime {
       method === "account/login/completed" ||
       method === "account/rateLimits/updated"
     ) {
-      void this.refreshAccountSummary().then(() => {
+      void this.refreshAccountSummary().then((account) => {
+        this.emit({
+          type: "account.updated",
+          account,
+        });
         this.emitStatus();
       });
       return;
@@ -897,12 +935,14 @@ export class CodexRuntime implements SessionRuntime {
     if (method === "turn/plan/updated") {
       const payload = params as {
         threadId: string;
+        turnId: string;
         explanation: string | null;
         plan: Array<{ step: string; status: string }>;
       };
       this.emit({
         type: "plan.updated",
         threadId: payload.threadId,
+        turnId: payload.turnId,
         explanation: payload.explanation,
         plan: payload.plan,
       });
@@ -984,19 +1024,39 @@ export class CodexRuntime implements SessionRuntime {
     }
   }
 
-  private async refreshAccountSummary(): Promise<void> {
-    try {
-      const response = await this.call<GetAccountResponse, "account/read">("account/read", {
+  private async refreshAccountSummary(): Promise<AccountSummary> {
+    const [accountResult, rateLimitsResult] = await Promise.allSettled([
+      this.call<GetAccountResponse, "account/read">("account/read", {
         refreshToken: false,
-      });
-      this.updateAccountSummaryFromResult(response);
-    } catch (error) {
+      }),
+      this.call<GetAccountRateLimitsResponse, "account/rateLimits/read">(
+        "account/rateLimits/read",
+        undefined,
+      ),
+    ]);
+
+    if (accountResult.status === "fulfilled") {
+      this.updateAccountSummaryFromResult(accountResult.value);
+      if (rateLimitsResult.status === "fulfilled") {
+        this.updateAccountUsageFromResult(rateLimitsResult.value);
+      } else {
+        this.account = {
+          ...this.account,
+          usageWindows: [],
+        };
+      }
+      return { ...this.account };
+    }
+
+    {
+      const error = accountResult.reason;
       this.account = {
         authenticated: false,
         requiresOpenaiAuth: true,
         accountType: "unknown",
         email: null,
         planType: null,
+        usageWindows: [],
       };
       this.status = {
         ...this.status,
@@ -1005,6 +1065,7 @@ export class CodexRuntime implements SessionRuntime {
         lastError: error instanceof Error ? error.message : "Failed to refresh account",
       };
     }
+    return { ...this.account };
   }
 
   private updateAccountSummaryFromResult(response: GetAccountResponse): void {
@@ -1015,12 +1076,20 @@ export class CodexRuntime implements SessionRuntime {
       accountType: account?.type ?? "unknown",
       email: account?.type === "chatgpt" ? account.email : null,
       planType: account?.type === "chatgpt" ? account.planType : null,
+      usageWindows: this.account.usageWindows,
     };
     this.status = {
       ...this.status,
       authenticated: this.account.authenticated,
       requiresOpenaiAuth: response.requiresOpenaiAuth,
       lastError: this.status.connected ? null : this.status.lastError,
+    };
+  }
+
+  private updateAccountUsageFromResult(response: GetAccountRateLimitsResponse): void {
+    this.account = {
+      ...this.account,
+      usageWindows: mapAccountUsageWindows(response),
     };
   }
 
@@ -1444,6 +1513,93 @@ function normalizeDeltaTitle(kind: TimelineEntry["kind"]): string {
   }
 
   return String(kind);
+}
+
+function mapAccountUsageWindows(
+  response: GetAccountRateLimitsResponse,
+): Array<AccountUsageWindow> {
+  const snapshots = [
+    response.rateLimits,
+    ...Object.values(response.rateLimitsByLimitId ?? {}).filter(
+      (snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot),
+    ),
+  ];
+  const usageByLabel = new Map<string, AccountUsageWindow>();
+
+  for (const snapshot of snapshots) {
+    for (const window of [snapshot.primary, snapshot.secondary]) {
+      if (!window) {
+        continue;
+      }
+
+      const label = formatUsageWindowLabel(window.windowDurationMins);
+      if (!label || usageByLabel.has(label)) {
+        continue;
+      }
+
+      const usedPercent = clampPercent(window.usedPercent);
+      usageByLabel.set(label, {
+        label,
+        usedPercent,
+        remainingPercent: usedPercent === null ? null : clampPercent(100 - usedPercent),
+        resetsAt: window.resetsAt ?? null,
+      });
+    }
+  }
+
+  return Array.from(usageByLabel.values()).sort(compareUsageWindows);
+}
+
+function formatUsageWindowLabel(windowDurationMins: number | null): string | null {
+  if (!windowDurationMins || windowDurationMins <= 0) {
+    return null;
+  }
+
+  if (windowDurationMins === 300) {
+    return "5h";
+  }
+
+  if (windowDurationMins === 10_080) {
+    return "1w";
+  }
+
+  if (windowDurationMins % 10_080 === 0) {
+    return `${windowDurationMins / 10_080}w`;
+  }
+
+  if (windowDurationMins % 1_440 === 0) {
+    return `${windowDurationMins / 1_440}d`;
+  }
+
+  if (windowDurationMins % 60 === 0) {
+    return `${windowDurationMins / 60}h`;
+  }
+
+  return `${windowDurationMins}m`;
+}
+
+function compareUsageWindows(left: AccountUsageWindow, right: AccountUsageWindow): number {
+  return usageWindowSortValue(left.label) - usageWindowSortValue(right.label);
+}
+
+function usageWindowSortValue(label: string): number {
+  if (label === "5h") {
+    return 0;
+  }
+
+  if (label === "1w") {
+    return 1;
+  }
+
+  return 10;
+}
+
+function clampPercent(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.min(100, Math.max(0, value));
 }
 
 function normalizeNullableString<T extends string>(value: T | null | undefined): T | null {

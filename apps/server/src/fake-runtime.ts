@@ -5,6 +5,8 @@ import type {
   ApprovalPolicy,
   ConfigSnapshot,
   FuzzySearchSnapshot,
+  GitBranchReference,
+  GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
   PendingApproval,
@@ -36,11 +38,13 @@ export class FakeRuntime implements SessionRuntime {
   private readonly commands = new Map<string, FakeCommandRecord>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly timers = new Set<NodeJS.Timeout>();
+  private readonly gitBranchByCwd = new Map<string, string>();
   private readonly startedAt = Math.floor(Date.now() / 1000);
 
   private config: ConfigSnapshot = {
     model: "gpt-5-codex",
     reasoningEffort: "xhigh",
+    serviceTier: null,
     approvalPolicy: "on-request",
     sandboxMode: "danger-full-access",
   };
@@ -60,6 +64,20 @@ export class FakeRuntime implements SessionRuntime {
     accountType: "chatgpt",
     email: "fake-runtime@example.com",
     planType: "enterprise",
+    usageWindows: [
+      {
+        label: "5h",
+        remainingPercent: 82,
+        usedPercent: 18,
+        resetsAt: Math.floor(Date.now() / 1000) + 18_000,
+      },
+      {
+        label: "1w",
+        remainingPercent: 61,
+        usedPercent: 39,
+        resetsAt: Math.floor(Date.now() / 1000) + 604_800,
+      },
+    ],
   };
 
   private readonly models: Array<ModelOption> = [
@@ -357,6 +375,7 @@ export class FakeRuntime implements SessionRuntime {
       this.emit({
         type: "plan.updated",
         threadId,
+        turnId,
         explanation: "Fake runtime execution plan",
         plan: [
           { step: "Inspect bootstrap data", status: "completed" },
@@ -560,6 +579,38 @@ export class FakeRuntime implements SessionRuntime {
     this.config = { ...input };
   }
 
+  async readWorkspaceGitSnapshot(
+    cwd: string,
+    workspaceId: string,
+    workspaceName: string,
+  ): Promise<GitWorkingTreeSnapshot> {
+    return makeGitSnapshot(
+      workspaceId,
+      workspaceName,
+      cwd,
+      this.gitBranchByCwd.get(cwd) ?? "main",
+    );
+  }
+
+  async readWorkspaceGitBranches(cwd: string): Promise<{
+    branches: Array<GitBranchReference>;
+    currentBranch: string | null;
+  }> {
+    const currentBranch = this.gitBranchByCwd.get(cwd) ?? "main";
+    return {
+      currentBranch,
+      branches: [
+        { name: "main", current: currentBranch === "main" },
+        { name: "develop", current: currentBranch === "develop" },
+        { name: "release", current: currentBranch === "release" },
+      ],
+    };
+  }
+
+  async switchWorkspaceGitBranch(cwd: string, branch: string): Promise<void> {
+    this.gitBranchByCwd.set(cwd, branch);
+  }
+
   async loginMcp(name: string): Promise<string> {
     return `https://example.com/oauth/${encodeURIComponent(name)}`;
   }
@@ -702,4 +753,46 @@ function renderCommandOutput(command: string, cwd: string): string {
   }
 
   return `fake runtime executed: ${basename(cwd)}$ ${command}\n`;
+}
+
+function makeGitSnapshot(
+  workspaceId: string,
+  workspaceName: string,
+  cwd: string,
+  branch = "main",
+): GitWorkingTreeSnapshot {
+  return {
+    workspaceId,
+    workspaceName,
+    repoRoot: cwd,
+    branch,
+    isGitRepository: true,
+    clean: false,
+    stagedCount: 1,
+    unstagedCount: 1,
+    untrackedCount: 1,
+    generatedAt: Date.now(),
+    files: [
+      {
+        path: "README.md",
+        status: "modified",
+        staged: false,
+        unstaged: true,
+        additions: 2,
+        deletions: 1,
+        patch: "diff --git a/README.md b/README.md\n@@ -1 +1,2 @@\n-old line\n+new line\n+more text",
+        oldPath: null,
+      },
+      {
+        path: "src/new-file.ts",
+        status: "untracked",
+        staged: false,
+        unstaged: true,
+        additions: 3,
+        deletions: 0,
+        patch: "diff --git a/src/new-file.ts b/src/new-file.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new-file.ts\n@@ -0,0 +1,3 @@\n+export const value = 1;\n+export const doubled = value * 2;\n+",
+        oldPath: null,
+      },
+    ],
+  };
 }

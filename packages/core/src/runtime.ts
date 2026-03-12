@@ -4,6 +4,8 @@ import type {
   CommandSessionSnapshot,
   ConfigSnapshot,
   FuzzySearchSnapshot,
+  GitBranchReference,
+  GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
   PendingApproval,
@@ -49,6 +51,7 @@ export type RuntimeThreadConfig = {
 
 export type SessionRuntimeEvent =
   | { type: "status.changed"; status: RuntimeStatus }
+  | { type: "account.updated"; account: AccountSummary }
   | { type: "thread.updated"; thread: RuntimeThreadRecord }
   | {
       type: "thread.status.changed";
@@ -88,6 +91,7 @@ export type SessionRuntimeEvent =
   | {
       type: "plan.updated";
       threadId: string;
+      turnId: string;
       explanation: string | null;
       plan: Array<{ step: string; status: string }>;
     }
@@ -164,6 +168,15 @@ export interface SessionRuntime {
     threadId?: string | null;
   }): Promise<IntegrationSnapshot>;
   saveSettings(input: ConfigSnapshot): Promise<void>;
+  readWorkspaceGitSnapshot(
+    cwd: string,
+    workspaceId: string,
+    workspaceName: string,
+  ): Promise<GitWorkingTreeSnapshot>;
+  readWorkspaceGitBranches(
+    cwd: string,
+  ): Promise<{ branches: Array<GitBranchReference>; currentBranch: string | null }>;
+  switchWorkspaceGitBranch(cwd: string, branch: string): Promise<void>;
   loginMcp(name: string): Promise<string>;
   reloadMcp(): Promise<void>;
   uninstallPlugin(pluginId: string): Promise<void>;

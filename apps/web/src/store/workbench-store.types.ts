@@ -1,6 +1,7 @@
 import type {
   CommandSessionSnapshot,
   FuzzySearchSnapshot,
+  GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   InspectorTab,
   PendingApproval as WorkbenchPendingApproval,
@@ -44,10 +45,17 @@ export type UiSlice = {
 };
 
 export type SessionSlice = {
-  threads: Record<string, ThreadView>;
+  threadSummaries: Record<string, ThreadSummary>;
+  hydratedThreads: Record<string, ThreadView>;
+  hydratedOrder: Array<string>;
+  gitSnapshotsByWorkspaceId: Record<string, GitWorkingTreeSnapshot>;
+  selectedGitFileByWorkspaceId: Record<string, string | null>;
   pendingApprovals: Array<PendingApproval>;
+  syncBootstrapActiveThreads: (threads: Array<ThreadSummary>) => void;
   hydrateThread: (thread: ThreadView) => void;
   upsertThread: (thread: ThreadSummary) => void;
+  setWorkspaceGitSnapshot: (snapshot: GitWorkingTreeSnapshot) => void;
+  selectWorkspaceGitFile: (workspaceId: string, path: string | null) => void;
   renameThread: (threadId: string, threadName: string | null | undefined) => void;
   markThreadArchived: (threadId: string, archived: boolean) => void;
   applyTurn: (threadId: string, turn: WorkbenchTurn) => void;
@@ -64,6 +72,8 @@ export type SessionSlice = {
   setReview: (threadId: string, review: ReviewOutput | null) => void;
   queueApproval: (approval: PendingApproval) => void;
   resolveApproval: (id: RequestId) => void;
+  touchHydratedThread: (threadId: string) => void;
+  sweepHydratedThreads: (activeThreadId: string | null) => void;
   clearThread: (threadId: string) => void;
 };
 

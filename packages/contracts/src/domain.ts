@@ -1,8 +1,59 @@
 export type RequestId = string | number;
 
+export type AppErrorCode =
+  | "invalid.json"
+  | "resource.path_required"
+  | "resource.not_found"
+  | "thread_summaries.invalid_query"
+  | "workspace.not_found"
+  | "workspace.payload_required"
+  | "workspace.name_required"
+  | "workspace.path_required"
+  | "workspace.not_directory"
+  | "workspace.outside_home"
+  | "thread.not_found"
+  | "approval.not_pending"
+  | "git.not_repo"
+  | "git.branch_switch_failed";
+
+export type AppErrorPayload = {
+  code: AppErrorCode;
+  message: string;
+  params?: Record<string, string | number | boolean | null>;
+};
+
+export class AppError extends Error {
+  readonly code: AppErrorCode;
+  readonly params?: Record<string, string | number | boolean | null>;
+
+  constructor(
+    code: AppErrorCode,
+    message: string,
+    params?: Record<string, string | number | boolean | null>,
+  ) {
+    super(message);
+    this.name = "AppError";
+    this.code = code;
+    this.params = params;
+  }
+
+  toPayload(): AppErrorPayload {
+    return {
+      code: this.code,
+      message: this.message,
+      ...(this.params ? { params: this.params } : {}),
+    };
+  }
+}
+
+export function isAppError(value: unknown): value is AppError {
+  return value instanceof AppError;
+}
+
 export type ApprovalPolicy = "on-request" | "on-failure" | "untrusted" | "never";
 export type SandboxMode = "danger-full-access" | "workspace-write" | "read-only";
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ServiceTier = "fast" | "flex";
 export type SettingsTab =
   | "general"
   | "integrations"
@@ -44,12 +95,20 @@ export type RuntimeStatus = {
   lastError: string | null;
 };
 
+export type AccountUsageWindow = {
+  label: string;
+  remainingPercent: number | null;
+  usedPercent: number | null;
+  resetsAt: number | null;
+};
+
 export type AccountSummary = {
   authenticated: boolean;
   requiresOpenaiAuth: boolean;
   accountType: "chatgpt" | "apiKey" | "unknown";
   email: string | null;
   planType: string | null;
+  usageWindows: Array<AccountUsageWindow>;
 };
 
 export type ModelOption = {
@@ -140,6 +199,7 @@ export type LivePlanStep = {
 };
 
 export type LivePlan = {
+  turnId: string;
   explanation: string | null;
   plan: Array<LivePlanStep>;
 };
@@ -165,6 +225,46 @@ export type ReviewOutput = {
   overall_correctness: string;
   overall_explanation: string;
   overall_confidence_score: number;
+};
+
+export type GitWorkingTreeFileStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "typechange"
+  | "conflicted";
+
+export type GitWorkingTreeFile = {
+  path: string;
+  status: GitWorkingTreeFileStatus;
+  staged: boolean;
+  unstaged: boolean;
+  additions: number;
+  deletions: number;
+  patch: string;
+  oldPath?: string | null;
+};
+
+export type GitWorkingTreeSnapshot = {
+  workspaceId: string;
+  workspaceName: string;
+  repoRoot: string | null;
+  branch: string | null;
+  isGitRepository: boolean;
+  clean: boolean;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  generatedAt: number;
+  files: Array<GitWorkingTreeFile>;
+};
+
+export type GitBranchReference = {
+  name: string;
+  current: boolean;
 };
 
 export type WorkbenchThread = {
@@ -219,6 +319,7 @@ export type AuthStatusSnapshot = {
 export type ConfigSnapshot = {
   model: string | null;
   reasoningEffort: ReasoningEffort | null;
+  serviceTier: ServiceTier | null;
   approvalPolicy: ApprovalPolicy | null;
   sandboxMode: SandboxMode | null;
 };

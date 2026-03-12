@@ -10,17 +10,23 @@ import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import type { TFunction } from "i18next";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AccountUsageWindow,
   ApprovalPolicy,
   BootstrapResponse,
   ConfigSnapshot,
+  GitBranchReference,
+  GitWorkingTreeFile,
+  GitWorkingTreeSnapshot,
   InspectorTab,
   ModelOption,
   PendingApproval,
   ReasoningEffort,
   SandboxMode,
+  ServiceTier,
   SettingsTab,
   ThreadArchiveMode,
   ThreadSummary,
@@ -28,6 +34,10 @@ import type {
   WorkspaceRecord,
 } from "@webcli/contracts";
 import { api } from "../../api";
+import { localizeError, localizeErrorWithFallback } from "../../i18n/errors";
+import { formatDateTime, formatNumber, formatPercent, formatRelativeShort } from "../../i18n/format";
+import { translate } from "../../i18n/init";
+import { useAppLocale } from "../../i18n/use-i18n";
 import { codexClient } from "../../lib/codex-client";
 import { routeWorkbenchServerMessage } from "../../shared/workbench/event-router";
 import {
@@ -38,54 +48,27 @@ import {
   RenderableMarkdown,
 } from "../../shared/workbench/renderable-content";
 import {
-  selectTimeline,
+  countTimelineEntries,
+  selectTimelineWindow,
   useWorkbenchStore,
   type CommandSession,
   type ThreadView,
 } from "../../store/workbench-store";
-
-const PROMPT_SUGGESTIONS = [
-  "总结当前改动，并指出最危险的回归点。",
-  "审查这个仓库结构，然后给出下一步三项改动。",
-  "找出当前 workspace 里最高风险的 bug，并直接修掉。",
-];
-
-const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
-  { id: "general", label: "通用" },
-  { id: "integrations", label: "集成" },
-  { id: "skills", label: "技能" },
-  { id: "apps", label: "Apps" },
-  { id: "plugins", label: "Plugins" },
-  { id: "archived", label: "已归档" },
-];
-
-const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
-  { id: "diff", label: "Diff" },
-  { id: "review", label: "Review" },
-  { id: "plan", label: "Plan" },
-  { id: "command", label: "Command" },
-  { id: "mcp", label: "MCP" },
-];
-
-const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
-  none: "关闭",
-  minimal: "最少",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "超高",
-};
-
-const SETTINGS_REASONING_EFFORT_OPTIONS: Array<{ value: "" | ReasoningEffort; label: string }> = [
-  { value: "", label: "默认" },
-  ...Object.entries(REASONING_EFFORT_LABELS).map(([value, label]) => ({
-    value: value as ReasoningEffort,
-    label,
-  })),
-];
+import {
+  buildGitFileTree,
+  filterGitFilesByQuery,
+  resolvePreferredSelection,
+  summarizeGitSnapshot,
+  type GitFileTreeNode,
+} from "./inspector-helpers";
 
 const DEFAULT_SIDEBAR_WIDTH = 326;
+const DEFAULT_INSPECTOR_WIDTH = 360;
 const SIDEBAR_WIDTH_STORAGE_KEY = "webcli.sidebarWidth";
+const INSPECTOR_WIDTH_STORAGE_KEY = "webcli.gitTreeWidth";
+const INITIAL_TIMELINE_WINDOW_SIZE = 80;
+const TIMELINE_WINDOW_BATCH_SIZE = 80;
+const TIMELINE_WINDOW_SCROLL_THRESHOLD = 120;
 
 type WorkspaceFormInput = {
   name: string;
@@ -112,20 +95,85 @@ type ComposerDropdownOption<T extends string> = {
   icon?: ReactNode;
 };
 
+type ComposerSpeedMode = "standard" | "fast";
+
 type QueuedPrompt = {
   id: string;
   threadId: string;
   text: string;
 };
 
+function buildPromptSuggestions(t: TFunction): Array<string> {
+  return [
+    t("prompts.summarizeRisks"),
+    t("prompts.reviewStructure"),
+    t("prompts.fixHighestRiskBug"),
+  ];
+}
+
+function buildSettingsTabs(t: TFunction): Array<{ id: SettingsTab; label: string }> {
+  return [
+    { id: "general", label: t("settings.tabs.general") },
+    { id: "integrations", label: t("settings.tabs.integrations") },
+    { id: "skills", label: t("settings.tabs.skills") },
+    { id: "apps", label: t("settings.tabs.apps") },
+    { id: "plugins", label: t("settings.tabs.plugins") },
+    { id: "archived", label: t("settings.tabs.archived") },
+  ];
+}
+
+function getReasoningEffortLabels(t: TFunction): Record<ReasoningEffort, string> {
+  return {
+    none: t("settings.reasoningLevels.none"),
+    minimal: t("settings.reasoningLevels.minimal"),
+    low: t("settings.reasoningLevels.low"),
+    medium: t("settings.reasoningLevels.medium"),
+    high: t("settings.reasoningLevels.high"),
+    xhigh: t("settings.reasoningLevels.xhigh"),
+  };
+}
+
+function buildApprovalPolicyOptions(t: TFunction): Array<ComposerDropdownOption<EditableApprovalPolicy>> {
+  return [
+    { value: "on-request", label: t("settings.approvalPolicies.on-request"), testIdSuffix: "on-request" },
+    { value: "on-failure", label: t("settings.approvalPolicies.on-failure"), testIdSuffix: "on-failure" },
+    { value: "untrusted", label: t("settings.approvalPolicies.untrusted"), testIdSuffix: "untrusted" },
+    { value: "never", label: t("settings.approvalPolicies.never"), testIdSuffix: "never" },
+  ];
+}
+
+function buildSandboxModeOptions(t: TFunction): Array<ComposerDropdownOption<EditableSandboxMode>> {
+  return [
+    { value: "danger-full-access", label: t("settings.sandboxModes.danger-full-access"), testIdSuffix: "full-access" },
+    { value: "workspace-write", label: t("settings.sandboxModes.workspace-write"), testIdSuffix: "workspace-write" },
+    { value: "read-only", label: t("settings.sandboxModes.read-only"), testIdSuffix: "read-only" },
+  ];
+}
+
+function buildSettingsReasoningEffortOptions(t: TFunction): Array<{ value: "" | ReasoningEffort; label: string }> {
+  const labels = getReasoningEffortLabels(t);
+  return [
+    { value: "", label: t("common.default") },
+    ...Object.entries(labels).map(([value, label]) => ({
+      value: value as ReasoningEffort,
+      label,
+    })),
+  ];
+}
+
 export function App() {
+  const { t, locale, setLocale } = useAppLocale();
   const queryClient = useQueryClient();
   const connection = useWorkbenchStore((state) => state.connection);
   const activeWorkspaceId = useWorkbenchStore((state) => state.activeWorkspaceId);
   const activeThreadId = useWorkbenchStore((state) => state.activeThreadId);
-  const inspectorTab = useWorkbenchStore((state) => state.inspectorTab);
   const archivedMode = useWorkbenchStore((state) => state.threadLifecycle.archivedMode);
-  const threads = useWorkbenchStore((state) => state.threads);
+  const threadSummaries = useWorkbenchStore((state) => state.threadSummaries);
+  const hydratedThreads = useWorkbenchStore((state) => state.hydratedThreads);
+  const gitSnapshotsByWorkspaceId = useWorkbenchStore((state) => state.gitSnapshotsByWorkspaceId);
+  const selectedGitFileByWorkspaceId = useWorkbenchStore(
+    (state) => state.selectedGitFileByWorkspaceId,
+  );
   const pendingApprovals = useWorkbenchStore((state) => state.pendingApprovals);
   const commandSessions = useWorkbenchStore((state) => state.commandSessions);
   const commandOrder = useWorkbenchStore((state) => state.commandOrder);
@@ -137,8 +185,11 @@ export function App() {
   const setArchivedMode = useWorkbenchStore((state) => state.setArchivedMode);
   const setSettingsOpen = useWorkbenchStore((state) => state.setSettingsOpen);
   const setSettingsTab = useWorkbenchStore((state) => state.setSettingsTab);
+  const syncBootstrapActiveThreads = useWorkbenchStore((state) => state.syncBootstrapActiveThreads);
   const hydrateThread = useWorkbenchStore((state) => state.hydrateThread);
   const upsertThread = useWorkbenchStore((state) => state.upsertThread);
+  const setWorkspaceGitSnapshot = useWorkbenchStore((state) => state.setWorkspaceGitSnapshot);
+  const selectWorkspaceGitFile = useWorkbenchStore((state) => state.selectWorkspaceGitFile);
   const renameThreadInStore = useWorkbenchStore((state) => state.renameThread);
   const markThreadArchived = useWorkbenchStore((state) => state.markThreadArchived);
   const applyTurn = useWorkbenchStore((state) => state.applyTurn);
@@ -154,6 +205,8 @@ export function App() {
   const setIntegrationSnapshot = useWorkbenchStore((state) => state.setIntegrationSnapshot);
   const setFuzzySearch = useWorkbenchStore((state) => state.setFuzzySearch);
   const clearFuzzySearch = useWorkbenchStore((state) => state.clearFuzzySearch);
+  const touchHydratedThread = useWorkbenchStore((state) => state.touchHydratedThread);
+  const sweepHydratedThreads = useWorkbenchStore((state) => state.sweepHydratedThreads);
 
   const [composer, setComposer] = useState("");
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceRecord | null>(null);
@@ -175,6 +228,11 @@ export function App() {
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [sidebarWidth, setSidebarWidth] = useState(() => readInitialSidebarWidth());
   const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [inspectorWidth, setInspectorWidth] = useState(() => readInitialInspectorWidth());
+  const [inspectorResizing, setInspectorResizing] = useState(false);
+  const [gitWorkbenchExpanded, setGitWorkbenchExpanded] = useState(false);
+  const [gitTreeFilterByWorkspaceId, setGitTreeFilterByWorkspaceId] = useState<Record<string, string>>({});
+  const [visibleTimelineCount, setVisibleTimelineCount] = useState(INITIAL_TIMELINE_WINDOW_SIZE);
   const [threadTitleEditing, setThreadTitleEditing] = useState(false);
   const [threadTitleDraft, setThreadTitleDraft] = useState("");
   const [queuedPrompts, setQueuedPrompts] = useState<Record<string, Array<QueuedPrompt>>>({});
@@ -182,22 +240,59 @@ export function App() {
   const [composerReasoningEffort, setComposerReasoningEffort] = useState<"" | ReasoningEffort>("");
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [gitBranchesByWorkspaceId, setGitBranchesByWorkspaceId] = useState<
+    Record<string, Array<GitBranchReference>>
+  >({});
+  const [gitBranchSwitchPending, setGitBranchSwitchPending] = useState(false);
   const autoOpenedWorkspaceModalRef = useRef(false);
   const sidebarResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const sidebarResizeFrameRef = useRef<number | null>(null);
   const liveSidebarWidthRef = useRef(sidebarWidth);
+  const inspectorResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const inspectorResizeFrameRef = useRef<number | null>(null);
+  const liveInspectorWidthRef = useRef(inspectorWidth);
   const desktopShellRef = useRef<HTMLDivElement | null>(null);
   const conversationBodyRef = useRef<HTMLDivElement | null>(null);
   const autoFollowTimelineRef = useRef(true);
+  const timelinePrependRestoreRef = useRef<{ previousScrollHeight: number; previousScrollTop: number } | null>(
+    null,
+  );
+  const timelineWindowLoadingRef = useRef(false);
   const previousActiveThreadIdRef = useRef<string | null>(null);
   const previousThreadStatusesRef = useRef<Record<string, ThreadSummary["status"]>>({});
   const queuedDispatchingThreadsRef = useRef(new Set<string>());
   const restoredThreadIdRef = useRef<string | null>(null);
+  const promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
+  const settingsTabs = useMemo(() => buildSettingsTabs(t), [t]);
+  const reasoningEffortLabels = useMemo(() => getReasoningEffortLabels(t), [t]);
+  const approvalPolicyOptions = useMemo(() => buildApprovalPolicyOptions(t), [t]);
+  const sandboxModeOptions = useMemo(() => buildSandboxModeOptions(t), [t]);
+  const settingsReasoningEffortOptions = useMemo(
+    () => buildSettingsReasoningEffortOptions(t),
+    [t],
+  );
 
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap"],
     queryFn: () => api.bootstrap(),
-    refetchInterval: 30_000,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const archivedThreadsQuery = useInfiniteQuery({
+    queryKey: ["archived-thread-summaries", activeWorkspaceId],
+    queryFn: ({ pageParam }) =>
+      api.threadSummaries({
+        archived: true,
+        cursor: pageParam ?? null,
+        limit: 50,
+        workspaceId: activeWorkspaceId === "all" ? undefined : activeWorkspaceId,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: integrations.settingsOpen && integrations.settingsTab === "archived",
+    staleTime: 60_000,
   });
 
   const integrationsQuery = useQuery({
@@ -221,51 +316,95 @@ export function App() {
   const account = bootstrap?.account ?? null;
   const models = bootstrap?.models ?? [];
   const workspaces = bootstrap?.workspaces ?? [];
-  const activeThreadEntries = bootstrap?.activeThreads ?? [];
-  const archivedThreadEntries = bootstrap?.archivedThreads ?? [];
-  const storeThreadEntries = useMemo(
-    () => Object.values(threads).map((threadView) => threadView.thread),
-    [threads],
-  );
+  const archivedThreadCount = bootstrap?.archivedThreadCount ?? 0;
   const allThreadEntries = useMemo(
-    () => dedupeThreads([...activeThreadEntries, ...archivedThreadEntries, ...storeThreadEntries]),
-    [activeThreadEntries, archivedThreadEntries, storeThreadEntries],
+    () => Object.values(threadSummaries).sort(sortThreadsDescending),
+    [threadSummaries],
   );
-  const selectedThreadEntries = useMemo(
-    () => allThreadEntries.filter((thread) => (archivedMode === "archived" ? thread.archived : !thread.archived)),
-    [allThreadEntries, archivedMode],
+  const activeThreadEntries = useMemo(
+    () =>
+      allThreadEntries.filter((thread) => !thread.archived),
+    [allThreadEntries],
+  );
+  const archivedThreadEntries = useMemo(
+    () =>
+      (archivedThreadsQuery.data?.pages ?? [])
+        .flatMap((page) => page.items)
+        .sort(sortThreadsDescending),
+    [archivedThreadsQuery.data],
   );
   const workspaceTree = useMemo(
     () =>
       workspaces.map((workspace) => ({
         workspace,
-        threads: selectedThreadEntries.filter((thread) => thread.workspaceId === workspace.id),
+        threads: activeThreadEntries.filter((thread) => thread.workspaceId === workspace.id),
       })),
-    [selectedThreadEntries, workspaces],
+    [activeThreadEntries, workspaces],
   );
   const selectedWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const activeThreadEntry =
     (activeThreadId
-      ? allThreadEntries.find((thread) => thread.id === activeThreadId) ?? threads[activeThreadId]?.thread
+      ? threadSummaries[activeThreadId] ?? hydratedThreads[activeThreadId]?.thread ?? null
       : null) ?? null;
-  const activeThreadView = activeThreadId ? threads[activeThreadId] ?? null : null;
+  const activeThreadView = activeThreadId ? hydratedThreads[activeThreadId] ?? null : null;
   const selectedWorkspaceForContext =
     selectedWorkspace ??
     (activeThreadEntry?.workspaceId
       ? workspaces.find((workspace) => workspace.id === activeThreadEntry.workspaceId) ?? null
       : null);
+  const currentGitWorkspace = selectedWorkspaceForContext;
+  const currentGitWorkspaceId = currentGitWorkspace?.id ?? null;
   const searchableWorkspace = selectedWorkspaceForContext;
-  const timeline = useMemo(() => selectTimeline(activeThreadView), [activeThreadView]);
+  const timelineEntryCount = useMemo(() => countTimelineEntries(activeThreadView), [activeThreadView]);
+  const timeline = useMemo(
+    () => selectTimelineWindow(activeThreadView, visibleTimelineCount),
+    [activeThreadView, visibleTimelineCount],
+  );
+  const hiddenTimelineEntryCount = Math.max(0, timelineEntryCount - timeline.length);
   const latestCommandSession =
     commandOrder.length > 0 ? commandSessions[commandOrder[0]] ?? null : null;
   const activeTurn = activeThreadView ? findActiveTurn(activeThreadView) : null;
   const activeThreadArchived = activeThreadView?.archived ?? activeThreadEntry?.archived ?? false;
-  const activePlan = activeThreadView?.latestPlan ?? null;
-  const diffStats = summarizeDiff(activeThreadView?.latestDiff ?? "");
-  const diffFiles = summarizeDiffFiles(activeThreadView?.latestDiff ?? "");
-  const headerWorkspaceLabel = selectedWorkspaceForContext?.name ?? "选择项目";
-  const threadTitle = formatThreadTitle(activeThreadEntry) ?? "新会话";
+  const activePlan =
+    activeTurn &&
+    activeThreadView?.latestPlan &&
+    activeThreadView.latestPlan.turnId === activeTurn.turn.id
+      ? activeThreadView.latestPlan
+      : null;
+  const activeGitSnapshot =
+    (currentGitWorkspaceId ? gitSnapshotsByWorkspaceId[currentGitWorkspaceId] ?? null : null) ?? null;
+  const currentGitBranches = currentGitWorkspaceId
+    ? gitBranchesByWorkspaceId[currentGitWorkspaceId] ?? []
+    : [];
+  const gitFiles = activeGitSnapshot?.files ?? [];
+  const selectedGitFilePath =
+    currentGitWorkspaceId && gitFiles.length > 0
+      ? resolvePreferredSelection(
+          gitFiles.map((file) => file.path),
+          selectedGitFileByWorkspaceId[currentGitWorkspaceId],
+        )
+      : null;
+  const selectedGitFile =
+    gitFiles.find((file) => file.path === selectedGitFilePath) ?? gitFiles[0] ?? null;
+  const gitDiffStats = useMemo(
+    () =>
+      gitFiles.reduce(
+        (totals, file) => ({
+          files: totals.files + 1,
+          additions: totals.additions + file.additions,
+          deletions: totals.deletions + file.deletions,
+        }),
+        { files: 0, additions: 0, deletions: 0 },
+      ),
+    [gitFiles],
+  );
+  const reviewThreadId =
+    activeThreadEntry && activeThreadEntry.workspaceId === currentGitWorkspaceId
+      ? activeThreadEntry.id
+      : null;
+  const headerWorkspaceLabel = selectedWorkspaceForContext?.name ?? t("toolbar.selectWorkspace");
+  const threadTitle = formatThreadTitle(activeThreadEntry) ?? t("toolbar.untitledSession");
   const visibleModels = useMemo(() => models.filter((model) => !model.hidden), [models]);
   const composerModelMap = useMemo(
     () => new Map(visibleModels.map((model) => [model.model, model])),
@@ -293,10 +432,16 @@ export function App() {
       null,
     [selectedActualComposerModel, upgradeTargetToBaseModel],
   );
-  const fastModeAvailable = Boolean(selectedBaseComposerModel?.upgradeModel);
-  const fastModeEnabled =
-    Boolean(selectedBaseComposerModel?.upgradeModel) &&
-    selectedBaseComposerModel?.upgradeModel === selectedActualComposerModel?.model;
+  const composerServiceTier = normalizeServiceTier(
+    bootstrap?.settings.config?.serviceTier ?? integrations.config?.serviceTier,
+  );
+  const composerApprovalPolicy =
+    normalizeApprovalPolicy(bootstrap?.settings.config?.approvalPolicy ?? integrations.config?.approvalPolicy) ??
+    "on-request";
+  const composerSandboxMode =
+    normalizeSandboxMode(bootstrap?.settings.config?.sandboxMode ?? integrations.config?.sandboxMode) ??
+    "danger-full-access";
+  const fastModeEnabled = composerServiceTier === "fast";
   const baseComposerModels = useMemo(
     () =>
       visibleModels.filter((model) => !upgradeTargetToBaseModel.has(model.model)),
@@ -315,10 +460,11 @@ export function App() {
     () => buildComposerReasoningOptions(selectedActualComposerModel),
     [selectedActualComposerModel],
   );
+  const composerSpeedMode: ComposerSpeedMode = fastModeEnabled ? "fast" : "standard";
   const composerModelLabel =
     (selectedBaseComposerModel ? formatModelDisplayName(selectedBaseComposerModel) : null) ??
     formatModelValue(composerModel) ??
-    "选择模型";
+    t("composer.modelMenu");
   const effectiveComposerReasoningEffort = resolveComposerReasoningEffort(
     composerReasoningEffort,
     selectedActualComposerModel,
@@ -331,18 +477,68 @@ export function App() {
     bootstrap !== null &&
     !bootstrap.runtime.authenticated &&
     bootstrap.runtime.requiresOpenaiAuth;
+  const toolbarUsageWindows = useMemo(
+    () => selectToolbarUsageWindows(account?.usageWindows ?? []),
+    [account?.usageWindows],
+  );
+  const gitSummary = useMemo(() => summarizeGitSnapshot(activeGitSnapshot), [activeGitSnapshot]);
+  const currentGitBranchName = activeGitSnapshot?.branch ?? null;
+  const gitBranchOptions = useMemo<Array<ComposerDropdownOption<string>>>(() => {
+    const names = new Set<string>();
+    const entries: Array<GitBranchReference> = [];
+
+    if (currentGitBranchName) {
+      entries.push({
+        name: currentGitBranchName,
+        current: true,
+      });
+      names.add(currentGitBranchName);
+    }
+
+    for (const branch of currentGitBranches) {
+      if (names.has(branch.name)) {
+        continue;
+      }
+      names.add(branch.name);
+      entries.push(branch);
+    }
+
+    return entries.map((branch) => ({
+      value: branch.name,
+      label: branch.name,
+    }));
+  }, [currentGitBranchName, currentGitBranches]);
+  const toolbarLocaleOptions = useMemo(
+    () => [
+      { value: "zh-CN" as const, label: t("settings.languageOptions.zhCN"), testIdSuffix: "zh-cn" },
+      { value: "en-US" as const, label: t("settings.languageOptions.enUS"), testIdSuffix: "en-us" },
+    ],
+    [t],
+  );
+  const currentGitTreeFilter = currentGitWorkspaceId
+    ? gitTreeFilterByWorkspaceId[currentGitWorkspaceId] ?? ""
+    : "";
   const sidebarBounds = useMemo(
     () =>
       getSidebarWidthBounds(typeof window === "undefined" ? DEFAULT_SIDEBAR_WIDTH * 2 : window.innerWidth),
+    [],
+  );
+  const inspectorBounds = useMemo(
+    () =>
+      getInspectorWidthBounds(
+        typeof window === "undefined" ? DEFAULT_INSPECTOR_WIDTH * 2 : window.innerWidth,
+      ),
     [],
   );
   const desktopShellStyle = useMemo(
     () =>
       ({
         "--sidebar-width": `${sidebarWidth}px`,
+        "--sidebar-preview-width": `${sidebarWidth}px`,
+        "--git-tree-width": `${inspectorWidth}px`,
         minHeight: "100vh",
       }) as CSSProperties,
-    [sidebarWidth],
+    [inspectorWidth, sidebarWidth],
   );
   const filteredPaletteActions = useMemo(() => {
     const actions = buildPaletteActions({
@@ -401,6 +597,7 @@ export function App() {
   useEffect(() => {
     const handleResize = () => {
       setSidebarWidth((current) => clampSidebarWidth(current, window.innerWidth));
+      setInspectorWidth((current) => clampInspectorWidth(current, window.innerWidth));
     };
 
     handleResize();
@@ -411,8 +608,15 @@ export function App() {
   useEffect(() => {
     liveSidebarWidthRef.current = sidebarWidth;
     desktopShellRef.current?.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
+    desktopShellRef.current?.style.setProperty("--sidebar-preview-width", `${sidebarWidth}px`);
     window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    liveInspectorWidthRef.current = inspectorWidth;
+    desktopShellRef.current?.style.setProperty("--git-tree-width", `${inspectorWidth}px`);
+    window.localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(inspectorWidth));
+  }, [inspectorWidth]);
 
   useEffect(() => {
     if (!sidebarResizing) {
@@ -443,7 +647,7 @@ export function App() {
       sidebarResizeFrameRef.current = window.requestAnimationFrame(() => {
         sidebarResizeFrameRef.current = null;
         desktopShellRef.current?.style.setProperty(
-          "--sidebar-width",
+          "--sidebar-preview-width",
           `${liveSidebarWidthRef.current}px`,
         );
       });
@@ -478,6 +682,69 @@ export function App() {
   }, [sidebarResizing]);
 
   useEffect(() => {
+    if (!inspectorResizing) {
+      return;
+    }
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const state = inspectorResizeStateRef.current;
+      if (!state) {
+        return;
+      }
+
+      const nextWidth = clampInspectorWidth(
+        state.startWidth + (state.startX - event.clientX),
+        window.innerWidth,
+      );
+      liveInspectorWidthRef.current = nextWidth;
+
+      if (inspectorResizeFrameRef.current !== null) {
+        return;
+      }
+
+      inspectorResizeFrameRef.current = window.requestAnimationFrame(() => {
+        inspectorResizeFrameRef.current = null;
+        desktopShellRef.current?.style.setProperty(
+          "--git-tree-width",
+          `${liveInspectorWidthRef.current}px`,
+        );
+      });
+    };
+
+    const stopResizing = () => {
+      if (inspectorResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(inspectorResizeFrameRef.current);
+        inspectorResizeFrameRef.current = null;
+      }
+
+      setInspectorWidth(liveInspectorWidthRef.current);
+      inspectorResizeStateRef.current = null;
+      setInspectorResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      if (inspectorResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(inspectorResizeFrameRef.current);
+        inspectorResizeFrameRef.current = null;
+      }
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [inspectorResizing]);
+
+  useEffect(() => {
     void codexClient.connect();
     const unsubscribeMessages = codexClient.subscribe((message) => {
       routeWorkbenchServerMessage(message, {
@@ -490,6 +757,7 @@ export function App() {
         setLatestDiff,
         setLatestPlan,
         setReview,
+        setWorkspaceGitSnapshot,
         queueApproval,
         resolveApproval: resolveApprovalInStore,
         setCommandSession,
@@ -499,6 +767,9 @@ export function App() {
     });
     const unsubscribeConnection = codexClient.onConnectionChange((connected) => {
       setConnection({ connected });
+      if (connected) {
+        void invalidateBootstrap();
+      }
     });
 
     return () => {
@@ -519,6 +790,7 @@ export function App() {
     setLatestDiff,
     setLatestPlan,
     setReview,
+    setWorkspaceGitSnapshot,
     upsertThread,
   ]);
 
@@ -605,7 +877,27 @@ export function App() {
     }
   }, [composerReasoningEffort, selectedActualComposerModel]);
 
+  useEffect(() => {
+    setVisibleTimelineCount(INITIAL_TIMELINE_WINDOW_SIZE);
+    timelinePrependRestoreRef.current = null;
+    timelineWindowLoadingRef.current = false;
+    autoFollowTimelineRef.current = true;
+  }, [activeThreadId]);
+
   const latestTimelineEntry = timeline.length > 0 ? timeline[timeline.length - 1] ?? null : null;
+
+  useLayoutEffect(() => {
+    const pendingRestore = timelinePrependRestoreRef.current;
+    const container = conversationBodyRef.current;
+    if (!pendingRestore || !container) {
+      return;
+    }
+
+    const deltaHeight = container.scrollHeight - pendingRestore.previousScrollHeight;
+    container.scrollTop = pendingRestore.previousScrollTop + deltaHeight;
+    timelinePrependRestoreRef.current = null;
+    timelineWindowLoadingRef.current = false;
+  }, [timeline.length]);
 
   useLayoutEffect(() => {
     const container = conversationBodyRef.current;
@@ -642,6 +934,26 @@ export function App() {
     activeTurn?.turn.status,
   ]);
 
+  function loadOlderTimelineEntries(): void {
+    const container = conversationBodyRef.current;
+    if (
+      !container ||
+      hiddenTimelineEntryCount === 0 ||
+      timelineWindowLoadingRef.current
+    ) {
+      return;
+    }
+
+    timelineWindowLoadingRef.current = true;
+    timelinePrependRestoreRef.current = {
+      previousScrollHeight: container.scrollHeight,
+      previousScrollTop: container.scrollTop,
+    };
+    setVisibleTimelineCount((current) =>
+      Math.min(timelineEntryCount, current + TIMELINE_WINDOW_BATCH_SIZE),
+    );
+  }
+
   function handleConversationScroll(): void {
     const container = conversationBodyRef.current;
     if (!container) {
@@ -649,6 +961,12 @@ export function App() {
     }
 
     autoFollowTimelineRef.current = isNearBottom(container);
+    if (
+      container.scrollTop <= TIMELINE_WINDOW_SCROLL_THRESHOLD &&
+      hiddenTimelineEntryCount > 0
+    ) {
+      loadOlderTimelineEntries();
+    }
   }
 
   useEffect(() => {
@@ -657,9 +975,7 @@ export function App() {
     }
 
     setConnection(bootstrap.runtime);
-    for (const thread of [...bootstrap.activeThreads, ...bootstrap.archivedThreads]) {
-      upsertThread(thread);
-    }
+    syncBootstrapActiveThreads(bootstrap.activeThreads);
 
     setExpandedWorkspaceIds((current) => {
       const validIds = current.filter((id) => workspaces.some((workspace) => workspace.id === id));
@@ -681,7 +997,7 @@ export function App() {
     bootstrap,
     setActiveWorkspace,
     setConnection,
-    upsertThread,
+    syncBootstrapActiveThreads,
     workspaces,
   ]);
 
@@ -697,17 +1013,57 @@ export function App() {
   }, [blocking, bootstrap, workspaceModalOpen, workspaces.length]);
 
   useEffect(() => {
+    if (!connection.connected || !currentGitWorkspaceId) {
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.all([
+      codexClient.call("workspace.git.read", {
+        workspaceId: currentGitWorkspaceId,
+      }),
+      codexClient.call("workspace.git.branches.read", {
+        workspaceId: currentGitWorkspaceId,
+      }),
+    ])
+      .then(([gitResponse, branchResponse]) => {
+        if (!cancelled) {
+          setWorkspaceGitSnapshot(gitResponse.snapshot);
+          setGitBranchesByWorkspaceId((current) => ({
+            ...current,
+            [currentGitWorkspaceId]: branchResponse.branches,
+          }));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setErrorMessage(localizeErrorWithFallback(error, "errors.requestFailed"));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.connected, connection.restartCount, currentGitWorkspaceId, setWorkspaceGitSnapshot]);
+
+  useEffect(() => {
+    if (!currentGitWorkspaceId) {
+      setGitWorkbenchExpanded(false);
+    }
+  }, [currentGitWorkspaceId]);
+
+  useEffect(() => {
     if (!bootstrap || !activeThreadId) {
       restoredThreadIdRef.current = null;
       return;
     }
 
-    if (threads[activeThreadId]?.turnOrder.length) {
+    if (hydratedThreads[activeThreadId]?.turnOrder.length) {
       restoredThreadIdRef.current = null;
       return;
     }
 
-    const summary = allThreadEntries.find((thread) => thread.id === activeThreadId);
+    const summary = threadSummaries[activeThreadId] ?? null;
     if (!summary || restoredThreadIdRef.current === activeThreadId) {
       return;
     }
@@ -717,14 +1073,44 @@ export function App() {
       setActiveWorkspace(summary.workspaceId);
     }
 
-    setBusyMessage("正在恢复线程...");
+    setBusyMessage(t("composer.busy.resumingThread"));
     void runAction(async () => {
       const response = await codexClient.call("thread.resume", {
         threadId: activeThreadId,
       });
       hydrateThread(response.thread);
     });
-  }, [activeThreadId, allThreadEntries, bootstrap, hydrateThread, setActiveWorkspace, threads]);
+  }, [
+    activeThreadId,
+    bootstrap,
+    hydrateThread,
+    hydratedThreads,
+    setActiveWorkspace,
+    threadSummaries,
+  ]);
+
+  useEffect(() => {
+    if (!archivedThreadEntries.length) {
+      return;
+    }
+
+    for (const thread of archivedThreadEntries) {
+      upsertThread(thread);
+    }
+  }, [archivedThreadEntries, upsertThread]);
+
+  useEffect(() => {
+    if (activeThreadId) {
+      touchHydratedThread(activeThreadId);
+    }
+    sweepHydratedThreads(activeThreadId);
+  }, [
+    activeThreadId,
+    hydratedThreads,
+    pendingApprovals,
+    sweepHydratedThreads,
+    touchHydratedThread,
+  ]);
 
   useEffect(() => {
     const snapshot = integrationsQuery.data?.snapshot;
@@ -766,6 +1152,21 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!gitWorkbenchExpanded) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setGitWorkbenchExpanded(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [gitWorkbenchExpanded]);
+
+  useEffect(() => {
     if (!paletteOpen || !searchableWorkspace) {
       return;
     }
@@ -796,7 +1197,7 @@ export function App() {
         })
         .catch((error) => {
           if (!cancelled) {
-            setErrorMessage(error instanceof Error ? error.message : "文件搜索失败");
+            setErrorMessage(localizeErrorWithFallback(error, "errors.requestFailed"));
           }
         });
     }, 160);
@@ -819,7 +1220,7 @@ export function App() {
         continue;
       }
 
-      const threadView = threads[threadId];
+      const threadView = hydratedThreads[threadId];
       if (!threadView || findActiveTurn(threadView)) {
         continue;
       }
@@ -837,13 +1238,13 @@ export function App() {
           setQueuedPrompts((current) => removeQueuedPrompt(current, threadId, nextPrompt.id));
         })
         .catch((error) => {
-          setErrorMessage(error instanceof Error ? error.message : "排队消息发送失败");
+          setErrorMessage(localizeErrorWithFallback(error, "errors.requestFailed"));
         })
         .finally(() => {
           queuedDispatchingThreadsRef.current.delete(threadId);
         });
     }
-  }, [applyTurn, queuedPrompts, threads]);
+  }, [applyTurn, hydratedThreads, queuedPrompts]);
 
   function openCreateWorkspaceModal(): void {
     setWorkspaceEditor(null);
@@ -896,6 +1297,7 @@ export function App() {
       startWidth: sidebarWidth,
     };
     liveSidebarWidthRef.current = sidebarWidth;
+    desktopShellRef.current?.style.setProperty("--sidebar-preview-width", `${sidebarWidth}px`);
     setSidebarResizing(true);
   }
 
@@ -909,12 +1311,32 @@ export function App() {
     setSidebarWidth((current) => clampSidebarWidth(current + delta, window.innerWidth));
   }
 
+  function handleInspectorResizeStart(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    inspectorResizeStateRef.current = {
+      startX: event.clientX,
+      startWidth: inspectorWidth,
+    };
+    liveInspectorWidthRef.current = inspectorWidth;
+    setInspectorResizing(true);
+  }
+
+  function handleInspectorResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+
+    event.preventDefault();
+    const delta = event.key === "ArrowLeft" ? 18 : -18;
+    setInspectorWidth((current) => clampInspectorWidth(current + delta, window.innerWidth));
+  }
+
   async function runAction(action: () => Promise<void>): Promise<void> {
     setErrorMessage(null);
     try {
       await action();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "请求失败");
+      setErrorMessage(localizeErrorWithFallback(error, "errors.requestFailed"));
     } finally {
       setBusyMessage(null);
     }
@@ -929,12 +1351,14 @@ export function App() {
     try {
       const pathCheck = await api.workspacePathSuggestions(input.absPath);
       if (!pathCheck.withinHome) {
-        setWorkspaceMutationError(`项目路径必须位于 ${pathCheck.homePath} 内。`);
+        setWorkspaceMutationError(
+          t("workspace.outsideHomeInline", { homePath: pathCheck.homePath }),
+        );
         return;
       }
 
       if (!pathCheck.isDirectory) {
-        setWorkspaceMutationError("项目路径不是可用目录。");
+        setWorkspaceMutationError(t("workspace.invalidDirectoryInline"));
         return;
       }
 
@@ -946,7 +1370,7 @@ export function App() {
       if (duplicateWorkspace) {
         setActiveWorkspace(duplicateWorkspace.id);
         closeWorkspaceModal();
-        setBusyMessage(`已切换到现有项目：${duplicateWorkspace.name}`);
+        setBusyMessage(t("workspace.duplicateSwitched", { name: duplicateWorkspace.name }));
         return;
       }
 
@@ -967,7 +1391,8 @@ export function App() {
       closeWorkspaceModal();
       void invalidateBootstrap();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "项目保存失败";
+      const message =
+        error instanceof Error ? localizeError(error) : t("workspace.saveFailed");
       if (message.includes("workspaces.abs_path")) {
         closeWorkspaceModal();
         void invalidateBootstrap();
@@ -1000,7 +1425,7 @@ export function App() {
       closeWorkspaceModal();
       void invalidateBootstrap();
     } catch (error) {
-      setWorkspaceMutationError(error instanceof Error ? error.message : "项目删除失败");
+      setWorkspaceMutationError(error instanceof Error ? localizeError(error) : t("workspace.deleteFailed"));
       setWorkspaceMutationPending(false);
     }
   }
@@ -1010,7 +1435,7 @@ export function App() {
       return;
     }
 
-    setBusyMessage("正在创建线程...");
+    setBusyMessage(t("composer.busy.creatingThread"));
     await runAction(async () => {
       const response = await codexClient.call("thread.open", { workspaceId });
       hydrateThread(response.thread);
@@ -1027,11 +1452,11 @@ export function App() {
     }
     setActiveThread(threadId);
 
-    if (threads[threadId]?.turnOrder.length) {
+    if (hydratedThreads[threadId]?.turnOrder.length) {
       return;
     }
 
-    setBusyMessage("正在恢复线程...");
+    setBusyMessage(t("composer.busy.resumingThread"));
     await runAction(async () => {
       const response = await codexClient.call("thread.resume", {
         threadId,
@@ -1082,11 +1507,11 @@ export function App() {
       return;
     }
 
-    setBusyMessage("正在启动 turn...");
+    setBusyMessage(t("composer.busy.startingTurn"));
     await runAction(async () => {
       const threadId = await ensureThreadForPrompt();
       if (!threadId) {
-        throw new Error("请先选择一个项目");
+        throw new Error(t("workspace.createThreadPrompt"));
       }
 
       if ((queuedPrompts[threadId] ?? []).length > 0) {
@@ -1100,20 +1525,64 @@ export function App() {
     });
   }
 
-  async function handleRunReview(): Promise<void> {
-    if (!activeThreadId) {
+  async function handleRefreshWorkspaceGit(): Promise<void> {
+    if (!currentGitWorkspaceId) {
       return;
     }
 
-    setBusyMessage("正在启动 review...");
+    setBusyMessage(t("composer.busy.refreshingGit"));
+    await runAction(async () => {
+      const response = await codexClient.call("workspace.git.read", {
+        workspaceId: currentGitWorkspaceId,
+      });
+      setWorkspaceGitSnapshot(response.snapshot);
+    });
+  }
+
+  async function handleGitBranchChange(branch: string): Promise<void> {
+    if (
+      !currentGitWorkspaceId ||
+      !activeGitSnapshot?.isGitRepository ||
+      branch === currentGitBranchName
+    ) {
+      return;
+    }
+
+    setBusyMessage(t("composer.busy.switchingBranch", { branch }));
+    setErrorMessage(null);
+    setGitBranchSwitchPending(true);
+
+    try {
+      const response = await codexClient.call("workspace.git.branch.switch", {
+        workspaceId: currentGitWorkspaceId,
+        branch,
+      });
+      setWorkspaceGitSnapshot(response.snapshot);
+      setGitBranchesByWorkspaceId((current) => ({
+        ...current,
+        [currentGitWorkspaceId]: response.branches,
+      }));
+    } catch (error) {
+      setErrorMessage(localizeErrorWithFallback(error, "errors.requestFailed"));
+    } finally {
+      setBusyMessage(null);
+      setGitBranchSwitchPending(false);
+    }
+  }
+
+  async function handleRunReview(): Promise<void> {
+    if (!reviewThreadId) {
+      return;
+    }
+
+    setBusyMessage(t("composer.reviewStart"));
     await runAction(async () => {
       const response = await codexClient.call("review.start", {
-        threadId: activeThreadId,
+        threadId: reviewThreadId,
       });
       if (response.turn) {
-        applyTurn(activeThreadId, response.turn);
+        applyTurn(reviewThreadId, response.turn);
       }
-      setInspectorTab("review");
     });
   }
 
@@ -1122,7 +1591,7 @@ export function App() {
       return;
     }
 
-    setBusyMessage("正在中断当前 turn...");
+    setBusyMessage(t("composer.busy.interruptingTurn"));
     await runAction(async () => {
       await codexClient.call("turn.interrupt", {
         threadId: activeThreadId,
@@ -1135,8 +1604,8 @@ export function App() {
     thread: ThreadSummary,
     requestedName?: string,
   ): Promise<void> {
-    const currentTitle = formatThreadTitle(thread) ?? "未命名线程";
-    const rawName = requestedName ?? window.prompt("输入新的线程名称", currentTitle) ?? "";
+    const currentTitle = formatThreadTitle(thread) ?? t("workspace.untitledThread");
+    const rawName = requestedName ?? window.prompt(t("workspace.renamePrompt"), currentTitle) ?? "";
     const nextName = rawName.trim();
     if (!nextName) {
       if (requestedName !== undefined) {
@@ -1150,7 +1619,7 @@ export function App() {
       return;
     }
 
-    setBusyMessage("正在重命名线程...");
+    setBusyMessage(t("composer.busy.renamingThread"));
     let renamed = false;
     await runAction(async () => {
       await codexClient.call("thread.rename", {
@@ -1166,7 +1635,7 @@ export function App() {
   }
 
   async function handleForkThread(thread: ThreadSummary): Promise<void> {
-    setBusyMessage("正在 fork 线程...");
+    setBusyMessage(t("composer.busy.forkingThread"));
     await runAction(async () => {
       const response = await codexClient.call("thread.fork", {
         threadId: thread.id,
@@ -1180,7 +1649,9 @@ export function App() {
   }
 
   async function handleArchiveThread(thread: ThreadSummary): Promise<void> {
-    setBusyMessage(thread.archived ? "正在恢复线程..." : "正在归档线程...");
+    setBusyMessage(
+      thread.archived ? t("composer.busy.unarchivingThread") : t("composer.busy.archivingThread"),
+    );
     await runAction(async () => {
       if (thread.archived) {
         const response = await codexClient.call("thread.unarchive", {
@@ -1198,11 +1669,12 @@ export function App() {
           setArchivedMode("archived");
         }
       }
+      await queryClient.invalidateQueries({ queryKey: ["archived-thread-summaries"] });
     });
   }
 
   async function handleUnarchiveThread(thread: ThreadSummary): Promise<void> {
-    setBusyMessage("正在恢复线程...");
+    setBusyMessage(t("composer.busy.unarchivingThread"));
     await runAction(async () => {
       const response = await codexClient.call("thread.unarchive", {
         threadId: thread.id,
@@ -1210,11 +1682,12 @@ export function App() {
       hydrateThread(response.thread);
       markThreadArchived(thread.id, false);
       setArchivedMode("active");
+      await queryClient.invalidateQueries({ queryKey: ["archived-thread-summaries"] });
     });
   }
 
   async function handleCompactThread(threadId: string): Promise<void> {
-    setBusyMessage("正在 compact 线程...");
+    setBusyMessage(t("composer.busy.compactingThread"));
     await runAction(async () => {
       await codexClient.call("thread.compact", {
         threadId,
@@ -1224,16 +1697,13 @@ export function App() {
 
   async function handleComposerModelChange(nextModel: string): Promise<void> {
     const normalizedModel = nextModel || null;
-    const baseConfig = integrations.config ?? bootstrap?.settings.config ?? null;
+    const baseConfig = bootstrap?.settings.config ?? integrations.config ?? null;
     const nextBaseModelOption =
       composerModelMap.get(nextModel) ??
       baseComposerModels.find((model) => model.isDefault) ??
       baseComposerModels[0] ??
       null;
-    const nextActualModel =
-      fastModeEnabled && nextBaseModelOption?.upgradeModel
-        ? nextBaseModelOption.upgradeModel
-        : nextBaseModelOption?.model ?? normalizedModel;
+    const nextActualModel = nextBaseModelOption?.model ?? normalizedModel;
     const nextModelOption =
       (nextActualModel ? composerModelMap.get(nextActualModel) : null) ??
       selectedActualComposerModel;
@@ -1243,11 +1713,12 @@ export function App() {
     );
     setComposerModel(nextActualModel ?? "");
     setComposerReasoningEffort(nextReasoningEffort);
-    setBusyMessage("正在切换模型...");
+    setBusyMessage(t("composer.busy.switchingModel"));
     await runAction(async () => {
       const response = await codexClient.call("settings.save", {
         model: nextActualModel ?? null,
         reasoningEffort: nextReasoningEffort,
+        serviceTier: baseConfig?.serviceTier ?? null,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: baseConfig?.sandboxMode ?? null,
       });
@@ -1259,6 +1730,7 @@ export function App() {
           config: {
             model: nextActualModel ?? null,
             reasoningEffort: nextReasoningEffort,
+            serviceTier: baseConfig?.serviceTier ?? null,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: baseConfig?.sandboxMode ?? null,
           },
@@ -1279,28 +1751,32 @@ export function App() {
     });
   }
 
-  async function handleFastModeToggle(): Promise<void> {
-    if (!selectedBaseComposerModel?.upgradeModel) {
+  async function handleComposerSpeedChange(nextSpeed: ComposerSpeedMode): Promise<void> {
+    if (nextSpeed === composerSpeedMode) {
       return;
     }
 
-    const baseConfig = integrations.config ?? bootstrap?.settings.config ?? null;
-    const nextActualModel = fastModeEnabled
-      ? selectedBaseComposerModel.model
-      : selectedBaseComposerModel.upgradeModel;
-    const nextModelOption = composerModelMap.get(nextActualModel) ?? selectedBaseComposerModel;
+    const baseConfig = bootstrap?.settings.config ?? integrations.config ?? null;
+    const nextActualModel = selectedActualComposerModel?.model ?? composerModel ?? null;
+    const nextServiceTier: ServiceTier | null = nextSpeed === "fast" ? "fast" : null;
+    const nextModelOption = (nextActualModel ? composerModelMap.get(nextActualModel) : null) ?? selectedActualComposerModel;
     const nextReasoningEffort = resolveComposerReasoningEffort(
       composerReasoningEffort,
       nextModelOption,
     );
 
-    setComposerModel(nextActualModel);
+    setComposerModel(nextActualModel ?? "");
     setComposerReasoningEffort(nextReasoningEffort);
-    setBusyMessage(fastModeEnabled ? "正在关闭 Fast 模式..." : "正在开启 Fast 模式...");
+    setBusyMessage(
+      nextSpeed === "fast"
+        ? t("composer.busy.switchingSpeedFast")
+        : t("composer.busy.switchingSpeedStandard"),
+    );
     await runAction(async () => {
       const response = await codexClient.call("settings.save", {
         model: nextActualModel,
         reasoningEffort: nextReasoningEffort,
+        serviceTier: nextServiceTier,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: baseConfig?.sandboxMode ?? null,
       });
@@ -1312,6 +1788,7 @@ export function App() {
           config: {
             model: nextActualModel,
             reasoningEffort: nextReasoningEffort,
+            serviceTier: nextServiceTier,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: baseConfig?.sandboxMode ?? null,
           },
@@ -1319,9 +1796,9 @@ export function App() {
       }));
 
       if (selectedWorkspaceForContext?.source === "saved") {
-        const updatedWorkspace = await api.updateWorkspace(selectedWorkspaceForContext.id, {
+      const updatedWorkspace = await api.updateWorkspace(selectedWorkspaceForContext.id, {
           defaultModel: nextActualModel,
-        });
+      });
         patchBootstrapCache(queryClient, (current) => ({
           ...current,
           workspaces: current.workspaces.map((workspace) =>
@@ -1333,13 +1810,14 @@ export function App() {
   }
 
   async function handleComposerReasoningEffortChange(nextEffort: ReasoningEffort): Promise<void> {
-    const baseConfig = integrations.config ?? bootstrap?.settings.config ?? null;
+    const baseConfig = bootstrap?.settings.config ?? integrations.config ?? null;
     setComposerReasoningEffort(nextEffort);
-    setBusyMessage("正在切换思考级别...");
+    setBusyMessage(t("composer.busy.switchingReasoning"));
     await runAction(async () => {
       const response = await codexClient.call("settings.save", {
         model: baseConfig?.model ?? null,
         reasoningEffort: nextEffort,
+        serviceTier: baseConfig?.serviceTier ?? null,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: baseConfig?.sandboxMode ?? null,
       });
@@ -1351,8 +1829,67 @@ export function App() {
           config: {
             model: baseConfig?.model ?? null,
             reasoningEffort: nextEffort,
+            serviceTier: baseConfig?.serviceTier ?? null,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: baseConfig?.sandboxMode ?? null,
+          },
+        },
+      }));
+    });
+  }
+
+  async function handleComposerApprovalPolicyChange(nextPolicy: EditableApprovalPolicy): Promise<void> {
+    const baseConfig = bootstrap?.settings.config ?? integrations.config ?? null;
+    setBusyMessage(t("composer.busy.switchingApproval"));
+    await runAction(async () => {
+      const response = await codexClient.call("settings.save", {
+        model: baseConfig?.model ?? null,
+        reasoningEffort: normalizeReasoningEffort(baseConfig?.reasoningEffort) ?? effectiveComposerReasoningEffort,
+        serviceTier: baseConfig?.serviceTier ?? null,
+        approvalPolicy: nextPolicy,
+        sandboxMode: baseConfig?.sandboxMode ?? null,
+      });
+      setIntegrationSnapshot(response.snapshot);
+      patchBootstrapCache(queryClient, (current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          config: {
+            model: baseConfig?.model ?? null,
+            reasoningEffort:
+              normalizeReasoningEffort(baseConfig?.reasoningEffort) ?? effectiveComposerReasoningEffort,
+            serviceTier: baseConfig?.serviceTier ?? null,
+            approvalPolicy: nextPolicy,
+            sandboxMode: baseConfig?.sandboxMode ?? null,
+          },
+        },
+      }));
+    });
+  }
+
+  async function handleComposerSandboxModeChange(nextMode: EditableSandboxMode): Promise<void> {
+    const baseConfig = bootstrap?.settings.config ?? integrations.config ?? null;
+    setBusyMessage(t("composer.busy.switchingSandbox"));
+    await runAction(async () => {
+      const response = await codexClient.call("settings.save", {
+        model: baseConfig?.model ?? null,
+        reasoningEffort: normalizeReasoningEffort(baseConfig?.reasoningEffort) ?? effectiveComposerReasoningEffort,
+        serviceTier: baseConfig?.serviceTier ?? null,
+        approvalPolicy: baseConfig?.approvalPolicy ?? null,
+        sandboxMode: nextMode,
+      });
+      setIntegrationSnapshot(response.snapshot);
+      patchBootstrapCache(queryClient, (current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          config: {
+            model: baseConfig?.model ?? null,
+            reasoningEffort:
+              normalizeReasoningEffort(baseConfig?.reasoningEffort) ?? effectiveComposerReasoningEffort,
+            serviceTier: baseConfig?.serviceTier ?? null,
+            approvalPolicy: baseConfig?.approvalPolicy ?? null,
+            sandboxMode: nextMode,
           },
         },
       }));
@@ -1364,7 +1901,7 @@ export function App() {
       return;
     }
 
-    setBusyMessage("正在执行命令...");
+    setBusyMessage(t("composer.busy.startingCommand"));
     await runAction(async () => {
       const response = await codexClient.call("command.start", {
         workspaceId: searchableWorkspace.id,
@@ -1431,29 +1968,29 @@ export function App() {
   }
 
   async function handleConfigSave(payload: ConfigSnapshot): Promise<void> {
-    setBusyMessage("正在保存设置...");
+    setBusyMessage(t("composer.busy.savingSettings"));
     await runAction(async () => {
       const response = await codexClient.call("settings.save", payload);
       setIntegrationSnapshot(response.snapshot);
-      setSettingsNotice("默认配置已保存。");
+      setSettingsNotice(t("settings.notices.defaultsSaved"));
       await invalidateBootstrap();
     });
   }
 
   async function handleRefreshIntegrations(): Promise<void> {
-    setBusyMessage("正在刷新集成...");
+    setBusyMessage(t("composer.busy.refreshingIntegrations"));
     await runAction(async () => {
       const response = await codexClient.call("integrations.refresh", {
         workspaceId: activeWorkspaceId,
         threadId: activeThreadId,
       });
       setIntegrationSnapshot(response.snapshot);
-      setSettingsNotice("集成快照已刷新。");
+      setSettingsNotice(t("settings.notices.integrationsRefreshed"));
     });
   }
 
   async function handleMcpLogin(name: string): Promise<void> {
-    setBusyMessage(`正在打开 ${name} 登录...`);
+    setBusyMessage(t("composer.busy.openingLogin", { name }));
     await runAction(async () => {
       const response = await codexClient.call("integrations.mcp.login", {
         name,
@@ -1463,16 +2000,16 @@ export function App() {
   }
 
   async function handleMcpReload(): Promise<void> {
-    setBusyMessage("正在 reload MCP...");
+    setBusyMessage(t("composer.busy.reloadingMcp"));
     await runAction(async () => {
       const response = await codexClient.call("integrations.mcp.reload", {});
       setIntegrationSnapshot(response.snapshot);
-      setSettingsNotice("MCP 配置已刷新。");
+      setSettingsNotice(t("settings.notices.mcpReloaded"));
     });
   }
 
   async function handlePluginUninstall(pluginId: string): Promise<void> {
-    setBusyMessage("正在卸载插件...");
+    setBusyMessage(t("composer.busy.uninstallingPlugin"));
     await runAction(async () => {
       const response = await codexClient.call("integrations.plugin.uninstall", {
         pluginId,
@@ -1480,7 +2017,7 @@ export function App() {
         threadId: activeThreadId,
       });
       setIntegrationSnapshot(response.snapshot);
-      setSettingsNotice("插件已卸载。");
+      setSettingsNotice(t("settings.notices.pluginUninstalled"));
     });
   }
 
@@ -1493,11 +2030,11 @@ export function App() {
   if (bootstrapQuery.isLoading && !bootstrap) {
     return (
       <div className="desktop-shell" data-testid="desktop-shell" style={desktopShellStyle}>
-        <div className="workbench-shell" style={{ gridColumn: "1 / -1" }}>
+        <div className="workbench-shell workbench-shell--loading" style={{ gridColumn: "1 / -1" }}>
           <div className="conversation-ready">
-            <p className="conversation-empty__eyebrow">Loading</p>
-            <h2>正在连接工作台</h2>
-            <p>等待 bootstrap、workspaces 和线程快照。</p>
+            <p className="conversation-empty__eyebrow">{t("shell.loadingEyebrow")}</p>
+            <h2>{t("shell.loadingTitle")}</h2>
+            <p>{t("shell.loadingBody")}</p>
           </div>
         </div>
       </div>
@@ -1531,12 +2068,12 @@ export function App() {
               data-testid="workspace-all-button"
               onClick={() => handleWorkspaceSelect("all")}
             >
-              <span>{`项目(${workspaces.length})`}</span>
+              <span>{t("sidebar.projectsCount", { count: workspaces.length })}</span>
             </button>
             <button
               className="sidebar-icon-button"
               data-testid="workspace-create-button"
-              aria-label="新项目"
+              aria-label={t("common.newProject")}
               onClick={openCreateWorkspaceModal}
             >
               <FolderPlusIcon />
@@ -1579,34 +2116,20 @@ export function App() {
                 ) : null}
                 {expandedWorkspaceIds.includes(workspace.id) && workspaceThreads.length === 0 ? (
                   <div className="sidebar-empty-state sidebar-empty-state--nested">
-                    这个项目里还没有线程。
+                    {t("sidebar.emptyThreadsNested")}
                   </div>
                 ) : null}
               </div>
             ))}
             {workspaceTree.length > 0 && workspaceTree.every((group) => group.threads.length === 0) ? (
-              <div className="sidebar-empty-state">当前视图里还没有线程。</div>
+              <div className="sidebar-empty-state">{t("sidebar.emptyThreads")}</div>
             ) : null}
             {workspaceTree.length === 0 ? (
-              <div className="sidebar-empty-state">先注册一个项目，再开始桌面工作台会话。</div>
+              <div className="sidebar-empty-state">{t("sidebar.emptyProjects")}</div>
             ) : null}
           </div>
         </section>
 
-        <button
-          className="sidebar-settings-button"
-          data-testid="settings-button"
-          onClick={() => {
-            setSettingsOpen(true);
-            setSettingsTab("general");
-            setSettingsNotice(null);
-          }}
-        >
-          <span>设置</span>
-          <span className="sidebar-settings-button__meta">
-            {connection.connected ? "在线" : "离线"}
-          </span>
-        </button>
       </aside>
 
       <div
@@ -1614,7 +2137,7 @@ export function App() {
         data-testid="sidebar-resizer"
         role="separator"
         tabIndex={0}
-        aria-label="调整边栏宽度"
+        aria-label={t("sidebar.resizeSidebar")}
         aria-orientation="vertical"
         aria-valuemin={sidebarBounds.min}
         aria-valuemax={sidebarBounds.max}
@@ -1622,16 +2145,24 @@ export function App() {
         onPointerDown={handleSidebarResizeStart}
         onKeyDown={handleSidebarResizeKeyDown}
       />
+      <div
+        aria-hidden="true"
+        className={
+          sidebarResizing
+            ? "sidebar-resize-guide sidebar-resize-guide--active"
+            : "sidebar-resize-guide"
+        }
+      />
 
       <div className="workbench-shell">
         <header className="window-toolbar">
           <div className="window-toolbar__title">
-            <div className="conversation-header__trail">
-              <span className="conversation-header__workspace">{headerWorkspaceLabel}</span>
-              <span className="conversation-header__separator">→</span>
+            <div className="toolbar-breadcrumb toolbar-breadcrumb--full">
+              <span className="toolbar-breadcrumb__workspace">{headerWorkspaceLabel}</span>
+              <span className="toolbar-breadcrumb__separator">{">"}</span>
               {threadTitleEditing && activeThreadEntry ? (
                 <input
-                  className="conversation-header__title-input"
+                  className="toolbar-title-input"
                   data-testid="thread-title-input"
                   autoFocus
                   value={threadTitleDraft}
@@ -1650,13 +2181,15 @@ export function App() {
                   }}
                 />
               ) : (
-                <div className="conversation-header__title-group">
-                  <h1 data-testid="thread-title-display">{threadTitle}</h1>
+                <div className="toolbar-breadcrumb__current">
+                  <h1 className="toolbar-title" data-testid="thread-title-display">
+                    {threadTitle}
+                  </h1>
                   {activeThreadEntry ? (
                     <button
-                      className="conversation-header__edit-button"
+                      className="toolbar-title-edit"
                       data-testid="thread-title-edit-button"
-                      aria-label="编辑会话标题"
+                      aria-label={t("toolbar.editThreadTitle")}
                       onClick={() => {
                         setThreadTitleDraft(threadTitle);
                         setThreadTitleEditing(true);
@@ -1671,242 +2204,261 @@ export function App() {
           </div>
 
           <div className="window-toolbar__actions">
-            <StatusPill
-              label={connection.connected ? "Connected" : "Disconnected"}
-              tone={connection.connected ? "green" : "amber"}
-            />
-            {account?.email ? <StatusPill label={account.email} tone="slate" /> : null}
-            <button
-              className="toolbar-pill-button"
-              onClick={() =>
-                selectedWorkspaceForContext
-                  ? openEditWorkspaceModal(selectedWorkspaceForContext)
-                  : openCreateWorkspaceModal()
+            {toolbarUsageWindows.map((window) => (
+              <span
+                key={window.label}
+                className="window-toolbar__usage"
+                title={buildUsageWindowTitle(window)}
+              >
+                <span className="window-toolbar__usage-label">{window.label}</span>
+                <span className="window-toolbar__usage-value">
+                  {formatUsageRemaining(window.remainingPercent)}
+                </span>
+              </span>
+            ))}
+            <ComposerSpeedSwitch
+              className="window-toolbar__speed"
+              mode={composerSpeedMode}
+              disabled={false}
+              onToggle={() =>
+                void handleComposerSpeedChange(composerSpeedMode === "fast" ? "standard" : "fast")
               }
-            >
-              打开
-            </button>
+            />
+            <ComposerInlineDropdown
+              className="window-toolbar__locale-select"
+              testId="locale-toggle-button"
+              ariaLabel={t("toolbar.toggleLanguage")}
+              icon={<GlobeIcon />}
+              iconOnly
+              menuPlacement="below"
+              value={locale}
+              label={t("settings.language")}
+              options={toolbarLocaleOptions}
+              menuTitle={t("settings.language")}
+              onChange={setLocale}
+            />
             <button
-              className="toolbar-pill-button"
-              data-testid="workspace-search-button"
-              onClick={() => setPaletteOpen(true)}
+              type="button"
+              className="toolbar-pill-button window-toolbar__icon-button"
+              data-testid="settings-button"
+              aria-label={t("common.settings")}
+              title={t("common.settings")}
+              onClick={() => {
+                setSettingsOpen(true);
+                setSettingsTab("general");
+                setSettingsNotice(null);
+              }}
             >
-              命令
+              <GearIcon />
             </button>
-            <button
-              className="toolbar-pill-button"
-              data-testid="review-button"
-              onClick={() => void handleRunReview()}
-              disabled={!activeThreadId}
-            >
-              提交
-            </button>
-          </div>
-
-          <div className="window-toolbar__stats">
-            <span className="window-stat window-stat--positive">+{diffStats.additions}</span>
-            <span className="window-stat window-stat--negative">-{diffStats.deletions}</span>
           </div>
         </header>
 
         <div className="window-body">
-          <section className="conversation-shell">
-            <div
-              className="conversation-body"
-              ref={conversationBodyRef}
-              onScroll={handleConversationScroll}
-            >
-              {!selectedWorkspaceForContext && !activeThreadId ? (
-                <EmptyWorkspaceState onCreateWorkspace={openCreateWorkspaceModal} />
-              ) : activeThreadView ? (
-                timeline.length > 0 ? (
-                  <div className="timeline-stream" data-testid="timeline-list">
-                    {timeline.map((entry) => (
-                      <ConversationEntry
-                        key={entry.id}
-                        entry={entry}
-                        cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
-                        onCodeLinkActivate={openCodePreview}
-                        onImageActivate={openImagePreview}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <EmptyThreadState
-                    thread={activeThreadView.thread}
-                    archived={activeThreadArchived}
-                  />
-                )
-              ) : (
-                <ReadyState
-                  workspace={selectedWorkspaceForContext}
-                  onSuggestionClick={(prompt) => setComposer(prompt)}
-                />
-              )}
-            </div>
-
-            <div className="composer-shell">
-              <div className="composer-shell__toolbar">
-                <div className="composer-toolbar__selectors">
-                  {fastModeAvailable ? (
-                    <button
-                      type="button"
-                      className={[
-                        "composer-fast-toggle",
-                        fastModeEnabled ? "composer-fast-toggle--active" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")}
-                      data-testid="composer-fast-toggle"
-                      aria-label="Fast 模式"
-                      aria-pressed={fastModeEnabled ? "true" : "false"}
-                      onClick={() => void handleFastModeToggle()}
-                    >
-                      <BoltIcon />
-                    </button>
-                  ) : null}
-                  <ComposerInlineDropdown
-                    testId="composer-model-select"
-                    value={selectedBaseComposerModel?.model ?? composerModel}
-                    label={composerModelLabel}
-                    options={composerModelOptions}
-                    disabled={composerModelOptions.length === 0}
-                    onChange={(value) => void handleComposerModelChange(value)}
-                  />
-                  <ComposerInlineDropdown
-                    testId="composer-reasoning-select"
-                    icon={<ReasoningEffortIcon effort={effectiveComposerReasoningEffort} />}
-                    value={effectiveComposerReasoningEffort}
-                    label={composerReasoningLabel}
-                    options={composerReasoningOptions}
-                    menuTitle="选择推理功能"
-                    onChange={(value) => void handleComposerReasoningEffortChange(value)}
-                  />
-                </div>
-                <button
-                  className="ghost-button"
-                  data-testid="compact-button"
-                  onClick={() => activeThreadId && void handleCompactThread(activeThreadId)}
-                  disabled={!activeThreadId}
-                >
-                  Compact
-                </button>
-              </div>
-
-              {activePlan && (activePlan.explanation || activePlan.plan.length > 0) ? (
-                <ComposerPlanCard plan={activePlan} />
-              ) : null}
-
-              {activeQueuedPrompts.length > 0 ? (
-                <div className="composer-queue" data-testid="composer-queue">
-                  {activeQueuedPrompts.map((queuedPrompt, index) => (
-                    <div key={queuedPrompt.id} className="composer-queue__item">
-                      <span className="composer-queue__label">{`排队 ${index + 1}`}</span>
-                      <span className="composer-queue__text">{queuedPrompt.text}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="composer-input-shell">
-                <textarea
-                  data-testid="composer-input"
-                  value={composer}
-                  onChange={(event) => setComposer(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.nativeEvent.isComposing) {
-                      return;
-                    }
-
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void handleSendMessage();
-                    }
-                  }}
-                  placeholder="Ask Codex to patch code, review a diff, explain a failure, or execute a plan..."
-                />
-                <button
-                  className={
-                    activeTurn
-                      ? "composer-inline-button composer-inline-button--interrupt"
-                      : "composer-inline-button composer-inline-button--send"
+          <section
+            className={
+              gitWorkbenchExpanded
+                ? "conversation-shell conversation-shell--git-expanded"
+                : "conversation-shell"
+            }
+          >
+            {gitWorkbenchExpanded ? (
+              <GitWorkbenchPanel
+                workspace={currentGitWorkspace}
+                snapshot={activeGitSnapshot}
+                summary={gitSummary}
+                selectedFile={selectedGitFile}
+                treeFilter={currentGitTreeFilter}
+                treeWidth={inspectorWidth}
+                treeBounds={inspectorBounds}
+                treeResizing={inspectorResizing}
+                canReview={Boolean(reviewThreadId)}
+                onClose={() => setGitWorkbenchExpanded(false)}
+                onSelectFile={(path) => {
+                  if (!currentGitWorkspaceId) {
+                    return;
                   }
-                  data-testid="send-button"
-                  aria-label={activeTurn ? "Interrupt" : "发送"}
-                  onClick={() => {
-                    if (activeTurn) {
-                      void handleInterrupt();
-                      return;
-                    }
-                    void handleSendMessage();
-                  }}
-                  disabled={
-                    activeTurn
-                      ? !activeThreadId
-                      : !composer.trim() || (!selectedWorkspaceForContext && !activeThreadId)
-                  }
-                >
-                  {activeTurn ? <InterruptIcon /> : <SendArrowIcon />}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <aside className="inspector-shell">
-            <div className="inspector-header">
-              <div>
-                <p className="inspector-header__eyebrow">Inspector</p>
-                <strong>{activeThreadView ? "未提交改动" : "线程输出"}</strong>
-              </div>
-              <div className="inspector-header__stats">
-                <span>{diffStats.files} files</span>
-                <span className="window-stat window-stat--positive">+{diffStats.additions}</span>
-                <span className="window-stat window-stat--negative">-{diffStats.deletions}</span>
-              </div>
-            </div>
-
-            <div className="inspector-tabs">
-              {INSPECTOR_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  className={tab.id === inspectorTab ? "inspector-tab inspector-tab--active" : "inspector-tab"}
-                  data-testid={`inspector-tab-${tab.id}`}
-                  onClick={() => setInspectorTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="inspector-content" data-testid="inspector-panel">
-              <InspectorPanel
-                tab={inspectorTab}
-                threadView={activeThreadView}
-                timeline={timeline}
-                diffFiles={diffFiles}
-                latestCommandSession={latestCommandSession}
-                commandInput={commandInput}
-                commandStdin={commandStdin}
-                commandCols={commandCols}
-                commandRows={commandRows}
-                mcpServers={integrations.mcpServers}
-                onCommandChange={setCommandInput}
-                onCommandStdinChange={setCommandStdin}
-                onCommandColsChange={setCommandCols}
-                onCommandRowsChange={setCommandRows}
-                onRunCommand={() => void handleRunCommand()}
-                onSendCommandInput={() => void handleSendCommandInput()}
-                onResizeCommand={() => void handleResizeCommand()}
-                onTerminateCommand={() => void handleTerminateCommand()}
-                onOpenSettings={() => {
-                  setSettingsOpen(true);
-                  setSettingsTab("integrations");
+                  selectWorkspaceGitFile(currentGitWorkspaceId, path);
                 }}
+                onTreeFilterChange={(nextValue) => {
+                  if (!currentGitWorkspaceId) {
+                    return;
+                  }
+                  setGitTreeFilterByWorkspaceId((current) => ({
+                    ...current,
+                    [currentGitWorkspaceId]: nextValue,
+                  }));
+                }}
+                onRefresh={() => void handleRefreshWorkspaceGit()}
+                onReview={() => void handleRunReview()}
+                onResizeStart={handleInspectorResizeStart}
+                onResizeKeyDown={handleInspectorResizeKeyDown}
               />
-            </div>
+            ) : (
+              <>
+                <div
+                  className="conversation-body"
+                  ref={conversationBodyRef}
+                  onScroll={handleConversationScroll}
+                >
+                  {!selectedWorkspaceForContext && !activeThreadId ? (
+                    <EmptyWorkspaceState onCreateWorkspace={openCreateWorkspaceModal} />
+                  ) : activeThreadView ? (
+                    timeline.length > 0 ? (
+                      <div className="timeline-stream" data-testid="timeline-list">
+                        {hiddenTimelineEntryCount > 0 ? (
+                          <div className="timeline-stream__window-banner">
+                            <span className="timeline-stream__window-summary">
+                              {t("timeline.windowSummary", {
+                                visible: formatNumber(timeline.length),
+                                total: formatNumber(timelineEntryCount),
+                              })}
+                            </span>
+                            <button
+                              className="timeline-stream__window-button"
+                              type="button"
+                              onClick={loadOlderTimelineEntries}
+                            >
+                              {t("timeline.loadOlder")}
+                            </button>
+                          </div>
+                        ) : null}
+                        {timeline.map((entry) => (
+                          <ConversationEntry
+                            key={entry.id}
+                            entry={entry}
+                            cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
+                            onCodeLinkActivate={openCodePreview}
+                            onImageActivate={openImagePreview}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyThreadState
+                        thread={activeThreadView.thread}
+                        archived={activeThreadArchived}
+                      />
+                    )
+                  ) : (
+                    <ReadyState
+                      workspace={selectedWorkspaceForContext}
+                      onSuggestionClick={(prompt) => setComposer(prompt)}
+                    />
+                  )}
+                </div>
+
+                <div className="composer-shell">
+                  <div className="composer-shell__toolbar">
+                    <div className="composer-toolbar__selectors">
+                      <ComposerInlineDropdown
+                        testId="composer-model-select"
+                        value={selectedBaseComposerModel?.model ?? composerModel}
+                        label={composerModelLabel}
+                        options={composerModelOptions}
+                        disabled={composerModelOptions.length === 0}
+                        onChange={(value) => void handleComposerModelChange(value)}
+                      />
+                      <ComposerInlineDropdown
+                        testId="composer-reasoning-select"
+                        value={effectiveComposerReasoningEffort}
+                        label={composerReasoningLabel}
+                        options={composerReasoningOptions}
+                        menuTitle={t("composer.reasoningMenu")}
+                        onChange={(value) => void handleComposerReasoningEffortChange(value)}
+                      />
+                      <ComposerInlineDropdown
+                        testId="composer-approval-policy-select"
+                        value={composerApprovalPolicy}
+                        label={formatApprovalPolicy(composerApprovalPolicy)}
+                        options={approvalPolicyOptions}
+                        menuTitle={t("composer.approvalMenu")}
+                        onChange={(value) => void handleComposerApprovalPolicyChange(value)}
+                      />
+                      <ComposerInlineDropdown
+                        testId="composer-sandbox-mode-select"
+                        value={composerSandboxMode}
+                        label={formatSandboxMode(composerSandboxMode)}
+                        options={sandboxModeOptions}
+                        menuTitle={t("composer.sandboxMenu")}
+                        onChange={(value) => void handleComposerSandboxModeChange(value)}
+                      />
+                    </div>
+                    {currentGitWorkspace ? (
+                      <GitSummaryBar
+                        summary={gitSummary}
+                        branchValue={currentGitBranchName}
+                        branchOptions={gitBranchOptions}
+                        branchDisabled={!activeGitSnapshot?.isGitRepository || gitBranchSwitchPending}
+                        onOpen={() => setGitWorkbenchExpanded(true)}
+                        onBranchChange={(branch) => void handleGitBranchChange(branch)}
+                      />
+                    ) : null}
+                  </div>
+
+                  {activePlan && (activePlan.explanation || activePlan.plan.length > 0) ? (
+                    <ComposerPlanCard plan={activePlan} />
+                  ) : null}
+
+                  {activeQueuedPrompts.length > 0 ? (
+                    <div className="composer-queue" data-testid="composer-queue">
+                      {activeQueuedPrompts.map((queuedPrompt, index) => (
+                        <div key={queuedPrompt.id} className="composer-queue__item">
+                          <span className="composer-queue__label">
+                            {t("composer.queued", { index: formatNumber(index + 1) })}
+                          </span>
+                          <span className="composer-queue__text">{queuedPrompt.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="composer-input-shell">
+                    <textarea
+                      data-testid="composer-input"
+                      value={composer}
+                      onChange={(event) => setComposer(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing) {
+                          return;
+                        }
+
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          void handleSendMessage();
+                        }
+                      }}
+                      placeholder={t("composer.placeholder")}
+                    />
+                    <button
+                      className={
+                        activeTurn
+                          ? "composer-inline-button composer-inline-button--interrupt"
+                          : "composer-inline-button composer-inline-button--send"
+                      }
+                      data-testid="send-button"
+                      aria-label={activeTurn ? t("composer.interrupt") : t("composer.send")}
+                      onClick={() => {
+                        if (activeTurn) {
+                          void handleInterrupt();
+                          return;
+                        }
+                        void handleSendMessage();
+                      }}
+                      disabled={
+                        activeTurn
+                          ? !activeThreadId
+                          : !composer.trim() || (!selectedWorkspaceForContext && !activeThreadId)
+                      }
+                    >
+                      {activeTurn ? <InterruptIcon /> : <SendArrowIcon />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
             <ApprovalRail approvals={pendingApprovals} onResolve={handleResolveApproval} />
-          </aside>
+          </section>
         </div>
       </div>
 
@@ -1918,7 +2470,7 @@ export function App() {
           submitError={workspaceMutationError}
           onClose={closeWorkspaceModal}
           onDelete={workspaceEditor ? () => void handleDeleteWorkspace() : undefined}
-          deleteLabel={workspaceEditor?.source === "derived" ? "移除" : "删除"}
+          deleteLabel={workspaceEditor?.source === "derived" ? t("common.remove") : t("common.delete")}
           onSubmit={(input) => void handleWorkspaceSubmit(input)}
         />
       ) : null}
@@ -1944,13 +2496,16 @@ export function App() {
           accountEmail={account?.email ?? null}
           accountType={account?.accountType ?? "unknown"}
           requiresOpenaiAuth={account?.requiresOpenaiAuth ?? false}
-          config={integrations.config ?? bootstrap?.settings.config ?? null}
+          config={bootstrap?.settings.config ?? integrations.config ?? null}
           models={models}
           mcpServers={integrations.mcpServers}
           skills={integrations.skills}
           apps={integrations.apps}
           plugins={integrations.plugins}
           archivedThreads={archivedThreadEntries}
+          archivedThreadCount={archivedThreadCount}
+          archivedThreadsLoading={archivedThreadsQuery.isLoading || archivedThreadsQuery.isFetchingNextPage}
+          archivedThreadsHasMore={Boolean(archivedThreadsQuery.hasNextPage)}
           activeWorkspaceId={activeWorkspaceId}
           onClose={() => setSettingsOpen(false)}
           onTabChange={(tab) => setSettingsTab(tab)}
@@ -1965,6 +2520,7 @@ export function App() {
           }}
           onUnarchiveThread={(thread) => void handleUnarchiveThread(thread)}
           onPluginUninstall={(pluginId) => void handlePluginUninstall(pluginId)}
+          onArchivedLoadMore={() => void archivedThreadsQuery.fetchNextPage()}
         />
       ) : null}
 
@@ -1990,22 +2546,21 @@ export function App() {
 
       {blocking ? <BlockingOverlay email={account?.email ?? null} /> : null}
 
-      <div
-        style={{
-          position: "fixed",
-          right: 18,
-          bottom: 14,
-          display: "grid",
-          gap: 4,
-          justifyItems: "end",
-          zIndex: 35,
-        }}
-      >
-        <span data-testid="footer-status" className="muted">
-          {busyMessage ?? "就绪"}
-        </span>
-        {errorMessage ? <span style={{ color: "#f06d65", fontSize: "0.85rem" }}>{errorMessage}</span> : null}
-      </div>
+      {errorMessage ? (
+        <div
+          style={{
+            position: "fixed",
+            right: 18,
+            bottom: 14,
+            display: "grid",
+            gap: 4,
+            justifyItems: "end",
+            zIndex: 35,
+          }}
+        >
+          <span style={{ color: "#f06d65", fontSize: "0.85rem" }}>{errorMessage}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2018,6 +2573,7 @@ function WorkspaceListRow(props: {
   onCompose?: () => void;
   onEdit?: () => void;
 }) {
+  const { t } = useAppLocale();
   return (
     <div className="workspace-row" data-active={props.active ? "true" : "false"}>
       <button
@@ -2036,7 +2592,7 @@ function WorkspaceListRow(props: {
           <button
             className="workspace-row__icon-button"
             onClick={props.onEdit}
-            aria-label="维护项目"
+            aria-label={t("sidebar.manageProject")}
           >
             <GearIcon />
           </button>
@@ -2046,7 +2602,7 @@ function WorkspaceListRow(props: {
             className="workspace-row__icon-button"
             data-testid={props.active ? "thread-open-button" : undefined}
             onClick={props.onCompose}
-            aria-label="新增会话"
+            aria-label={t("sidebar.composeThread")}
           >
             <ComposeIcon />
           </button>
@@ -2070,6 +2626,7 @@ function ThreadRow(props: {
   onFork: () => void;
   onArchive: () => void;
 }) {
+  const { t } = useAppLocale();
   return (
     <div
       className={[
@@ -2089,15 +2646,15 @@ function ThreadRow(props: {
           {props.running ? (
             <span
               className="thread-row__status-indicator thread-row__status-indicator--running"
-              title="运行中"
+              title={t("sidebar.threadRunning")}
             />
           ) : props.showCompletionMark ? (
             <span
               className="thread-row__status-indicator thread-row__status-indicator--completed"
-              title="有新完成输出"
+              title={t("sidebar.threadCompletedOutput")}
             />
           ) : null}
-          <strong>{formatThreadTitle(props.thread) ?? "未命名线程"}</strong>
+          <strong>{formatThreadTitle(props.thread) ?? t("workspace.untitledThread")}</strong>
         </div>
         <span className="thread-row__time" title={formatAbsoluteDateTime(props.thread.updatedAt)}>
           {formatRelativeThreadAge(props.thread.updatedAt, props.now)}
@@ -2116,9 +2673,11 @@ function ThreadRow(props: {
 
       {props.menuOpen ? (
         <div className="thread-row__menu" onClick={(event) => event.stopPropagation()}>
-          <button onClick={props.onRename}>重命名</button>
-          <button onClick={props.onFork}>Fork</button>
-          <button onClick={props.onArchive}>{props.thread.archived ? "恢复" : "归档"}</button>
+          <button onClick={props.onRename}>{t("sidebar.renameThread")}</button>
+          <button onClick={props.onFork}>{t("sidebar.forkThread")}</button>
+          <button onClick={props.onArchive}>
+            {props.thread.archived ? t("sidebar.restoreThread") : t("sidebar.archiveThread")}
+          </button>
         </div>
       ) : null}
     </div>
@@ -2126,12 +2685,16 @@ function ThreadRow(props: {
 }
 
 function ComposerInlineDropdown<T extends string>(props: {
+  className?: string;
   testId: string;
   icon?: ReactNode;
+  ariaLabel?: string;
+  iconOnly?: boolean;
   value: T;
   label: string;
   options: Array<ComposerDropdownOption<T>>;
   menuTitle?: string;
+  menuPlacement?: "above" | "below";
   disabled?: boolean;
   onChange: (value: T) => void;
 }) {
@@ -2169,7 +2732,10 @@ function ComposerInlineDropdown<T extends string>(props: {
       ref={rootRef}
       className={[
         "composer-inline-select",
+        props.className ?? "",
         open ? "composer-inline-select--open" : "",
+        props.iconOnly ? "composer-inline-select--icon-only" : "",
+        props.menuPlacement === "below" ? "composer-inline-select--below" : "",
         props.disabled ? "composer-inline-select--disabled" : "",
       ]
         .filter(Boolean)
@@ -2180,6 +2746,7 @@ function ComposerInlineDropdown<T extends string>(props: {
         className="composer-inline-select__trigger"
         data-testid={props.testId}
         data-value={props.value}
+        aria-label={props.ariaLabel}
         aria-haspopup="menu"
         aria-expanded={open ? "true" : "false"}
         disabled={props.disabled}
@@ -2231,17 +2798,58 @@ function ComposerInlineDropdown<T extends string>(props: {
   );
 }
 
+function ComposerSpeedSwitch(props: {
+  className?: string;
+  mode: ComposerSpeedMode;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useAppLocale();
+  const fast = props.mode === "fast";
+
+  return (
+    <div
+      className={[
+        "composer-speed-switch",
+        props.className ?? "",
+        fast ? "composer-speed-switch--fast" : "",
+        props.disabled ? "composer-speed-switch--disabled" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <span className="composer-speed-switch__value">
+        {fast ? t("composer.speedFast") : t("composer.speedStandard")}
+      </span>
+      <button
+        type="button"
+        className="composer-speed-switch__control"
+        data-testid="composer-speed-switch"
+        role="switch"
+        aria-label={t("composer.switchSpeedAria")}
+        aria-checked={fast ? "true" : "false"}
+        disabled={props.disabled}
+        onClick={props.onToggle}
+      >
+        <span className="composer-speed-switch__track" aria-hidden="true">
+          <span className="composer-speed-switch__thumb">
+            <BoltIcon />
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function EmptyWorkspaceState(props: { onCreateWorkspace: () => void }) {
+  const { t } = useAppLocale();
   return (
     <div className="conversation-empty">
-      <p className="conversation-empty__eyebrow">Get Started</p>
-      <h2>先把本地仓库路径挂进来。</h2>
-      <p>
-        这个 web 工作台应该像桌面端一样承载真实会话。先注册项目根目录，再开始 Codex
-        线程。
-      </p>
+      <p className="conversation-empty__eyebrow">{t("shell.emptyWorkspaceEyebrow")}</p>
+      <h2>{t("shell.emptyWorkspaceTitle")}</h2>
+      <p>{t("shell.emptyWorkspaceBody")}</p>
       <button className="primary-button" onClick={props.onCreateWorkspace}>
-        注册项目
+        {t("workspace.modalTitleNew")}
       </button>
     </div>
   );
@@ -2251,14 +2859,20 @@ function ReadyState(props: {
   workspace: WorkspaceRecord | null;
   onSuggestionClick: (prompt: string) => void;
 }) {
+  const { t } = useAppLocale();
+  const promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
   return (
     <div className="conversation-ready">
       <div>
-        <p className="conversation-empty__eyebrow">Ready</p>
-        <h2>{props.workspace ? `在 ${props.workspace.name} 中开始线程` : "选择一个项目"}</h2>
+        <p className="conversation-empty__eyebrow">{t("shell.readyEyebrow")}</p>
+        <h2>
+          {props.workspace
+            ? t("shell.readyStartThread", { name: props.workspace.name })
+            : t("shell.readySelectProject")}
+        </h2>
       </div>
       <div className="suggestion-list">
-        {PROMPT_SUGGESTIONS.map((prompt) => (
+        {promptSuggestions.map((prompt) => (
           <button
             key={prompt}
             className="suggestion-chip"
@@ -2273,15 +2887,16 @@ function ReadyState(props: {
 }
 
 function EmptyThreadState(props: { thread: ThreadSummary; archived: boolean }) {
+  const { t } = useAppLocale();
   return (
     <div className="conversation-ready">
       <div>
         <p className="conversation-empty__eyebrow">
-          {props.archived ? "Archived" : describeThreadStatus(props.thread.status)}
+          {props.archived ? t("settings.tabs.archived") : describeThreadStatus(props.thread.status)}
         </p>
         <h2>{formatThreadTitle(props.thread)}</h2>
       </div>
-      <p>线程已经创建，但还没有完整 timeline。发送下一条消息后，这里会切到真正的工作流视图。</p>
+      <p>{t("shell.emptyThreadBody")}</p>
     </div>
   );
 }
@@ -2289,14 +2904,20 @@ function EmptyThreadState(props: { thread: ThreadSummary; archived: boolean }) {
 function ComposerPlanCard(props: {
   plan: NonNullable<ThreadView["latestPlan"]>;
 }) {
+  const { t } = useAppLocale();
   const completedCount = props.plan.plan.filter((step) => normalizePlanStepStatus(step.status) === "completed").length;
 
   return (
     <section className="composer-plan" data-testid="composer-plan">
       <div className="composer-plan__header">
         <div>
-          <span className="composer-plan__eyebrow">Plan</span>
-          <strong>{`共 ${props.plan.plan.length} 个任务，已完成 ${completedCount} 个`}</strong>
+          <span className="composer-plan__eyebrow">{t("timeline.planTitle")}</span>
+          <strong>
+            {t("timeline.planSummary", {
+              total: formatNumber(props.plan.plan.length),
+              completed: formatNumber(completedCount),
+            })}
+          </strong>
         </div>
       </div>
 
@@ -2356,8 +2977,9 @@ const MessageEntry = memo(function MessageEntry(props: {
   onCodeLinkActivate?: (reference: CodeLinkReference) => void;
   onImageActivate?: (reference: ImagePreviewReference) => void;
 }) {
+  useAppLocale();
   const { entry, cwd, onCodeLinkActivate, onImageActivate } = props;
-  const placeholder = entry.kind === "agentMessage" ? "正在输出..." : "...";
+  const placeholder = entry.kind === "agentMessage" ? translate("common.loading") : "...";
 
   return (
     <article
@@ -2386,6 +3008,7 @@ const ActivityEntry = memo(function ActivityEntry(props: {
   onCodeLinkActivate?: (reference: CodeLinkReference) => void;
   onImageActivate?: (reference: ImagePreviewReference) => void;
 }) {
+  useAppLocale();
   const { entry, cwd, onCodeLinkActivate, onImageActivate } = props;
   const summary = describeActivitySummary(entry);
   const details = describeActivityDetails(entry);
@@ -2462,236 +3085,275 @@ function renderInlineFormattedText(text: string, keyPrefix: string): ReactNode {
   });
 }
 
-function InspectorPanel(props: {
-  tab: InspectorTab;
-  threadView: ThreadView | null;
-  timeline: Array<TimelineEntry>;
-  diffFiles: Array<string>;
-  latestCommandSession: CommandSession | null;
-  commandInput: string;
-  commandStdin: string;
-  commandCols: string;
-  commandRows: string;
-  mcpServers: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["mcpServers"];
-  onCommandChange: (value: string) => void;
-  onCommandStdinChange: (value: string) => void;
-  onCommandColsChange: (value: string) => void;
-  onCommandRowsChange: (value: string) => void;
-  onRunCommand: () => void;
-  onSendCommandInput: () => void;
-  onResizeCommand: () => void;
-  onTerminateCommand: () => void;
-  onOpenSettings: () => void;
+function GitSummaryBar(props: {
+  summary: ReturnType<typeof summarizeGitSnapshot>;
+  branchValue: string | null;
+  branchOptions: Array<ComposerDropdownOption<string>>;
+  branchDisabled: boolean;
+  onOpen: () => void;
+  onBranchChange: (branch: string) => void;
 }) {
-  const latestMcp = [...props.timeline]
-    .reverse()
-    .find((entry) => entry.kind === "mcpToolCall");
-
-  if (!props.threadView) {
-    return (
-      <div className="inspector-empty">
-        <strong>没有选中线程</strong>
-        <p>先选一个线程，或者在项目里发出第一条消息。</p>
+  const { t } = useAppLocale();
+  return (
+    <div className="composer-gitbar">
+      {props.branchValue ? (
+        <ComposerInlineDropdown
+          testId="composer-git-branch-select"
+          value={props.branchValue}
+          label={props.branchValue}
+          options={props.branchOptions}
+          menuTitle={t("composer.switchBranchMenu")}
+          disabled={props.branchDisabled || props.branchOptions.length === 0}
+          onChange={props.onBranchChange}
+        />
+      ) : null}
+      <div
+        className={
+          props.summary.expandable
+            ? "composer-gitbar__summary"
+            : "composer-gitbar__summary composer-gitbar__summary--disabled"
+        }
+        data-testid="git-summary-bar"
+      >
+        <span>{t("composer.gitFilesCount", { count: props.summary.files })}</span>
+        <span className="window-stat window-stat--positive">{`+${props.summary.additions}`}</span>
+        <span className="window-stat window-stat--negative">{`-${props.summary.deletions}`}</span>
       </div>
-    );
-  }
+      <button
+        type="button"
+        className="ghost-button composer-gitbar__review"
+        data-testid="git-workbench-open-button"
+        onClick={props.onOpen}
+        disabled={!props.summary.expandable}
+      >
+        {t("composer.review")}
+      </button>
+    </div>
+  );
+}
 
-  if (props.tab === "diff") {
-    return (
-      <div className="inspector-panel inspector-panel--stack">
-        <div className="inspector-section">
-          <div className="inspector-section__header">
-            <strong>文件差异</strong>
-            <span>{props.diffFiles.length} files</span>
-          </div>
-          <div className="diff-file-list">
-            {props.diffFiles.length > 0 ? (
-              props.diffFiles.map((file) => <span key={file}>{file}</span>)
-            ) : (
-              <span>No diff yet.</span>
-            )}
-          </div>
-        </div>
-        <div className="terminal-output" data-testid="diff-output">
-          <RenderableCodeBlock value={props.threadView.latestDiff || "No diff yet."} language="diff" />
-        </div>
-      </div>
-    );
-  }
+function GitWorkbenchPanel(props: {
+  workspace: WorkspaceRecord | null;
+  snapshot: GitWorkingTreeSnapshot | null;
+  summary: ReturnType<typeof summarizeGitSnapshot>;
+  selectedFile: GitWorkingTreeFile | null;
+  treeFilter: string;
+  treeWidth: number;
+  treeBounds: { min: number; max: number };
+  treeResizing: boolean;
+  canReview: boolean;
+  onClose: () => void;
+  onSelectFile: (path: string) => void;
+  onTreeFilterChange: (value: string) => void;
+  onRefresh: () => void;
+  onReview: () => void;
+  onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onResizeKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+}) {
+  const { t } = useAppLocale();
+  const allFiles = props.snapshot?.files ?? [];
+  const treeFiles = useMemo(
+    () => filterGitFilesByQuery(allFiles, props.treeFilter),
+    [allFiles, props.treeFilter],
+  );
+  const fileTree = useMemo(() => buildGitFileTree(treeFiles), [treeFiles]);
+  const visibleSelectedFile =
+    allFiles.find((file) => file.path === props.selectedFile?.path) ?? allFiles[0] ?? null;
 
-  if (props.tab === "review") {
-    const review = props.threadView.review;
+  if (!props.workspace) {
     return (
-      <div className="inspector-panel inspector-panel--stack" data-testid="review-output">
-        {review ? (
-          <>
-            <div className="inspector-section">
-              <div className="inspector-section__header">
-                <strong>{review.overall_correctness}</strong>
-                <span>{review.findings.length} findings</span>
-              </div>
-              <p>{review.overall_explanation}</p>
-            </div>
-            <div className="review-list">
-              {review.findings.map((finding) => (
-                <div
-                  key={`${finding.title}-${finding.code_location.absolute_file_path}`}
-                  className="review-card"
-                >
-                  <strong>{finding.title}</strong>
-                  <p>{finding.body}</p>
-                  <span className="muted">
-                    {compactPath(finding.code_location.absolute_file_path, 4)}:
-                    {finding.code_location.line_range.start}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="inspector-empty" style={{ height: "auto" }}>
-            <strong>还没有结构化 review</strong>
-            <p>点击顶部提交，或者让 Codex 对当前改动作一次 review。</p>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (props.tab === "plan") {
-    return (
-      <div className="inspector-panel inspector-panel--stack" data-testid="plan-output">
-        {props.threadView.latestPlan ? (
-          <>
-            <div className="inspector-section">
-              <div className="inspector-section__header">
-                <strong>Live plan</strong>
-                <span>{props.threadView.latestPlan.plan.length} steps</span>
-              </div>
-              <p>{props.threadView.latestPlan.explanation}</p>
-            </div>
-            <div className="plan-list">
-              {props.threadView.latestPlan.plan.map((step) => (
-                <div key={step.step} className="plan-row">
-                  <strong>{step.step}</strong>
-                  <span>{step.status}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="inspector-empty" style={{ height: "auto" }}>
-            <strong>没有 live plan</strong>
-            <p>当 Codex 发出 plan 更新时，这里会实时刷新。</p>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (props.tab === "command") {
-    return (
-      <div className="inspector-panel inspector-panel--stack">
-        <div className="inspector-section">
-          <div className="inspector-section__header">
-            <strong>本地命令会话</strong>
-            <span>{props.latestCommandSession?.status ?? "idle"}</span>
-          </div>
-          <div className="command-bar">
-            <input
-              data-testid="command-input"
-              value={props.commandInput}
-              onChange={(event) => props.onCommandChange(event.target.value)}
-              placeholder="git status"
-            />
-            <button
-              className="primary-button"
-              data-testid="command-run-button"
-              onClick={props.onRunCommand}
-            >
-              运行
-            </button>
-          </div>
-          <div className="command-grid">
-            <label>
-              <span>Cols</span>
-              <input
-                value={props.commandCols}
-                onChange={(event) => props.onCommandColsChange(event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Rows</span>
-              <input
-                value={props.commandRows}
-                onChange={(event) => props.onCommandRowsChange(event.target.value)}
-              />
-            </label>
-            <button className="ghost-button" onClick={props.onResizeCommand}>
-              Resize
-            </button>
-            <button
-              className="ghost-button"
-              data-testid="command-stop-button"
-              onClick={props.onTerminateCommand}
-            >
-              Terminate
-            </button>
-          </div>
-          <div className="command-bar">
-            <input
-              data-testid="command-stdin-input"
-              value={props.commandStdin}
-              onChange={(event) => props.onCommandStdinChange(event.target.value)}
-              placeholder="stdin..."
-            />
-            <button
-              className="ghost-button"
-              data-testid="command-stdin-send-button"
-              onClick={props.onSendCommandInput}
-            >
-              Send stdin
-            </button>
-          </div>
-        </div>
-        <div className="terminal-output" data-testid="command-output">
-          <pre>
-            {props.latestCommandSession
-              ? `${props.latestCommandSession.stdout}${props.latestCommandSession.stderr ? `\n${props.latestCommandSession.stderr}` : ""}`.trim() ||
-                "Command started. Waiting for output..."
-              : "No command session yet."}
-          </pre>
-        </div>
+      <div className="git-workbench git-workbench--empty">
+        <strong>{t("git.noCurrentProjectTitle")}</strong>
+        <p>{t("git.noCurrentProjectDetail")}</p>
       </div>
     );
   }
 
   return (
-    <div className="inspector-panel inspector-panel--stack">
-      <div className="inspector-section">
-        <div className="inspector-section__header">
-          <strong>MCP Servers</strong>
-          <button className="ghost-button" onClick={props.onOpenSettings}>
-            打开设置
+    <div className="git-workbench" data-testid="git-workbench">
+      <div className="git-workbench__header">
+        <div className="git-workbench__header-body">
+          <p className="inspector-pane__eyebrow">{t("git.dirtyTitle")}</p>
+          <div className="git-workbench__header-title">
+            <strong>{props.workspace.name}</strong>
+            <span>{props.summary.detail}</span>
+          </div>
+        </div>
+        <div className="git-workbench__header-actions">
+          <button type="button" className="ghost-button" onClick={props.onRefresh}>
+            {t("git.refresh")}
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={props.onReview}
+            disabled={!props.canReview || !props.snapshot?.isGitRepository || Boolean(props.snapshot?.clean)}
+          >
+            {t("composer.review")}
+          </button>
+          <button type="button" className="ghost-button" onClick={props.onClose}>
+            {t("git.backToSession")}
           </button>
         </div>
-        {props.mcpServers.length > 0 ? (
-          <div className="mcp-list">
-            {props.mcpServers.map((server) => (
-              <div key={server.name} className="mcp-card">
-                <strong>{server.name}</strong>
-                <span>{server.authStatus}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">还没有加载 MCP server 状态。</p>
-        )}
       </div>
-      <div className="terminal-output">
-        <pre>{latestMcp?.body || "No MCP activity yet."}</pre>
+
+      <div className="git-workbench__body">
+        <section className="git-workbench__main">
+          <div className="git-workbench__panel git-workbench__panel--patch">
+            <div className="inspector-pane__header">
+              <div>
+                <p className="inspector-pane__eyebrow">{t("git.changedContent")}</p>
+                <strong>{visibleSelectedFile?.path ?? props.summary.title}</strong>
+              </div>
+              {visibleSelectedFile ? (
+                <div className="git-workbench__stat-row">
+                  <span>{formatGitFileBadge(visibleSelectedFile.status)}</span>
+                  <span className="window-stat window-stat--positive">{`+${visibleSelectedFile.additions}`}</span>
+                  <span className="window-stat window-stat--negative">{`-${visibleSelectedFile.deletions}`}</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="git-workbench__panel-body">
+              {visibleSelectedFile ? (
+                <div className="terminal-output inspector-terminal-output">
+                  <RenderableCodeBlock
+                    value={visibleSelectedFile.patch || t("git.noDiffYet")}
+                    language="diff"
+                  />
+                </div>
+              ) : (
+                <div className="sidebar-empty-state">
+                  {!props.snapshot
+                    ? t("git.initializingPatch")
+                    : props.snapshot.isGitRepository
+                      ? t("git.selectPatchHint")
+                      : t("git.unavailablePatch")}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <div
+          className={
+            props.treeResizing
+              ? "git-workbench__resizer git-workbench__resizer--active"
+              : "git-workbench__resizer"
+          }
+          data-testid="git-workbench-resizer"
+          role="separator"
+          tabIndex={0}
+          aria-label={t("git.resizeTreeAria")}
+          aria-orientation="vertical"
+          aria-valuemin={props.treeBounds.min}
+          aria-valuemax={props.treeBounds.max}
+          aria-valuenow={Math.round(props.treeWidth)}
+          onPointerDown={props.onResizeStart}
+          onKeyDown={props.onResizeKeyDown}
+        />
+
+        <aside className="git-workbench__tree">
+          <div>
+            <p className="inspector-pane__eyebrow">{t("git.treeTitle")}</p>
+            <strong>{t("git.treeLabel")}</strong>
+          </div>
+          <div className="git-workbench__tree-filter">
+            <input
+              className="git-tree-filter"
+              value={props.treeFilter}
+              onChange={(event) => props.onTreeFilterChange(event.target.value)}
+              placeholder={t("git.filterPlaceholder")}
+            />
+          </div>
+          <div className="git-workbench__tree-body" data-testid="git-file-tree">
+            {!props.snapshot ? (
+              <div className="sidebar-empty-state">{t("git.readingTreeDetail")}</div>
+            ) : !props.snapshot.isGitRepository ? (
+              <div className="sidebar-empty-state">{t("git.notRepoInline")}</div>
+            ) : props.snapshot.clean ? (
+              <div className="sidebar-empty-state">{t("git.noTree")}</div>
+            ) : (
+              <div className="git-tree">
+                {fileTree.map((node) => (
+                  <GitFileTreeRow
+                    key={node.id}
+                    node={node}
+                    depth={0}
+                    selectedPath={visibleSelectedFile?.path ?? null}
+                    onSelectFile={props.onSelectFile}
+                  />
+                ))}
+                {fileTree.length === 0 ? (
+                  <div className="sidebar-empty-state">{t("git.noTreeMatch")}</div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </aside>
       </div>
     </div>
+  );
+}
+
+function GitFileTreeRow(props: {
+  node: GitFileTreeNode;
+  depth: number;
+  selectedPath: string | null;
+  onSelectFile: (path: string) => void;
+}) {
+  const { t } = useAppLocale();
+  const depthStyle = { "--tree-depth": props.depth } as CSSProperties;
+
+  if (props.node.kind === "directory") {
+    return (
+      <div className="git-tree__branch">
+        <div className="git-tree__row git-tree__row--directory" style={depthStyle}>
+          <div className="git-tree__label">
+            <FolderOpenIcon />
+            <strong>{props.node.name}</strong>
+          </div>
+          <div className="git-tree__stats">
+            <span className="git-tree__count">
+              {t("git.fileCount", { count: props.node.fileCount })}
+            </span>
+            <span className="window-stat window-stat--positive">{`+${props.node.additions}`}</span>
+            <span className="window-stat window-stat--negative">{`-${props.node.deletions}`}</span>
+          </div>
+        </div>
+        <div className="git-tree__children">
+          {props.node.children.map((child) => (
+            <GitFileTreeRow
+              key={child.id}
+              node={child}
+              depth={props.depth + 1}
+              selectedPath={props.selectedPath}
+              onSelectFile={props.onSelectFile}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const fileNode = props.node;
+  const active = props.selectedPath === fileNode.file.path;
+  return (
+    <button
+      type="button"
+      className={active ? "git-tree__row git-tree__row--file git-tree__row--active" : "git-tree__row git-tree__row--file"}
+      style={depthStyle}
+      onClick={() => props.onSelectFile(fileNode.file.path)}
+    >
+      <div className="git-tree__label">
+        <span className="git-tree__file-dot" />
+        <span className="git-tree__file-name">{fileNode.name}</span>
+        <span className="git-tree__file-meta">{formatGitFileStatus(fileNode.file)}</span>
+      </div>
+      <div className="git-tree__stats">
+        <span className="window-stat window-stat--positive">{`+${fileNode.file.additions}`}</span>
+        <span className="window-stat window-stat--negative">{`-${fileNode.file.deletions}`}</span>
+      </div>
+    </button>
   );
 }
 
@@ -2699,6 +3361,7 @@ function ApprovalRail(props: {
   approvals: Array<PendingApproval>;
   onResolve: (approval: PendingApproval, decision: "accept" | "decline") => Promise<void>;
 }) {
+  const { t } = useAppLocale();
   if (props.approvals.length === 0) {
     return null;
   }
@@ -2706,8 +3369,8 @@ function ApprovalRail(props: {
   return (
     <div className="approval-rail">
       <div className="inspector-section__header">
-        <strong>审批</strong>
-        <span>{props.approvals.length}</span>
+        <strong>{t("settings.approvalPolicy")}</strong>
+        <span>{formatNumber(props.approvals.length)}</span>
       </div>
       {props.approvals.map((approval) => (
         <div
@@ -2723,14 +3386,14 @@ function ApprovalRail(props: {
               data-testid={`approval-accept-${String(approval.id)}`}
               onClick={() => void props.onResolve(approval, "accept")}
             >
-              接受
+              {t("common.accept")}
             </button>
             <button
               className="ghost-button"
               data-testid={`approval-decline-${String(approval.id)}`}
               onClick={() => void props.onResolve(approval, "decline")}
             >
-              拒绝
+              {t("common.decline")}
             </button>
           </div>
         </div>
@@ -2752,6 +3415,9 @@ function SettingsOverlay(props: {
   apps: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["apps"];
   plugins: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["plugins"];
   archivedThreads: Array<ThreadSummary>;
+  archivedThreadCount: number;
+  archivedThreadsLoading: boolean;
+  archivedThreadsHasMore: boolean;
   activeWorkspaceId: string | "all";
   onClose: () => void;
   onTabChange: (tab: SettingsTab) => void;
@@ -2762,7 +3428,16 @@ function SettingsOverlay(props: {
   onOpenArchivedThread: (threadId: string) => void;
   onUnarchiveThread: (thread: ThreadSummary) => void;
   onPluginUninstall: (pluginId: string) => void;
+  onArchivedLoadMore: () => void;
 }) {
+  const { t, locale, setLocale } = useAppLocale();
+  const settingsTabs = useMemo(() => buildSettingsTabs(t), [t]);
+  const approvalPolicyOptions = useMemo(() => buildApprovalPolicyOptions(t), [t]);
+  const sandboxModeOptions = useMemo(() => buildSandboxModeOptions(t), [t]);
+  const settingsReasoningEffortOptions = useMemo(
+    () => buildSettingsReasoningEffortOptions(t),
+    [t],
+  );
   const [model, setModel] = useState(props.config?.model ?? "");
   const [reasoningEffort, setReasoningEffort] = useState<"" | ReasoningEffort>(
     normalizeReasoningEffort(props.config?.reasoningEffort) ?? "",
@@ -2790,11 +3465,11 @@ function SettingsOverlay(props: {
       >
         <aside className="settings-sidebar">
           <div>
-            <p className="settings-sidebar__eyebrow">Settings</p>
-            <strong>桌面工作台配置</strong>
+            <p className="settings-sidebar__eyebrow">{t("settings.titleEyebrow")}</p>
+            <strong>{t("settings.title")}</strong>
           </div>
           <div className="settings-sidebar__tabs">
-            {SETTINGS_TABS.map((tab) => (
+            {settingsTabs.map((tab) => (
               <button
                 key={tab.id}
                 className={tab.id === props.tab ? "settings-tab settings-tab--active" : "settings-tab"}
@@ -2805,7 +3480,7 @@ function SettingsOverlay(props: {
             ))}
           </div>
           <button className="ghost-button" onClick={props.onClose}>
-            关闭
+            {t("common.close")}
           </button>
         </aside>
 
@@ -2816,29 +3491,31 @@ function SettingsOverlay(props: {
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>账号</strong>
-                  <span>{props.accountEmail ?? "未连接"}</span>
+                  <strong>{t("settings.account")}</strong>
+                  <span>{props.accountEmail ?? t("settings.accountDisconnected")}</span>
                 </div>
                 <p className="muted">
-                  Auth method: {props.accountType} · requires OpenAI auth:{" "}
-                  {String(props.requiresOpenaiAuth)}
+                  {t("settings.authMethod", {
+                    type: translate(`settings.authTypes.${props.accountType}`),
+                    required: props.requiresOpenaiAuth ? t("common.yes") : t("common.no"),
+                  })}
                 </p>
               </div>
 
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>默认代理配置</strong>
-                  <span>{props.models.length} models</span>
+                  <strong>{t("settings.defaultAgentConfig")}</strong>
+                  <span>{t("settings.modelCount", { count: props.models.length })}</span>
                 </div>
                 <div className="settings-form-grid">
                   <label>
-                    <span>Model</span>
+                    <span>{t("settings.model")}</span>
                     <input
                       data-testid="settings-model-input"
                       value={model}
                       list="settings-model-options"
                       onChange={(event) => setModel(event.target.value)}
-                      placeholder="Default"
+                      placeholder={t("settings.modelPlaceholder")}
                     />
                     <datalist id="settings-model-options">
                       {props.models.map((entry) => (
@@ -2849,7 +3526,7 @@ function SettingsOverlay(props: {
                     </datalist>
                   </label>
                   <label>
-                    <span>命令审批</span>
+                    <span>{t("settings.approvalPolicy")}</span>
                     <select
                       data-testid="settings-approval-policy"
                       value={approvalPolicy}
@@ -2857,14 +3534,15 @@ function SettingsOverlay(props: {
                         setApprovalPolicy(event.target.value as EditableApprovalPolicy)
                       }
                     >
-                      <option value="on-request">按需确认</option>
-                      <option value="on-failure">失败后确认</option>
-                      <option value="untrusted">高风险时确认</option>
-                      <option value="never">从不询问</option>
+                      {approvalPolicyOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
                     </select>
                   </label>
                   <label>
-                    <span>思考级别</span>
+                    <span>{t("settings.reasoningEffort")}</span>
                     <select
                       data-testid="settings-reasoning-effort"
                       value={reasoningEffort}
@@ -2872,7 +3550,7 @@ function SettingsOverlay(props: {
                         setReasoningEffort(event.target.value as "" | ReasoningEffort)
                       }
                     >
-                      {SETTINGS_REASONING_EFFORT_OPTIONS.map((option) => (
+                      {settingsReasoningEffortOptions.map((option) => (
                         <option key={option.value || "default"} value={option.value}>
                           {option.label}
                         </option>
@@ -2880,7 +3558,7 @@ function SettingsOverlay(props: {
                     </select>
                   </label>
                   <label>
-                    <span>沙箱权限</span>
+                    <span>{t("settings.sandboxMode")}</span>
                     <select
                       data-testid="settings-sandbox-mode"
                       value={sandboxMode}
@@ -2888,16 +3566,26 @@ function SettingsOverlay(props: {
                         setSandboxMode(event.target.value as EditableSandboxMode)
                       }
                     >
-                      <option value="danger-full-access">full access</option>
-                      <option value="workspace-write">workspace write</option>
-                      <option value="read-only">read only</option>
+                      {sandboxModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{t("settings.language")}</span>
+                    <select
+                      data-testid="settings-language"
+                      value={locale}
+                      onChange={(event) => void setLocale(event.target.value as "zh-CN" | "en-US")}
+                    >
+                      <option value="zh-CN">{t("settings.languageOptions.zhCN")}</option>
+                      <option value="en-US">{t("settings.languageOptions.enUS")}</option>
                     </select>
                   </label>
                 </div>
-                <p className="muted">
-                  命令审批控制 Codex 在执行命令或写文件前何时向你确认。沙箱权限默认使用 full
-                  access。
-                </p>
+                <p className="muted">{t("settings.configHelp")}</p>
                 <div className="approval-actions">
                   <button
                     className="primary-button"
@@ -2906,19 +3594,20 @@ function SettingsOverlay(props: {
                       props.onConfigSave({
                         model: model || null,
                         reasoningEffort: reasoningEffort || null,
+                        serviceTier: props.config?.serviceTier ?? null,
                         approvalPolicy,
                         sandboxMode,
                       })
                     }
                   >
-                    保存默认配置
+                    {t("settings.saveDefaults")}
                   </button>
                   <button
                     className="ghost-button"
                     data-testid="settings-refresh-button"
                     onClick={props.onRefresh}
                   >
-                    刷新集成
+                    {t("settings.refreshIntegrations")}
                   </button>
                 </div>
               </div>
@@ -2929,9 +3618,9 @@ function SettingsOverlay(props: {
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>MCP Servers</strong>
+                  <strong>{t("settings.integrationsTitle")}</strong>
                   <button className="ghost-button" onClick={props.onMcpReload}>
-                    Reload
+                    {t("settings.integrationsReload")}
                   </button>
                 </div>
                 <div className="mcp-list">
@@ -2941,7 +3630,10 @@ function SettingsOverlay(props: {
                         <div>
                           <strong>{server.name}</strong>
                           <p className="muted">
-                            tools {server.toolsCount} · resources {server.resourcesCount}
+                            {t("settings.mcpToolsResources", {
+                              tools: formatNumber(server.toolsCount),
+                              resources: formatNumber(server.resourcesCount),
+                            })}
                           </p>
                         </div>
                         <div className="mcp-card__actions">
@@ -2951,14 +3643,14 @@ function SettingsOverlay(props: {
                               className="ghost-button"
                               onClick={() => props.onMcpLogin(server.name)}
                             >
-                              Login
+                              {t("settings.mcpLogin")}
                             </button>
                           ) : null}
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="sidebar-empty-state">还没有 MCP server 数据。</div>
+                    <div className="sidebar-empty-state">{t("settings.noMcpServers")}</div>
                   )}
                 </div>
               </div>
@@ -2972,7 +3664,7 @@ function SettingsOverlay(props: {
                   <div key={group.cwd} className="settings-card">
                     <div className="inspector-section__header">
                       <strong>{compactPath(group.cwd, 4)}</strong>
-                      <span>{group.skills.length} skills</span>
+                      <span>{t("settings.skillsCount", { count: group.skills.length })}</span>
                     </div>
                     <div className="tag-cloud">
                       {group.skills.map((skill) => (
@@ -2990,7 +3682,7 @@ function SettingsOverlay(props: {
                 ))
               ) : (
                 <div className="settings-card">
-                  <p className="muted">当前没有技能快照。</p>
+                  <p className="muted">{t("settings.skillsEmpty")}</p>
                 </div>
               )}
             </div>
@@ -3000,8 +3692,8 @@ function SettingsOverlay(props: {
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>Apps</strong>
-                  <span>{props.apps.length}</span>
+                  <strong>{t("settings.appsTitle")}</strong>
+                  <span>{formatNumber(props.apps.length)}</span>
                 </div>
                 {props.apps.length > 0 ? (
                   <div className="plugin-list">
@@ -3009,16 +3701,16 @@ function SettingsOverlay(props: {
                       <div key={app.id} className="plugin-row">
                         <div>
                           <strong>{app.name}</strong>
-                          <p className="muted">{app.description ?? "No description"}</p>
+                          <p className="muted">{app.description ?? t("common.noDescription")}</p>
                         </div>
                         <div className="mcp-card__actions">
-                          <span>{app.isAccessible ? "available" : "blocked"}</span>
+                          <span>{app.isAccessible ? t("common.available") : t("common.blocked")}</span>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="muted">当前没有 app 列表。</p>
+                  <p className="muted">{t("settings.appsEmpty")}</p>
                 )}
               </div>
             </div>
@@ -3031,7 +3723,7 @@ function SettingsOverlay(props: {
                   <div key={marketplace.path} className="settings-card">
                     <div className="inspector-section__header">
                       <strong>{marketplace.name}</strong>
-                      <span>{marketplace.plugins.length} plugins</span>
+                      <span>{t("settings.pluginsCount", { count: marketplace.plugins.length })}</span>
                     </div>
                     <div className="plugin-list">
                       {marketplace.plugins.map((plugin) => (
@@ -3039,8 +3731,8 @@ function SettingsOverlay(props: {
                           <div>
                             <strong>{plugin.name}</strong>
                             <p className="muted">
-                              {plugin.installed ? "installed" : "not installed"} ·{" "}
-                              {plugin.enabled ? "enabled" : "disabled"}
+                              {plugin.installed ? t("common.installed") : t("common.notInstalled")} ·{" "}
+                              {plugin.enabled ? t("common.enabled") : t("common.disabled")}
                             </p>
                           </div>
                           {plugin.installed ? (
@@ -3048,7 +3740,7 @@ function SettingsOverlay(props: {
                               className="ghost-button"
                               onClick={() => props.onPluginUninstall(plugin.id)}
                             >
-                              卸载
+                              {t("settings.pluginUninstall")}
                             </button>
                           ) : null}
                         </div>
@@ -3058,7 +3750,7 @@ function SettingsOverlay(props: {
                 ))
               ) : (
                 <div className="settings-card">
-                  <p className="muted">当前没有插件快照。</p>
+                  <p className="muted">{t("settings.pluginsEmpty")}</p>
                 </div>
               )}
             </div>
@@ -3068,8 +3760,8 @@ function SettingsOverlay(props: {
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>归档线程</strong>
-                  <span>{props.archivedThreads.length}</span>
+                  <strong>{t("settings.archivedThreads")}</strong>
+                  <span>{formatNumber(props.archivedThreadCount)}</span>
                 </div>
                 <div className="archived-list">
                   {props.archivedThreads.map((thread) => (
@@ -3078,7 +3770,7 @@ function SettingsOverlay(props: {
                         <strong>{formatThreadTitle(thread)}</strong>
                         <p className="muted">
                           {props.activeWorkspaceId === "all"
-                            ? thread.workspaceName ?? "未归属"
+                            ? thread.workspaceName ?? t("settings.currentWorkspaceUnowned")
                             : compactPath(thread.cwd, 4)}
                         </p>
                       </div>
@@ -3087,19 +3779,28 @@ function SettingsOverlay(props: {
                           className="ghost-button"
                           onClick={() => props.onOpenArchivedThread(thread.id)}
                         >
-                          打开
+                          {t("settings.openArchivedThread")}
                         </button>
                         <button
                           className="ghost-button"
                           onClick={() => props.onUnarchiveThread(thread)}
                         >
-                          恢复
+                          {t("settings.unarchiveThread")}
                         </button>
                       </div>
                     </div>
                   ))}
-                  {props.archivedThreads.length === 0 ? (
-                    <div className="sidebar-empty-state">当前没有归档线程。</div>
+                  {props.archivedThreads.length === 0 && !props.archivedThreadsLoading ? (
+                    <div className="sidebar-empty-state">{t("settings.archivedEmpty")}</div>
+                  ) : null}
+                  {props.archivedThreadsHasMore ? (
+                    <button
+                      className="ghost-button"
+                      onClick={props.onArchivedLoadMore}
+                      disabled={props.archivedThreadsLoading}
+                    >
+                      {props.archivedThreadsLoading ? t("common.loading") : t("common.loadMore")}
+                    </button>
                   ) : null}
                 </div>
               </div>
@@ -3121,13 +3822,14 @@ function CommandPalette(props: {
   onActionSelect: (action: PaletteAction) => void;
   onFileSelect: (file: { path: string; file_name: string; root: string; score: number }) => void;
 }) {
+  const { t } = useAppLocale();
   return (
     <div className="overlay-shell" style={passThroughOverlayStyle}>
       <div className="palette-panel" style={interactiveOverlayPanelStyle}>
         <div className="palette-panel__header">
-          <strong>命令菜单</strong>
+          <strong>{t("palette.title")}</strong>
           <button className="ghost-button" onClick={props.onClose}>
-            关闭
+            {t("common.close")}
           </button>
         </div>
         <input
@@ -3136,11 +3838,11 @@ function CommandPalette(props: {
           autoFocus
           value={props.query}
           onChange={(event) => props.onQueryChange(event.target.value)}
-          placeholder="搜索动作或文件，支持 Cmd/Ctrl+K 打开"
+          placeholder={t("palette.searchPlaceholder")}
         />
 
         <div className="palette-section">
-          <p className="palette-section__title">Quick actions</p>
+          <p className="palette-section__title">{t("palette.quickActions")}</p>
           {props.actions.length > 0 ? (
             props.actions.map((action) => (
               <button
@@ -3153,13 +3855,13 @@ function CommandPalette(props: {
               </button>
             ))
           ) : (
-            <div className="palette-empty">没有匹配动作。</div>
+            <div className="palette-empty">{t("palette.noActionMatches")}</div>
           )}
         </div>
 
         <div className="palette-section">
-          <p className="palette-section__title">File search</p>
-          {props.loading ? <div className="palette-empty">搜索中...</div> : null}
+          <p className="palette-section__title">{t("palette.fileSearch")}</p>
+          {props.loading ? <div className="palette-empty">{t("palette.searching")}</div> : null}
           {!props.loading && props.fileResults.length > 0
             ? props.fileResults.map((file) => (
                 <button
@@ -3174,7 +3876,7 @@ function CommandPalette(props: {
               ))
             : null}
           {!props.loading && props.query.trim() && props.fileResults.length === 0 ? (
-            <div className="palette-empty">没有匹配文件。</div>
+            <div className="palette-empty">{t("palette.noFileMatches")}</div>
           ) : null}
         </div>
       </div>
@@ -3192,6 +3894,7 @@ function WorkspaceModal(props: {
   onDelete?: () => void;
   deleteLabel?: string;
 }) {
+  const { t } = useAppLocale();
   const discoveredWorkspace = props.initialValue?.source === "derived";
   const [name, setName] = useState(props.initialValue?.name ?? "");
   const [absPath, setAbsPath] = useState(props.initialValue?.absPath ?? "~/");
@@ -3229,18 +3932,22 @@ function WorkspaceModal(props: {
       <div className="modal-panel" style={interactiveOverlayPanelStyle}>
         <div className="modal-panel__header">
           <div>
-            <p className="settings-sidebar__eyebrow">Workspace</p>
+            <p className="settings-sidebar__eyebrow">{t("workspace.modalEyebrow")}</p>
             <strong>
-              {discoveredWorkspace ? "接管项目" : props.initialValue ? "编辑项目" : "新项目"}
+              {discoveredWorkspace
+                ? t("workspace.modalTitleAdopt")
+                : props.initialValue
+                  ? t("workspace.modalTitleEdit")
+                  : t("workspace.modalTitleNew")}
             </strong>
           </div>
           <button className="ghost-button" onClick={props.onClose}>
-            关闭
+            {t("common.close")}
           </button>
         </div>
 
         <label>
-          <span>名称</span>
+          <span>{t("workspace.name")}</span>
           <input
             data-testid="workspace-name-input"
             value={name}
@@ -3249,7 +3956,7 @@ function WorkspaceModal(props: {
         </label>
 
         <label>
-          <span>项目路径</span>
+          <span>{t("workspace.path")}</span>
           <input
             data-testid="workspace-path-input"
             value={absPath}
@@ -3258,23 +3965,19 @@ function WorkspaceModal(props: {
             placeholder="~/Development/webcli"
           />
           {discoveredWorkspace ? (
-            <span className="field-note">
-              这个路径来自已发现的 session 目录。保存后会转成正式项目，并沿用这个目录。
-            </span>
+            <span className="field-note">{t("workspace.discoveredPathHelp")}</span>
           ) : null}
           {!pathWithinHome ? (
-            <span className="field-note field-note--danger">
-              路径不能超出 <code>~/</code> 范围。
-            </span>
+            <span className="field-note field-note--danger">{t("workspace.outsideHome")}</span>
           ) : null}
           {pathValidationPending ? (
-            <span className="field-note">正在校验目录…</span>
+            <span className="field-note">{t("workspace.validatingPath")}</span>
           ) : null}
           {pathWithinHome && pathIsDirectory === false ? (
             <span className="field-note field-note--danger">
               {discoveredWorkspace
-                ? "这个 session 对应的目录当前已经不存在，不能接管保存；如果不再需要，可以直接移除。"
-                : "当前路径不是可用目录。请先选择一个现有目录。"}
+                ? t("workspace.saveExistingDirectoryMissing")
+                : t("workspace.invalidDirectory")}
             </span>
           ) : null}
           {!discoveredWorkspace && pathIsDirectory === false && pathSuggestions?.data.length ? (
@@ -3295,13 +3998,13 @@ function WorkspaceModal(props: {
         </label>
 
         <label>
-          <span>默认模型</span>
+          <span>{t("workspace.defaultModel")}</span>
           <select
             data-testid="workspace-model-select"
             value={defaultModel}
             onChange={(event) => setDefaultModel(event.target.value)}
           >
-            <option value="">Default</option>
+            <option value="">{t("common.default")}</option>
             {props.models.map((model) => (
               <option key={model.id} value={model.model}>
                 {formatModelDisplayName(model)}
@@ -3312,48 +4015,48 @@ function WorkspaceModal(props: {
 
         <div className="settings-form-grid">
           <label>
-            <span>命令审批</span>
+            <span>{t("settings.approvalPolicy")}</span>
             <select
               value={approvalPolicy}
               onChange={(event) =>
                 setApprovalPolicy(event.target.value as EditableApprovalPolicy)
               }
             >
-              <option value="on-request">按需确认</option>
-              <option value="on-failure">失败后确认</option>
-              <option value="untrusted">高风险时确认</option>
-              <option value="never">从不询问</option>
+              <option value="on-request">{t("settings.approvalPolicies.on-request")}</option>
+              <option value="on-failure">{t("settings.approvalPolicies.on-failure")}</option>
+              <option value="untrusted">{t("settings.approvalPolicies.untrusted")}</option>
+              <option value="never">{t("settings.approvalPolicies.never")}</option>
             </select>
           </label>
 
           <label>
-            <span>沙箱权限</span>
+            <span>{t("settings.sandboxMode")}</span>
             <select
               value={sandboxMode}
               onChange={(event) =>
                 setSandboxMode(event.target.value as EditableSandboxMode)
               }
             >
-              <option value="danger-full-access">full access</option>
-              <option value="workspace-write">workspace write</option>
-              <option value="read-only">read only</option>
+              <option value="danger-full-access">{t("settings.sandboxModes.danger-full-access")}</option>
+              <option value="workspace-write">{t("settings.sandboxModes.workspace-write")}</option>
+              <option value="read-only">{t("settings.sandboxModes.read-only")}</option>
             </select>
           </label>
         </div>
         <p className="muted">
           {discoveredWorkspace
-            ? "自动发现项目保存后会写入本地 SQLite，此后可像普通项目一样维护模型、审批和沙箱设置。"
-            : "命令审批决定 Codex 执行命令或改文件前是否先向你确认。项目默认使用 full access。"}
+            ? t("workspace.autoDiscoveredHelp")
+            : t("settings.configHelp")}
         </p>
         {props.submitError ? <div className="settings-notice">{props.submitError}</div> : null}
 
         <div className="modal-panel__footer">
           {props.onDelete ? (
             <button className="danger-button" onClick={props.onDelete} disabled={props.submitting}>
-              {props.deleteLabel ?? "删除"}
+              {props.deleteLabel ?? t("common.delete")}
             </button>
           ) : (
-            <span className="muted">Workspace 元数据保存在本地 SQLite。</span>
+            <span className="muted">{t("workspace.metadataStored")}</span>
           )}
 
           <button
@@ -3370,7 +4073,7 @@ function WorkspaceModal(props: {
               })
             }
           >
-            {props.submitting ? "保存中..." : "保存"}
+            {props.submitting ? t("workspace.savePending") : t("common.save")}
           </button>
         </div>
       </div>
@@ -3385,12 +4088,18 @@ function CodePreviewModal(props: {
   error: string | null;
   onClose: () => void;
 }) {
+  const { t } = useAppLocale();
   const language = useMemo(() => inferCodeLanguage(props.reference.path), [props.reference.path]);
   const fileName =
     props.reference.label?.trim() || props.reference.path.split("/").pop() || props.reference.path;
   const locationLabel =
     props.reference.line !== null
-      ? `第 ${props.reference.line} 行${props.reference.column !== null ? `, 第 ${props.reference.column} 列` : ""}`
+      ? props.reference.column !== null
+        ? t("modal.lineColumn", {
+            line: formatNumber(props.reference.line),
+            column: formatNumber(props.reference.column),
+          })
+        : t("modal.line", { line: formatNumber(props.reference.line) })
       : null;
 
   const handleEditorMount = useMemo<OnMount>(
@@ -3426,7 +4135,7 @@ function CodePreviewModal(props: {
       >
         <div className="modal-panel__header">
           <div>
-            <p className="settings-sidebar__eyebrow">Code Preview</p>
+            <p className="settings-sidebar__eyebrow">{t("modal.codePreview")}</p>
             <strong data-testid="code-preview-title">{fileName}</strong>
             <div className="conversation-header__meta">
               <span>{compactPath(props.reference.path, 5)}</span>
@@ -3441,20 +4150,20 @@ function CodePreviewModal(props: {
             </div>
           </div>
           <button className="ghost-button" onClick={props.onClose}>
-            关闭
+            {t("common.close")}
           </button>
         </div>
 
         {props.loading ? (
           <div className="inspector-empty" style={{ height: "100%" }}>
-            <strong>正在加载代码</strong>
+            <strong>{t("modal.loadingCode")}</strong>
             <p>{compactPath(props.reference.path, 5)}</p>
           </div>
         ) : null}
 
         {!props.loading && props.error ? (
           <div className="inspector-empty" style={{ height: "100%" }}>
-            <strong>无法打开代码预览</strong>
+            <strong>{t("modal.codePreviewFailed")}</strong>
             <p>{props.error}</p>
           </div>
         ) : null}
@@ -3495,6 +4204,7 @@ function ImagePreviewModal(props: {
   reference: ImagePreviewReference;
   onClose: () => void;
 }) {
+  const { t } = useAppLocale();
   return (
     <div
       className="overlay-shell"
@@ -3509,15 +4219,15 @@ function ImagePreviewModal(props: {
       >
         <div className="image-preview-modal__header">
           <div>
-            <p className="settings-sidebar__eyebrow">Image Preview</p>
+            <p className="settings-sidebar__eyebrow">{t("modal.imagePreview")}</p>
             {props.reference.label ? (
               <strong>{props.reference.label}</strong>
             ) : (
-              <strong>查看图片</strong>
+              <strong>{t("modal.viewImage")}</strong>
             )}
           </div>
           <button className="ghost-button" onClick={props.onClose}>
-            关闭
+            {t("common.close")}
           </button>
         </div>
         <div className="image-preview-modal__body">
@@ -3533,27 +4243,18 @@ function ImagePreviewModal(props: {
 }
 
 function BlockingOverlay({ email }: { email: string | null }) {
+  const { t } = useAppLocale();
   return (
     <div className="overlay-shell">
       <div className="blocking-card">
-        <p className="settings-sidebar__eyebrow">Authentication Required</p>
-        <h2>先在目标服务器执行 `codex login`</h2>
-        <p>
-          这个 Web 工作台不会在浏览器里代办登录。必须先在运行 app-server 的那台机器上完成
-          Codex CLI 认证，然后再刷新页面。
-        </p>
-        {email ? <p className="muted">Last known account: {email}</p> : null}
+        <p className="settings-sidebar__eyebrow">{t("shell.blockingEyebrow")}</p>
+        <h2>{t("shell.blockingTitle")}</h2>
+        <p>{t("shell.blockingBody")}</p>
+        {email ? <p className="muted">{t("shell.lastKnownAccount", { email })}</p> : null}
         <pre>ssh your-server && codex login</pre>
       </div>
     </div>
   );
-}
-
-function StatusPill(props: {
-  label: string;
-  tone: "green" | "amber" | "slate";
-}) {
-  return <span className={`status-pill status-pill--${props.tone}`}>{props.label}</span>;
 }
 
 const passThroughOverlayStyle: CSSProperties = {
@@ -3572,15 +4273,13 @@ const interactiveOverlayPanelStyle: CSSProperties = {
 
 const settingsOverlayStyle: CSSProperties = {
   ...passThroughOverlayStyle,
-  justifyItems: "end",
-  alignItems: "start",
-  paddingLeft: "calc(var(--sidebar-width) + 24px)",
-  background: "rgba(5, 6, 10, 0.2)",
+  justifyItems: "center",
+  alignItems: "center",
 };
 
 const dockedSettingsPanelStyle: CSSProperties = {
   ...interactiveOverlayPanelStyle,
-  width: "min(980px, calc(100vw - var(--sidebar-width) - 36px))",
+  width: "min(980px, calc(100vw - 48px))",
   maxHeight: "calc(100vh - 48px)",
 };
 
@@ -3680,88 +4379,6 @@ function BoltIcon() {
   );
 }
 
-function ReasoningEffortIcon(props: { effort: ReasoningEffort }) {
-  const accentCount =
-    props.effort === "minimal"
-      ? 1
-      : props.effort === "low"
-        ? 2
-        : props.effort === "medium"
-          ? 3
-          : props.effort === "high"
-            ? 4
-            : props.effort === "xhigh"
-              ? 5
-              : 0;
-
-  if (props.effort === "none") {
-    return (
-      <svg viewBox="0 0 20 20" aria-hidden="true">
-        <circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <path
-          d="M6.2 13.8 13.8 6.2"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M7.3 3.1a3 3 0 0 0-3 3v.25a2.8 2.8 0 0 0 .4 5.56h.22a2.9 2.9 0 0 0 2.77 2.98h.08a2.9 2.9 0 0 0 2.2-1v-8.9a2.95 2.95 0 0 0-2.7-1.9Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M12.7 3.1a3 3 0 0 1 3 3v.25a2.8 2.8 0 0 1-.4 5.56h-.22a2.9 2.9 0 0 1-2.77 2.98h-.08a2.9 2.9 0 0 1-2.2-1v-8.9a2.95 2.95 0 0 1 2.7-1.9Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {accentCount >= 2 ? (
-        <path
-          d="M8 6.4c.78.14 1.45.58 1.86 1.18M8.1 10.1c.92.08 1.67.5 2.14 1.1"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.15"
-          strokeLinecap="round"
-        />
-      ) : null}
-      {accentCount >= 3 ? (
-        <path
-          d="M12 6.4c-.78.14-1.45.58-1.86 1.18M11.9 10.1c-.92.08-1.67.5-2.14 1.1"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.15"
-          strokeLinecap="round"
-        />
-      ) : null}
-      {accentCount >= 4 ? (
-        <circle cx="10" cy="8.2" r="1.1" fill="currentColor" />
-      ) : null}
-      {accentCount >= 5 ? (
-        <path
-          d="M15 2.4v2.1M13.95 3.45h2.1M14.3 2.8l1.4 1.4M15.7 2.8l-1.4 1.4"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.2"
-          strokeLinecap="round"
-        />
-      ) : null}
-      {accentCount === 1 ? <circle cx="10" cy="10.2" r="1" fill="currentColor" /> : null}
-    </svg>
-  );
-}
-
 function CheckIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -3788,6 +4405,22 @@ function GearIcon() {
         strokeLinejoin="round"
       />
       <circle cx="10" cy="10" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M3.7 10h12.6M10 3c1.8 1.9 2.8 4.4 2.8 7s-1 5.1-2.8 7c-1.8-1.9-2.8-4.4-2.8-7S8.2 4.9 10 3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -3854,38 +4487,43 @@ function buildPaletteActions(input: {
   return [
     {
       id: "new-thread",
-      label: "新线程",
-      description: input.activeThreadEntry ? "切回空白输入态，准备新建线程" : "准备开始一个新的 thread",
+      label: translate("palette.actions.newThreadLabel"),
+      description: input.activeThreadEntry
+        ? translate("palette.actions.newThreadDescriptionActive")
+        : translate("palette.actions.newThreadDescriptionIdle"),
       run: input.onNewThread,
     },
     {
       id: "workspace",
-      label: "新建项目",
-      description: "打开项目注册面板",
+      label: translate("palette.actions.newProjectLabel"),
+      description: translate("palette.actions.newProjectDescription"),
       run: input.onOpenWorkspaceModal,
     },
     {
       id: "settings",
-      label: "打开设置",
-      description: "查看账号、模型、MCP、skills 和 archived threads",
+      label: translate("palette.actions.openSettingsLabel"),
+      description: translate("palette.actions.openSettingsDescription"),
       run: input.onOpenSettings,
     },
     {
       id: "archived",
-      label: input.archivedMode === "archived" ? "切回活跃线程" : "切到归档线程",
-      description: "切换当前 sidebar 线程视图",
+      label:
+        input.archivedMode === "archived"
+          ? translate("palette.actions.showActiveLabel")
+          : translate("palette.actions.showArchivedLabel"),
+      description: translate("palette.actions.toggleArchivedDescription"),
       run: input.onToggleArchived,
     },
     {
       id: "review",
-      label: "切到 Review",
-      description: "右侧 inspector 切到 review 面板",
+      label: translate("palette.actions.showReviewLabel"),
+      description: translate("palette.actions.showReviewDescription"),
       run: () => input.onFocusInspector("review"),
     },
     {
       id: "command",
-      label: "切到 Command",
-      description: "右侧 inspector 切到 command 面板",
+      label: translate("palette.actions.showCommandLabel"),
+      description: translate("palette.actions.showCommandDescription"),
       run: () => input.onFocusInspector("command"),
     },
   ];
@@ -3967,6 +4605,16 @@ function normalizeReasoningEffort(
   return null;
 }
 
+function normalizeServiceTier(
+  value: ConfigSnapshot["serviceTier"] | undefined,
+): ServiceTier | null {
+  if (value === "fast" || value === "flex") {
+    return value;
+  }
+
+  return null;
+}
+
 function normalizeSandboxMode(
   value: WorkspaceRecord["sandboxMode"] | ConfigSnapshot["sandboxMode"] | undefined,
 ): EditableSandboxMode | null {
@@ -3983,38 +4631,38 @@ function normalizeSandboxMode(
 
 function formatApprovalPolicy(value: ApprovalPolicy | null | undefined): string {
   if (value === "on-request") {
-    return "按需确认";
+    return translate("settings.approvalPolicies.on-request");
   }
 
   if (value === "on-failure") {
-    return "失败后确认";
+    return translate("settings.approvalPolicies.on-failure");
   }
 
   if (value === "untrusted") {
-    return "高风险时确认";
+    return translate("settings.approvalPolicies.untrusted");
   }
 
   if (value === "never") {
-    return "从不询问";
+    return translate("settings.approvalPolicies.never");
   }
 
-  return "默认";
+  return translate("common.default");
 }
 
 function formatSandboxMode(value: SandboxMode | null | undefined): string {
   if (value === "danger-full-access") {
-    return "full access";
+    return translate("settings.sandboxModes.danger-full-access");
   }
 
   if (value === "workspace-write") {
-    return "workspace write";
+    return translate("settings.sandboxModes.workspace-write");
   }
 
   if (value === "read-only") {
-    return "read only";
+    return translate("settings.sandboxModes.read-only");
   }
 
-  return "default";
+  return translate("common.default");
 }
 
 function formatThreadTitle(thread: Pick<ThreadSummary, "name" | "preview"> | null): string | null {
@@ -4032,7 +4680,7 @@ function formatThreadTitle(thread: Pick<ThreadSummary, "name" | "preview"> | nul
     return preview.split("\n")[0]!.slice(0, 72);
   }
 
-  return "未命名线程";
+  return translate("workspace.untitledThread");
 }
 
 function formatModelDisplayName(model: Pick<ModelOption, "displayName" | "model">): string {
@@ -4062,7 +4710,22 @@ function formatModelValue(value: string | null | undefined): string | null {
 }
 
 function formatReasoningEffortLabel(value: ReasoningEffort): string {
-  return REASONING_EFFORT_LABELS[value] ?? value;
+  switch (value) {
+    case "none":
+      return translate("settings.reasoningLevels.none");
+    case "minimal":
+      return translate("settings.reasoningLevels.minimal");
+    case "low":
+      return translate("settings.reasoningLevels.low");
+    case "medium":
+      return translate("settings.reasoningLevels.medium");
+    case "high":
+      return translate("settings.reasoningLevels.high");
+    case "xhigh":
+      return translate("settings.reasoningLevels.xhigh");
+    default:
+      return value;
+  }
 }
 
 function buildComposerReasoningOptions(
@@ -4076,7 +4739,6 @@ function buildComposerReasoningOptions(
     value: effort,
     label: formatReasoningEffortLabel(effort),
     testIdSuffix: effort,
-    icon: <ReasoningEffortIcon effort={effort} />,
   }));
 }
 
@@ -4104,40 +4766,7 @@ function formatRelativeThreadAge(updatedAt: number, now: number): string {
   if (!Number.isFinite(normalizedUpdatedAt) || normalizedUpdatedAt <= 0) {
     return "";
   }
-
-  const delta = Math.max(0, now - normalizedUpdatedAt);
-  if (delta < 60_000) {
-    return "刚刚";
-  }
-
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  const week = 7 * day;
-  const month = 30 * day;
-  const year = 365 * day;
-
-  if (delta < hour) {
-    return `${Math.floor(delta / minute)}分`;
-  }
-
-  if (delta < day) {
-    return `${Math.floor(delta / hour)}时`;
-  }
-
-  if (delta < week) {
-    return `${Math.floor(delta / day)}天`;
-  }
-
-  if (delta < month) {
-    return `${Math.floor(delta / week)}周`;
-  }
-
-  if (delta < year) {
-    return `${Math.floor(delta / month)}月`;
-  }
-
-  return `${Math.floor(delta / year)}年`;
+  return formatRelativeShort(normalizedUpdatedAt, now);
 }
 
 function formatAbsoluteDateTime(timestamp: number): string {
@@ -4146,9 +4775,7 @@ function formatAbsoluteDateTime(timestamp: number): string {
     return "";
   }
 
-  return new Date(normalizedTimestamp).toLocaleString("zh-CN", {
-    hour12: false,
-  });
+  return formatDateTime(normalizedTimestamp);
 }
 
 function normalizeTimestamp(timestamp: number): number {
@@ -4170,6 +4797,17 @@ function readInitialSidebarWidth(): number {
   return clampSidebarWidth(initialWidth, window.innerWidth);
 }
 
+function readInitialInspectorWidth(): number {
+  if (typeof window === "undefined") {
+    return DEFAULT_INSPECTOR_WIDTH;
+  }
+
+  const storedValue = Number(window.localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY));
+  const initialWidth =
+    Number.isFinite(storedValue) && storedValue > 0 ? storedValue : DEFAULT_INSPECTOR_WIDTH;
+  return clampInspectorWidth(initialWidth, window.innerWidth);
+}
+
 function getSidebarWidthBounds(viewportWidth: number): { min: number; max: number } {
   const min = Math.round(viewportWidth / 6);
   const max = Math.round(viewportWidth / 3);
@@ -4181,6 +4819,20 @@ function getSidebarWidthBounds(viewportWidth: number): { min: number; max: numbe
 
 function clampSidebarWidth(width: number, viewportWidth: number): number {
   const { min, max } = getSidebarWidthBounds(viewportWidth);
+  return Math.min(Math.max(Math.round(width), min), max);
+}
+
+function getInspectorWidthBounds(viewportWidth: number): { min: number; max: number } {
+  const min = Math.round(viewportWidth / 6);
+  const max = Math.round(viewportWidth / 3);
+  return {
+    min,
+    max: Math.max(min, max),
+  };
+}
+
+function clampInspectorWidth(width: number, viewportWidth: number): number {
+  const { min, max } = getInspectorWidthBounds(viewportWidth);
   return Math.min(Math.max(Math.round(width), min), max);
 }
 
@@ -4231,20 +4883,35 @@ function compactPath(value: string, keepSegments = 3): string {
   return `.../${parts.slice(-keepSegments).join("/")}`;
 }
 
+function buildCodePreviewReference(
+  path: string,
+  line: number | null,
+  label: string | null,
+): CodeLinkReference {
+  return {
+    path,
+    line,
+    column: null,
+    href: path,
+    resolvedHref: path,
+    label,
+  };
+}
+
 function describeThreadStatus(status: ThreadSummary["status"] | string | null | undefined): string {
   if (!status) {
-    return "unknown";
+    return translate("common.unknownState");
   }
 
   if (typeof status === "string") {
-    return status;
+    return status === "active" ? translate("common.active") : status;
   }
 
   if (status.type === "active") {
-    return "active";
+    return translate("common.active");
   }
 
-  return status.type ?? "unknown";
+  return status.type ?? translate("common.unknownState");
 }
 
 function isThreadRunning(status: ThreadSummary["status"] | string | null | undefined): boolean {
@@ -4265,18 +4932,18 @@ function normalizePlanStepStatus(status: string | null | undefined): "completed"
 
 function formatPlanStepStatus(status: string | null | undefined): string {
   if (status === "completed" || status === "done") {
-    return "已完成";
+    return translate("timeline.planCompleted");
   }
 
   if (status === "in_progress" || status === "inProgress" || status === "running" || status === "active") {
-    return "进行中";
+    return translate("timeline.planActive");
   }
 
   if (status === "pending" || status === "not_started" || status === "todo") {
-    return "待开始";
+    return translate("timeline.planPending");
   }
 
-  return status || "待开始";
+  return status || translate("timeline.planPending");
 }
 
 function isNearBottom(element: HTMLElement): boolean {
@@ -4306,52 +4973,85 @@ function describeActivitySummary(entry: TimelineEntry): string {
 
   switch (entry.kind) {
     case "reasoning":
-      return entry.body.trim() ? "思考过程" : "正在思考";
+      return entry.body.trim() ? translate("timeline.thinking") : translate("timeline.thinkingInProgress");
     case "plan":
-      return "已更新计划";
+      return translate("timeline.updatedPlan");
     case "commandExecution": {
       const command = readString(raw, "command") ?? entry.title;
-      return `${describeExecutionStatus(readString(raw, "status"), "正在执行", "已执行", "执行失败", "已拒绝执行")} \`${command}\``;
+      return `${describeExecutionStatus(
+        readString(raw, "status"),
+        translate("timeline.commandRunning"),
+        translate("timeline.commandCompleted"),
+        translate("timeline.commandFailed"),
+        translate("timeline.commandDeclined"),
+      )} \`${command}\``;
     }
     case "fileChange": {
       const changes = readArray(raw, "changes");
       const status = readString(raw, "status");
-      const fileLabel = changes.length > 0 ? ` ${changes.length} 个文件` : "";
-      return `${describeExecutionStatus(status, "正在修改", "已修改", "修改失败", "已拒绝修改")}${fileLabel}`;
+      const fileLabel =
+        changes.length > 0 ? ` ${translate("git.fileCount", { count: changes.length })}` : "";
+      return `${describeExecutionStatus(
+        status,
+        translate("timeline.fileRunning"),
+        translate("timeline.fileCompleted"),
+        translate("timeline.fileFailed"),
+        translate("timeline.fileDeclined"),
+      )}${fileLabel}`;
     }
     case "mcpToolCall": {
       const server = readString(raw, "server") ?? "MCP";
       const tool = readString(raw, "tool") ?? entry.title;
-      return `${describeExecutionStatus(readString(raw, "status"), "正在调用", "已调用", "调用失败", "调用失败")} \`${server} / ${tool}\``;
+      return `${describeExecutionStatus(
+        readString(raw, "status"),
+        translate("timeline.toolRunning"),
+        translate("timeline.toolCompleted"),
+        translate("timeline.toolFailed"),
+        translate("timeline.toolFailed"),
+      )} \`${server} / ${tool}\``;
     }
     case "dynamicToolCall": {
       const tool = readString(raw, "tool") ?? entry.title;
-      return `${describeExecutionStatus(readString(raw, "status"), "正在调用", "已调用", "调用失败", "调用失败")} \`${tool}\``;
+      return `${describeExecutionStatus(
+        readString(raw, "status"),
+        translate("timeline.toolRunning"),
+        translate("timeline.toolCompleted"),
+        translate("timeline.toolFailed"),
+        translate("timeline.toolFailed"),
+      )} \`${tool}\``;
     }
     case "collabAgentToolCall": {
       const tool = readString(raw, "tool") ?? entry.title;
-      return `${describeExecutionStatus(readString(raw, "status"), "正在协作", "已完成协作", "协作失败", "协作失败")} \`${tool}\``;
+      return `${describeExecutionStatus(
+        readString(raw, "status"),
+        translate("timeline.collabRunning"),
+        translate("timeline.collabCompleted"),
+        translate("timeline.collabFailed"),
+        translate("timeline.collabFailed"),
+      )} \`${tool}\``;
     }
     case "webSearch": {
       const action = asRecord(raw?.action);
       if (readString(action, "type") === "openPage") {
-        return `打开页面 \`${readString(action, "url") ?? entry.body}\``;
+        return translate("timeline.openPage", { value: readString(action, "url") ?? entry.body });
       }
       if (readString(action, "type") === "findInPage") {
-        return `页内搜索 \`${readString(action, "pattern") ?? entry.body}\``;
+        return translate("timeline.findInPage", { value: readString(action, "pattern") ?? entry.body });
       }
-      return `搜索 \`${readString(raw, "query") ?? entry.body}\``;
+      return translate("timeline.search", { value: readString(raw, "query") ?? entry.body });
     }
     case "enteredReviewMode":
-      return "进入 review";
+      return translate("timeline.enteredReview");
     case "exitedReviewMode":
-      return "完成 review";
+      return translate("timeline.exitedReview");
     case "imageView":
-      return `查看图片 \`${readString(raw, "path") ?? entry.title}\``;
+      return translate("timeline.viewImage", { value: readString(raw, "path") ?? entry.title });
     case "imageGeneration":
-      return `${describeImageGenerationStatus(readString(raw, "status"))} 图片`;
+      return translate("timeline.generatedImage", {
+        status: describeImageGenerationStatus(readString(raw, "status")),
+      });
     case "contextCompaction":
-      return "已压缩上下文";
+      return translate("timeline.contextCompacted");
     default:
       return entry.title || String(entry.kind);
   }
@@ -4372,13 +5072,13 @@ function describeActivityDetails(entry: TimelineEntry): string | null {
       const durationMs = readNumber(raw, "durationMs");
 
       if (cwd) {
-        parts.push(`目录：\`${compactPath(cwd, 4)}\``);
+        parts.push(translate("timeline.cwd", { value: compactPath(cwd, 4) }));
       }
       if (Number.isFinite(exitCode)) {
-        parts.push(`退出码：\`${String(exitCode)}\``);
+        parts.push(translate("timeline.exitCode", { value: String(exitCode) }));
       }
       if (durationMs !== null && Number.isFinite(durationMs)) {
-        parts.push(`耗时：\`${formatDuration(durationMs)}\``);
+        parts.push(translate("timeline.duration", { value: formatDuration(durationMs) }));
       }
       if (output.trim()) {
         parts.push(`\`\`\`text\n${output.trim()}\n\`\`\``);
@@ -4405,18 +5105,18 @@ function describeActivityDetails(entry: TimelineEntry): string | null {
       const durationMs = readNumber(raw, "durationMs");
 
       if (args !== undefined) {
-        parts.push(`参数\n\n\`\`\`json\n${safeJson(args)}\n\`\`\``);
+        parts.push(`${translate("timeline.arguments")}\n\n\`\`\`json\n${safeJson(args)}\n\`\`\``);
       }
       if (result !== undefined && result !== null) {
-        parts.push(`结果\n\n\`\`\`json\n${safeJson(result)}\n\`\`\``);
+        parts.push(`${translate("timeline.result")}\n\n\`\`\`json\n${safeJson(result)}\n\`\`\``);
       } else if (entry.body.trim()) {
         parts.push(entry.body.trim());
       }
       if (error && readString(error, "message")) {
-        parts.push(`错误：${readString(error, "message")}`);
+        parts.push(translate("timeline.error", { value: readString(error, "message") }));
       }
       if (durationMs !== null && Number.isFinite(durationMs)) {
-        parts.push(`耗时：\`${formatDuration(durationMs)}\``);
+        parts.push(translate("timeline.duration", { value: formatDuration(durationMs) }));
       }
       return parts.join("\n\n") || null;
     }
@@ -4428,7 +5128,7 @@ function describeActivityDetails(entry: TimelineEntry): string | null {
       const success = readBoolean(raw, "success");
 
       if (args !== undefined) {
-        parts.push(`参数\n\n\`\`\`json\n${safeJson(args)}\n\`\`\``);
+        parts.push(`${translate("timeline.arguments")}\n\n\`\`\`json\n${safeJson(args)}\n\`\`\``);
       }
       if (contentItems.length > 0) {
         parts.push(formatDynamicToolOutput(contentItems));
@@ -4436,10 +5136,10 @@ function describeActivityDetails(entry: TimelineEntry): string | null {
         parts.push(entry.body.trim());
       }
       if (success !== null) {
-        parts.push(success ? "执行成功" : "执行失败");
+        parts.push(success ? translate("timeline.success") : translate("timeline.failure"));
       }
       if (durationMs !== null && Number.isFinite(durationMs)) {
-        parts.push(`耗时：\`${formatDuration(durationMs)}\``);
+        parts.push(translate("timeline.duration", { value: formatDuration(durationMs) }));
       }
       return parts.join("\n\n") || null;
     }
@@ -4454,7 +5154,11 @@ function describeActivityDetails(entry: TimelineEntry): string | null {
         parts.push(prompt);
       }
       if (receiverThreadIds.length > 0) {
-        parts.push(`接收线程：${receiverThreadIds.map((id) => `\`${id}\``).join("、")}`);
+        parts.push(
+          translate("timeline.receiverThreads", {
+            value: receiverThreadIds.map((id) => `\`${id}\``).join("、"),
+          }),
+        );
       }
       return parts.join("\n\n") || null;
     }
@@ -4543,18 +5247,18 @@ function describePatchChange(change: Record<string, unknown>): string {
   const kind = asRecord(change.kind);
   const type = readString(kind, "type");
   if (type === "add") {
-    return "新增";
+    return translate("timeline.patchAdded");
   }
   if (type === "delete") {
-    return "删除";
+    return translate("timeline.patchDeleted");
   }
 
   const movePath = readString(kind, "move_path");
   if (movePath) {
-    return `移动到 \`${compactPath(movePath, 4)}\``;
+    return translate("timeline.patchMoved", { value: compactPath(movePath, 4) });
   }
 
-  return "编辑";
+  return translate("timeline.patchEdited");
 }
 
 function describeReviewSummary(review: string | null): string | null {
@@ -4569,8 +5273,14 @@ function describeReviewSummary(review: string | null): string | null {
       overall_explanation?: string;
     };
     const parts = [
-      parsed.overall_correctness ? `结论：${parsed.overall_correctness}` : null,
-      typeof parsed.findings?.length === "number" ? `发现：${parsed.findings.length} 条` : null,
+      parsed.overall_correctness
+        ? translate("timeline.reviewOverall", { value: parsed.overall_correctness })
+        : null,
+      typeof parsed.findings?.length === "number"
+        ? translate("timeline.reviewFindings", {
+            count: parsed.findings.length,
+          })
+        : null,
       parsed.overall_explanation ?? null,
     ].filter(Boolean);
     return parts.join("\n\n");
@@ -4622,12 +5332,12 @@ function formatDuration(value: number): string {
 
 function describeImageGenerationStatus(status: string | null): string {
   if (status === "completed") {
-    return "已生成";
+    return translate("timeline.imageCompleted");
   }
   if (status === "failed") {
-    return "生成失败";
+    return translate("timeline.imageFailed");
   }
-  return "正在生成";
+  return translate("timeline.imageRunning");
 }
 
 function summarizeDiff(diff: string): {
@@ -4666,11 +5376,45 @@ function summarizeDiff(diff: string): {
   return { files, additions, deletions };
 }
 
-function summarizeDiffFiles(diff: string): Array<string> {
-  return diff
-    .split("\n")
-    .filter((line) => line.startsWith("diff --git "))
-    .map((line) => line.replace("diff --git a/", "").replace(/^(.+?) b\/.+$/, "$1"));
+function formatGitFileStatus(file: GitWorkingTreeFile): string {
+  const parts = [formatGitFileBadge(file.status)];
+  if (file.oldPath) {
+    parts.push(`${file.oldPath} → ${file.path}`);
+  } else {
+    parts.push(
+      file.staged && file.unstaged
+        ? translate("git.stagedAndUnstaged")
+        : file.staged
+          ? translate("git.stagedTracked")
+          : file.unstaged
+            ? translate("git.unstagedTracked")
+            : translate("git.tracked"),
+    );
+  }
+  return parts.join(" · ");
+}
+
+function formatGitFileBadge(status: GitWorkingTreeFile["status"]): string {
+  switch (status) {
+    case "modified":
+      return translate("git.fileStatus.modified");
+    case "added":
+      return translate("git.fileStatus.added");
+    case "deleted":
+      return translate("git.fileStatus.deleted");
+    case "renamed":
+      return translate("git.fileStatus.renamed");
+    case "copied":
+      return translate("git.fileStatus.copied");
+    case "untracked":
+      return translate("git.fileStatus.untracked");
+    case "typechange":
+      return translate("git.fileStatus.typechange");
+    case "conflicted":
+      return translate("git.fileStatus.conflicted");
+    default:
+      return status;
+  }
 }
 
 function findActiveTurn(threadView: ThreadView): ThreadView["turns"][string] | null {
@@ -4689,13 +5433,52 @@ function findActiveTurn(threadView: ThreadView): ThreadView["turns"][string] | n
   return null;
 }
 
-function dedupeThreads(entries: Array<ThreadSummary>): Array<ThreadSummary> {
-  const map = new Map<string, ThreadSummary>();
-  for (const entry of entries) {
-    map.set(entry.id, entry);
+function sortThreadsDescending(left: ThreadSummary, right: ThreadSummary): number {
+  return (
+    right.updatedAt - left.updatedAt ||
+    right.createdAt - left.createdAt ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+function selectToolbarUsageWindows(
+  usageWindows: Array<AccountUsageWindow>,
+): Array<AccountUsageWindow> {
+  return [...usageWindows]
+    .sort((left, right) => compareToolbarUsageWindows(left.label, right.label))
+    .slice(0, 2);
+}
+
+function compareToolbarUsageWindows(left: string, right: string): number {
+  return usageWindowPriority(left) - usageWindowPriority(right) || left.localeCompare(right);
+}
+
+function usageWindowPriority(label: string): number {
+  if (label === "5h") {
+    return 0;
   }
 
-  return [...map.values()];
+  if (label === "1w") {
+    return 1;
+  }
+
+  return 10;
+}
+
+function formatUsageRemaining(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  return `${Math.round(Math.max(0, Math.min(100, value)))}%`;
+}
+
+function buildUsageWindowTitle(window: AccountUsageWindow): string {
+  const parts = [`${window.label} ${formatUsageRemaining(window.remainingPercent)}`];
+  if (window.resetsAt) {
+    parts.push(formatAbsoluteDateTime(window.resetsAt));
+  }
+  return parts.join(" · ");
 }
 
 function adaptFileResults(

@@ -1,11 +1,18 @@
 import type {
   AccountSummary,
+  AppErrorPayload,
   BootstrapSettingsSummary,
   ModelOption,
   RuntimeStatus,
   ThreadSummary,
   WorkspaceRecord,
 } from "./domain.js";
+
+export type ApiErrorResponse = {
+  message: string;
+  code?: AppErrorPayload["code"];
+  params?: AppErrorPayload["params"];
+};
 
 export type HealthResponse = {
   status: "ok";
@@ -19,9 +26,13 @@ export type BootstrapResponse = {
   models: Array<ModelOption>;
   workspaces: Array<WorkspaceRecord>;
   activeThreads: Array<ThreadSummary>;
-  archivedThreads: Array<ThreadSummary>;
-  loadedThreadIds: Array<string>;
+  archivedThreadCount: number;
   settings: BootstrapSettingsSummary;
+};
+
+export type ThreadSummaryPageResponse = {
+  items: Array<ThreadSummary>;
+  nextCursor: string | null;
 };
 
 export type PathSuggestion = {

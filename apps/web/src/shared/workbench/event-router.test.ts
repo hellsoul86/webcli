@@ -40,6 +40,7 @@ describe("routeWorkbenchServerMessage", () => {
       setCommandSession: vi.fn(),
       appendCommandOutput: vi.fn(),
       setIntegrationSnapshot: vi.fn(),
+      setWorkspaceGitSnapshot: vi.fn(),
     });
 
     expect(applyTimelineItem).toHaveBeenCalledWith("thread-1", {
@@ -89,6 +90,7 @@ describe("routeWorkbenchServerMessage", () => {
       setCommandSession: vi.fn(),
       appendCommandOutput: vi.fn(),
       setIntegrationSnapshot: vi.fn(),
+      setWorkspaceGitSnapshot: vi.fn(),
     });
 
     expect(appendDelta).toHaveBeenCalledWith(

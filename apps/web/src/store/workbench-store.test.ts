@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { WorkbenchThread } from "@webcli/contracts";
+import type { GitWorkingTreeSnapshot, WorkbenchThread } from "@webcli/contracts";
 import {
+  countTimelineEntries,
   resetWorkbenchPersistStorage,
   selectTimeline,
+  selectTimelineWindow,
   useWorkbenchStore,
 } from "./workbench-store";
 
@@ -55,6 +57,46 @@ function makeThread(): WorkbenchThread {
   };
 }
 
+function makeGitSnapshot(
+  overrides: Partial<GitWorkingTreeSnapshot> = {},
+): GitWorkingTreeSnapshot {
+  return {
+    workspaceId: "workspace-1",
+    workspaceName: "Workspace",
+    repoRoot: "/srv/project",
+    branch: "main",
+    isGitRepository: true,
+    clean: false,
+    stagedCount: 1,
+    unstagedCount: 1,
+    untrackedCount: 0,
+    generatedAt: Date.now(),
+    files: [
+      {
+        path: "src/app.ts",
+        status: "modified",
+        staged: true,
+        unstaged: true,
+        additions: 3,
+        deletions: 1,
+        patch: "diff --git a/src/app.ts b/src/app.ts\n+changed",
+        oldPath: null,
+      },
+      {
+        path: "README.md",
+        status: "modified",
+        staged: false,
+        unstaged: true,
+        additions: 1,
+        deletions: 0,
+        patch: "diff --git a/README.md b/README.md\n+readme",
+        oldPath: null,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 afterEach(() => {
   useWorkbenchStore.setState({
     connection: {
@@ -71,7 +113,11 @@ afterEach(() => {
     threadLifecycle: {
       archivedMode: "active",
     },
-    threads: {},
+    threadSummaries: {},
+    hydratedThreads: {},
+    hydratedOrder: [],
+    gitSnapshotsByWorkspaceId: {},
+    selectedGitFileByWorkspaceId: {},
     pendingApprovals: [],
     commandSessions: {},
     commandOrder: [],
@@ -100,7 +146,7 @@ describe("workbench store", () => {
     const store = useWorkbenchStore.getState();
     store.hydrateThread(makeThread());
 
-    const timeline = selectTimeline(useWorkbenchStore.getState().threads["thread-1"]);
+    const timeline = selectTimeline(useWorkbenchStore.getState().hydratedThreads["thread-1"]);
     expect(timeline).toHaveLength(1);
     expect(timeline[0].body).toBe("Hello");
   });
@@ -115,7 +161,7 @@ describe("workbench store", () => {
     store.appendDelta("thread-1", "turn-1", "item-2", "agentMessage", "Part A");
     store.appendDelta("thread-1", "turn-1", "item-2", "agentMessage", " + Part B");
 
-    const timeline = selectTimeline(useWorkbenchStore.getState().threads["thread-1"]);
+    const timeline = selectTimeline(useWorkbenchStore.getState().hydratedThreads["thread-1"]);
     expect(timeline).toHaveLength(1);
     expect(timeline[0].body).toContain("Part A + Part B");
   });
@@ -148,7 +194,7 @@ describe("workbench store", () => {
       },
     });
 
-    const timeline = selectTimeline(useWorkbenchStore.getState().threads["thread-1"]);
+    const timeline = selectTimeline(useWorkbenchStore.getState().hydratedThreads["thread-1"]);
     expect(timeline.map((entry) => entry.id)).toEqual(["item-1", "item-2"]);
     expect(timeline.find((entry) => entry.id === "item-2")?.body).toBe("Streaming reply");
   });
@@ -158,10 +204,67 @@ describe("workbench store", () => {
     store.hydrateThread(makeThread());
     store.markThreadArchived("thread-1", true);
 
-    expect(useWorkbenchStore.getState().threads["thread-1"].archived).toBe(true);
+    expect(useWorkbenchStore.getState().hydratedThreads["thread-1"].archived).toBe(true);
 
     store.renameThread("thread-1", "Renamed");
-    expect(useWorkbenchStore.getState().threads["thread-1"].thread.name).toBe("Renamed");
+    expect(useWorkbenchStore.getState().hydratedThreads["thread-1"].thread.name).toBe("Renamed");
+  });
+
+  it("keeps only the active and most recent hydrated threads", () => {
+    const store = useWorkbenchStore.getState();
+    const threadA = makeThread();
+    const threadB = {
+      ...makeThread(),
+      thread: {
+        ...makeThread().thread,
+        id: "thread-2",
+        name: "Second thread",
+      },
+    };
+    const threadC = {
+      ...makeThread(),
+      thread: {
+        ...makeThread().thread,
+        id: "thread-3",
+        name: "Third thread",
+      },
+    };
+
+    store.hydrateThread(threadA);
+    store.hydrateThread(threadB);
+    store.hydrateThread(threadC);
+    store.touchHydratedThread("thread-3");
+    store.sweepHydratedThreads("thread-1");
+
+    expect(Object.keys(useWorkbenchStore.getState().hydratedThreads).sort()).toEqual([
+      "thread-1",
+      "thread-3",
+    ]);
+  });
+
+  it("selects only the latest timeline window", () => {
+    const thread = makeThread();
+    thread.turns["turn-1"].itemOrder = ["item-1", "item-2", "item-3"];
+    thread.turns["turn-1"].items["item-2"] = {
+      id: "item-2",
+      turnId: "turn-1",
+      kind: "agentMessage",
+      title: "Codex",
+      body: "Two",
+      raw: { id: "item-2", type: "agentMessage" },
+    };
+    thread.turns["turn-1"].items["item-3"] = {
+      id: "item-3",
+      turnId: "turn-1",
+      kind: "agentMessage",
+      title: "Codex",
+      body: "Three",
+      raw: { id: "item-3", type: "agentMessage" },
+    };
+
+    expect(countTimelineEntries(thread)).toBe(3);
+    expect(selectTimelineWindow(thread, 2).map((entry) => entry.id)).toEqual(["item-2", "item-3"]);
+    expect(selectTimeline(thread).map((entry) => entry.id)).toEqual(["item-1", "item-2", "item-3"]);
   });
 
   it("stores command session output and completion", () => {
@@ -185,5 +288,40 @@ describe("workbench store", () => {
     expect(session.stdout).toBe("hello");
     expect(session.stderr).toBe("warn");
     expect(session.status).toBe("completed");
+  });
+
+  it("stores git snapshots by workspace and falls back to the first available file", () => {
+    const store = useWorkbenchStore.getState();
+    store.setWorkspaceGitSnapshot(makeGitSnapshot());
+
+    const state = useWorkbenchStore.getState();
+    expect(state.gitSnapshotsByWorkspaceId["workspace-1"]?.files).toHaveLength(2);
+    expect(state.selectedGitFileByWorkspaceId["workspace-1"]).toBe("src/app.ts");
+  });
+
+  it("keeps a valid selected git file when the workspace snapshot refreshes", () => {
+    const store = useWorkbenchStore.getState();
+    store.setWorkspaceGitSnapshot(makeGitSnapshot());
+    store.selectWorkspaceGitFile("workspace-1", "README.md");
+    store.setWorkspaceGitSnapshot(
+      makeGitSnapshot({
+        files: [
+          {
+            path: "README.md",
+            status: "modified",
+            staged: false,
+            unstaged: true,
+            additions: 2,
+            deletions: 1,
+            patch: "diff --git a/README.md b/README.md\n+updated",
+            oldPath: null,
+          },
+        ],
+      }),
+    );
+
+    expect(useWorkbenchStore.getState().selectedGitFileByWorkspaceId["workspace-1"]).toBe(
+      "README.md",
+    );
   });
 });

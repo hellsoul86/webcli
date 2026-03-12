@@ -110,6 +110,10 @@ export const RenderableMarkdown = memo(function RenderableMarkdown(props: Render
         remarkPlugins={[remarkGfm]}
         urlTransform={(url) => resolveRenderableResourceUrl(url, props.cwd)}
         components={{
+          h1: ({ children }) => <h1 className="content-heading content-heading--1">{children}</h1>,
+          h2: ({ children }) => <h2 className="content-heading content-heading--2">{children}</h2>,
+          h3: ({ children }) => <h3 className="content-heading content-heading--3">{children}</h3>,
+          h4: ({ children }) => <h4 className="content-heading content-heading--4">{children}</h4>,
           p: ({ node, children }) => {
             const descriptor = extractStandaloneMedia(node, children, props.cwd);
             if (descriptor) {
@@ -121,8 +125,12 @@ export const RenderableMarkdown = memo(function RenderableMarkdown(props: Render
               );
             }
 
-            return <p>{children}</p>;
+            return <p className="content-paragraph">{children}</p>;
           },
+          ul: ({ children }) => <ul className="content-list content-list--unordered">{children}</ul>,
+          ol: ({ children }) => <ol className="content-list content-list--ordered">{children}</ol>,
+          li: ({ children }) => <li className="content-list__item">{children}</li>,
+          blockquote: ({ children }) => <blockquote className="content-quote">{children}</blockquote>,
           img: ({ src, alt }) => {
             const resolved = resolveRenderableResourceUrl(String(src ?? ""), props.cwd);
             if (!resolved) {
@@ -186,7 +194,7 @@ export const RenderableMarkdown = memo(function RenderableMarkdown(props: Render
           code: (({ className, children, ...rest }: any) => {
             const inline = !className && !String(children ?? "").includes("\n");
             if (inline) {
-              return <code>{children}</code>;
+              return <code className="code-inline">{children}</code>;
             }
 
             const language = className?.replace(/^language-/, "") ?? "";
@@ -214,7 +222,10 @@ export function RenderableCodeBlock(props: RenderableCodeBlockProps) {
 
   if (diffLike) {
     return (
-      <pre className="renderable-codeblock renderable-codeblock--diff" data-language={language || "diff"}>
+      <pre
+        className="renderable-codeblock renderable-codeblock--diff code-block"
+        data-language={language || "diff"}
+      >
         {value.split("\n").map((line, index) => (
           <span
             key={`${index}-${line}`}
@@ -228,8 +239,8 @@ export function RenderableCodeBlock(props: RenderableCodeBlockProps) {
   }
 
   return (
-    <pre className="renderable-codeblock" data-language={language || undefined}>
-      <code>{value}</code>
+    <pre className="renderable-codeblock code-block" data-language={language || undefined}>
+      <code className="code-block__content">{value}</code>
     </pre>
   );
 }

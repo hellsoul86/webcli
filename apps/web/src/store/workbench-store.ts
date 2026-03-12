@@ -5,9 +5,11 @@ import {
   WORKBENCH_STORAGE_VERSION,
 } from "./workbench-store.defaults";
 import {
+  countTimelineEntries,
   resetWorkbenchPersistStorage,
   resolvePersistStorage,
   selectTimeline,
+  selectTimelineWindow,
 } from "./workbench-store.helpers";
 import { createCommandSlice } from "./workbench-store.command-slice";
 import { createIntegrationSlice } from "./workbench-store.integrations-slice";
@@ -55,4 +57,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(
   ),
 );
 
-export { resetWorkbenchPersistStorage, selectTimeline };
+export {
+  countTimelineEntries,
+  resetWorkbenchPersistStorage,
+  selectTimeline,
+  selectTimelineWindow,
+};

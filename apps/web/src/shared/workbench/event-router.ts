@@ -1,5 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { AppServerMessage } from "@webcli/contracts";
+import type {
+  AccountSummary,
+  AppServerMessage,
+  BootstrapResponse,
+  ThreadSummary,
+} from "@webcli/contracts";
 import { useWorkbenchStore } from "../../store/workbench-store";
 
 type StoreState = ReturnType<typeof useWorkbenchStore.getState>;
@@ -14,6 +19,7 @@ export type WorkbenchEventContext = {
   setLatestDiff: StoreState["setLatestDiff"];
   setLatestPlan: StoreState["setLatestPlan"];
   setReview: StoreState["setReview"];
+  setWorkspaceGitSnapshot: StoreState["setWorkspaceGitSnapshot"];
   queueApproval: StoreState["queueApproval"];
   resolveApproval: StoreState["resolveApproval"];
   setCommandSession: StoreState["setCommandSession"];
@@ -33,7 +39,15 @@ export function routeWorkbenchServerMessage(
     case "runtime.statusChanged":
       context.setConnection(message.params.runtime);
       return;
+    case "account.updated":
+      patchBootstrapAccountSummary(context.queryClient, message.params.account);
+      return;
     case "thread.updated":
+      patchBootstrapThreadSummary(
+        context.queryClient,
+        useWorkbenchStore.getState().threadSummaries[message.params.thread.id],
+        message.params.thread,
+      );
       context.upsertThread(message.params.thread);
       return;
     case "turn.updated":
@@ -60,6 +74,9 @@ export function routeWorkbenchServerMessage(
     case "review.updated":
       context.setReview(message.params.threadId, message.params.review);
       return;
+    case "workspace.git.updated":
+      context.setWorkspaceGitSnapshot(message.params.snapshot);
+      return;
     case "command.output":
       if (message.params.session) {
         context.setCommandSession(message.params.session);
@@ -81,4 +98,60 @@ export function routeWorkbenchServerMessage(
       context.setIntegrationSnapshot(message.params.snapshot);
       return;
   }
+}
+
+function patchBootstrapAccountSummary(
+  queryClient: QueryClient,
+  account: AccountSummary,
+): void {
+  queryClient.setQueryData<BootstrapResponse | undefined>(["bootstrap"], (current) =>
+    current
+      ? {
+          ...current,
+          account,
+        }
+      : current,
+  );
+}
+
+function patchBootstrapThreadSummary(
+  queryClient: QueryClient,
+  previousThread: ThreadSummary | undefined,
+  nextThread: ThreadSummary,
+): void {
+  queryClient.setQueryData<BootstrapResponse | undefined>(["bootstrap"], (current) => {
+    if (!current) {
+      return current;
+    }
+
+    const nextActiveThreads = current.activeThreads.filter((thread) => thread.id !== nextThread.id);
+    let archivedThreadCount = current.archivedThreadCount;
+
+    if (previousThread?.archived && !nextThread.archived) {
+      archivedThreadCount = Math.max(0, archivedThreadCount - 1);
+    } else if (!previousThread?.archived && nextThread.archived) {
+      archivedThreadCount += 1;
+    } else if (!previousThread && nextThread.archived) {
+      archivedThreadCount += 1;
+    }
+
+    if (!nextThread.archived) {
+      nextActiveThreads.push(nextThread);
+      nextActiveThreads.sort(sortThreadSummaries);
+    }
+
+    return {
+      ...current,
+      activeThreads: nextActiveThreads,
+      archivedThreadCount,
+    };
+  });
+}
+
+function sortThreadSummaries(left: ThreadSummary, right: ThreadSummary): number {
+  return (
+    right.updatedAt - left.updatedAt ||
+    right.createdAt - left.createdAt ||
+    left.id.localeCompare(right.id)
+  );
 }

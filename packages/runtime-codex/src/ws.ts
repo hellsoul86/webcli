@@ -60,6 +60,12 @@ export type AccountSummary = {
   accountType: Account["type"] | "unknown";
   email: string | null;
   planType: PlanType | null;
+  usageWindows: Array<{
+    label: string;
+    remainingPercent: number | null;
+    usedPercent: number | null;
+    resetsAt: number | null;
+  }>;
 };
 
 export type ClientCallEnvelope<

@@ -1,6 +1,10 @@
 import type {
+  AccountSummary,
+  AppErrorPayload,
   CommandSessionSnapshot,
   FuzzySearchSnapshot,
+  GitWorkingTreeSnapshot,
+  GitBranchReference,
   IntegrationSnapshot,
   LivePlan,
   PendingApproval,
@@ -8,6 +12,7 @@ import type {
   RequestId,
   ReviewOutput,
   RuntimeStatus,
+  ServiceTier,
   ThreadSummary,
   TimelineEntry,
   WorkbenchThread,
@@ -63,9 +68,20 @@ export type AppRequestMap = {
   "settings.save": RpcDefinition<{
     model: string | null;
     reasoningEffort: ReasoningEffort | null;
+    serviceTier: ServiceTier | null;
     approvalPolicy: string | null;
     sandboxMode: string | null;
   }, { snapshot: IntegrationSnapshot }>;
+  "workspace.git.read": RpcDefinition<{
+    workspaceId: string;
+  }, { snapshot: GitWorkingTreeSnapshot }>;
+  "workspace.git.branches.read": RpcDefinition<{
+    workspaceId: string;
+  }, { branches: Array<GitBranchReference>; currentBranch: string | null }>;
+  "workspace.git.branch.switch": RpcDefinition<{
+    workspaceId: string;
+    branch: string;
+  }, { snapshot: GitWorkingTreeSnapshot; branches: Array<GitBranchReference>; currentBranch: string | null }>;
   "workspace.searchFiles": RpcDefinition<{
     workspaceId: string;
     query: string;
@@ -78,6 +94,7 @@ export type AppRequestResult<TMethod extends AppRequestMethod> = AppRequestMap[T
 
 export type AppEventMap = {
   "runtime.statusChanged": { runtime: RuntimeStatus };
+  "account.updated": { account: AccountSummary };
   "thread.updated": { thread: ThreadSummary };
   "turn.updated": { threadId: string; turn: WorkbenchTurn };
   "timeline.item": { threadId: string; item: TimelineEntry };
@@ -85,6 +102,7 @@ export type AppEventMap = {
   "diff.updated": { threadId: string; diff: string };
   "plan.updated": { threadId: string; plan: LivePlan };
   "review.updated": { threadId: string; review: ReviewOutput | null };
+  "workspace.git.updated": { snapshot: GitWorkingTreeSnapshot };
   "command.output": {
     processId: string;
     stream: "stdout" | "stderr";
@@ -120,7 +138,7 @@ export type AppServerResponseEnvelope<
       error?: {
         code: number;
         message: string;
-        data?: unknown;
+        data?: AppErrorPayload;
       };
     }
   : never;
