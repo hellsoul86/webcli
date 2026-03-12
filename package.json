@@ -11,11 +11,19 @@
     "apps/*"
   ],
   "scripts": {
+    "build:workspaces": "npm run build --workspaces --if-present",
     "dev": "npm run build -w @webcli/contracts && npm run build -w @webcli/core && npm run build -w @webcli/runtime-codex && concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @webcli/server\" \"npm run dev -w @webcli/web\"",
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "e2e": "playwright test"
+    "build": "npm run build:workspaces",
+    "test:repo": "node --test ./scripts/task-workflow.test.mjs",
+    "test:workspaces": "npm run test --workspaces --if-present",
+    "test": "npm run test:repo && npm run test:workspaces",
+    "typecheck:workspaces": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run typecheck:workspaces",
+    "e2e": "playwright test",
+    "verify": "npm run build && npm run typecheck && npm run test && npm run e2e",
+    "task:start": "node ./scripts/task-workflow.mjs start",
+    "task:sync": "node ./scripts/task-workflow.mjs sync",
+    "task:finish": "node ./scripts/task-workflow.mjs finish"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
