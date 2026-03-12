@@ -23,6 +23,20 @@ Configure both records as `Proxied` A records pointing to the staging origin IP:
 
 Recommended TLS mode: `Full (strict)`.
 
+The API hostname is nested under `webcli-staging`, so the Cloudflare edge certificate must
+explicitly cover either:
+
+- `api.webcli-staging.royding.ai`
+- or `*.webcli-staging.royding.ai`
+
+`*.royding.ai` alone is not enough for `api.webcli-staging.royding.ai`.
+
+The current staging setup uses:
+
+- proxied DNS for both hostnames
+- Cloudflare Origin CA on the source host
+- an advanced edge certificate that covers `*.webcli-staging.royding.ai`
+
 ## Source Checkout
 
 Clone the repository on the staging server and keep that checkout on `main`.
@@ -32,6 +46,11 @@ Suggested path:
 ```bash
 /srv/webcli-staging/repo
 ```
+
+Current origin host:
+
+- Alibaba Cloud instance `i-6wegiqgjp702ffkm9i1z`
+- public IP `8.216.82.40`
 
 The deploy script copies that checkout into versioned release directories under:
 
@@ -156,3 +175,6 @@ sudo WEBCLI_STAGING_SERVICE_INSTANCE=roy bash ./deploy/staging/bin/rollback.sh 2
 - `https://api.webcli-staging.royding.ai/api/health`
 - open `https://webcli-staging.royding.ai`
 - confirm thread bootstrap, streaming turns, and WebSocket connectivity
+
+As of March 12, 2026, these two public endpoints are live and returning successful responses
+through Cloudflare in `Full (strict)` mode.

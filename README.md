@@ -55,6 +55,11 @@ The staging deployment target uses:
 - Nginx for static files and reverse proxy
 - Cloudflare for proxied DNS and TLS
 
+Current public staging endpoints:
+
+- `https://webcli-staging.royding.ai`
+- `https://api.webcli-staging.royding.ai/api/health`
+
 Deployment assets and instructions live in:
 
 ```bash
