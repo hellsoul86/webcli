@@ -103,13 +103,13 @@ Run the deploy script from the repository checkout on the server:
 
 ```bash
 cd /srv/webcli-staging/repo
-sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> npm run deploy:staging
+sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> bash ./deploy/staging/bin/deploy.sh
 ```
 
 Example:
 
 ```bash
-sudo WEBCLI_STAGING_SERVICE_INSTANCE=roy npm run deploy:staging
+sudo WEBCLI_STAGING_SERVICE_INSTANCE=roy bash ./deploy/staging/bin/deploy.sh
 ```
 
 This will:
@@ -127,7 +127,7 @@ From the repository checkout on the server:
 
 ```bash
 git pull --ff-only
-sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> npm run deploy:staging
+sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> bash ./deploy/staging/bin/deploy.sh
 ```
 
 ## Rollback
@@ -141,13 +141,13 @@ ls -1 /srv/webcli-staging/releases
 Rollback to a previous release:
 
 ```bash
-sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> npm run deploy:staging:rollback -- <release-id>
+sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> bash ./deploy/staging/bin/rollback.sh <release-id>
 ```
 
 Example:
 
 ```bash
-sudo WEBCLI_STAGING_SERVICE_INSTANCE=roy npm run deploy:staging:rollback -- 20260312T191500-9058550
+sudo WEBCLI_STAGING_SERVICE_INSTANCE=roy bash ./deploy/staging/bin/rollback.sh 20260312T191500-9058550
 ```
 
 ## Verification
