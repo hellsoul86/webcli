@@ -14,6 +14,7 @@ import type {
   ApprovalPolicy,
   ConfigSnapshot,
   FuzzySearchSnapshot,
+  GitBranchReference,
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
@@ -103,6 +104,8 @@ class FakeRuntime implements SessionRuntime {
   activeThreads: Array<RuntimeThreadRecord> = [];
   archivedThreads: Array<RuntimeThreadRecord> = [];
   nextThreadId = 1;
+  gitCurrentBranch = "main";
+  gitBranches = ["main", "feature/demo"];
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -344,7 +347,27 @@ class FakeRuntime implements SessionRuntime {
     workspaceId: string,
     workspaceName: string,
   ): Promise<GitWorkingTreeSnapshot> {
-    return makeGitSnapshot(workspaceId, workspaceName, cwd);
+    return makeGitSnapshot(workspaceId, workspaceName, cwd, this.gitCurrentBranch);
+  }
+
+  async readWorkspaceGitBranches(): Promise<{
+    branches: Array<GitBranchReference>;
+    currentBranch: string | null;
+  }> {
+    return {
+      branches: this.gitBranches.map((name) => ({
+        name,
+        current: name === this.gitCurrentBranch,
+      })),
+      currentBranch: this.gitCurrentBranch,
+    };
+  }
+
+  async switchWorkspaceGitBranch(_cwd: string, branch: string): Promise<void> {
+    if (!this.gitBranches.includes(branch)) {
+      this.gitBranches.push(branch);
+    }
+    this.gitCurrentBranch = branch;
   }
 
   async loginMcp(): Promise<string> {
@@ -772,8 +795,8 @@ describe("createApp", () => {
         : null,
     ).toBe("apiKey");
     expect(
-      apiLogin?.result && "snapshot" in apiLogin.result
-        ? apiLogin.result.snapshot.authStatus?.authMethod
+      apiLogin?.result && "state" in apiLogin.result
+        ? apiLogin.result.state.authStatus?.authMethod
         : null,
     ).toBe("apikey");
 
@@ -867,12 +890,13 @@ function makeGitSnapshot(
   workspaceId: string,
   workspaceName: string,
   cwd: string,
+  branch: string,
 ): GitWorkingTreeSnapshot {
   return {
     workspaceId,
     workspaceName,
     repoRoot: cwd,
-    branch: "main",
+    branch,
     isGitRepository: true,
     clean: false,
     stagedCount: 1,

@@ -2,13 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
 
-test("creates a workspace, opens a thread, replays approvals after reload, and shows review output", async ({
+test("creates a workspace, opens a thread, and replays approvals after reload", async ({
   page,
 }) => {
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await expect(page.getByText("fake-runtime@example.com")).toBeVisible();
+  await expect(page.getByTestId("settings-button")).toBeVisible();
 
   await ensureWorkspace(page);
   await ensureThread(page);
@@ -29,11 +29,11 @@ test("creates a workspace, opens a thread, replays approvals after reload, and s
   await expect(page.getByTestId("composer-plan")).toContainText("Fake runtime execution plan");
   await expect(page.getByTestId("composer-plan")).toContainText("Inspect bootstrap data");
 
-  await page.getByTestId("inspector-tab-diff").click();
-  await expect(page.getByTestId("diff-output")).toContainText("Handled prompt");
-
-  await page.getByTestId("inspector-tab-plan").click();
-  await expect(page.getByTestId("plan-output")).toContainText("Fake runtime execution plan");
+  await page.getByTestId("git-workbench-open-button").click();
+  await expect(page.getByTestId("git-workbench")).toBeVisible();
+  await expect(page.getByTestId("git-workbench")).toContainText("README.md");
+  await expect(page.getByTestId("git-workbench")).toContainText("new line");
+  await page.getByRole("button", { name: "返回会话" }).click();
 
   const approvalCard = page.locator('[data-testid^="approval-card-"]').first();
   await expect(approvalCard).toBeVisible();
@@ -43,34 +43,26 @@ test("creates a workspace, opens a thread, replays approvals after reload, and s
   await expect(page.locator('[data-testid^="approval-card-"]').first()).toBeVisible();
   await page.locator('[data-testid^="approval-card-"]').first().getByRole("button", { name: "接受" }).click();
   await expect(page.locator('[data-testid^="approval-card-"]')).toHaveCount(0);
-
-  await page.getByTestId("review-button").click();
-  await expect(page.getByTestId("review-output")).toContainText("Fake runtime finding");
 });
 
-test("runs command output, saves settings, and searches workspace files", async ({ page }) => {
+test("updates defaults and searches workspace files from the command palette", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
   await ensureWorkspace(page);
   await ensureThread(page);
-  await expect(page.getByTestId("composer-fast-toggle")).toHaveAttribute("aria-pressed", "false");
-  await page.getByTestId("composer-fast-toggle").click();
-  await expect(page.getByTestId("composer-fast-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("composer-speed-switch")).toHaveAttribute("aria-checked", "false");
+  await page.getByTestId("composer-speed-switch").click();
+  await expect(page.getByTestId("composer-speed-switch")).toHaveAttribute("aria-checked", "true");
   await page.getByTestId("composer-reasoning-select").click();
   await page.getByTestId("composer-reasoning-select-option-medium").click();
   await expect(page.getByTestId("composer-reasoning-select")).toHaveAttribute("data-value", "medium");
 
-  await page.getByTestId("inspector-tab-command").click();
-  await page.getByTestId("command-input").fill("printf 'hi from e2e\\n'");
-  await page.getByTestId("command-run-button").click();
-  await expect(page.getByTestId("command-output")).toContainText("hi from e2e");
-
   await page.getByTestId("settings-button").click();
   await expect(page.getByTestId("settings-panel")).toBeVisible();
-  await expect(page.getByTestId("settings-model-input")).toHaveValue("gpt-5-codex-spark");
-  await page.getByTestId("settings-model-input").fill("gpt-5-codex-smoke");
-  await expect(page.getByTestId("settings-reasoning-effort")).toHaveValue("medium");
+  await page.getByRole("button", { name: "默认代理" }).click();
+  await expect(page.getByTestId("settings-model-input")).toHaveValue("gpt-5-codex");
+  await page.getByTestId("settings-model-input").fill("gpt-5-codex-spark");
   await page.getByTestId("settings-reasoning-effort").selectOption("xhigh");
   await page.getByTestId("settings-approval-policy").selectOption("never");
   await page.getByTestId("settings-sandbox-mode").selectOption("read-only");
@@ -78,13 +70,14 @@ test("runs command output, saves settings, and searches workspace files", async 
 
   await page.reload();
   await page.getByTestId("settings-button").click();
-  await expect(page.getByTestId("settings-model-input")).toHaveValue("gpt-5-codex-smoke");
+  await page.getByRole("button", { name: "默认代理" }).click();
+  await expect(page.getByTestId("settings-model-input")).toHaveValue("gpt-5-codex-spark");
   await expect(page.getByTestId("settings-reasoning-effort")).toHaveValue("xhigh");
   await expect(page.getByTestId("settings-approval-policy")).toHaveValue("never");
   await expect(page.getByTestId("settings-sandbox-mode")).toHaveValue("read-only");
   await page.getByTestId("settings-panel").getByRole("button", { name: "关闭" }).click();
 
-  await page.getByTestId("workspace-search-button").click();
+  await openCommandPalette(page);
   await page.getByTestId("workspace-search-input").fill("package");
   await expect(page.getByTestId("workspace-search-result").first()).toContainText("package.json");
 });
@@ -176,5 +169,10 @@ async function ensureThread(page: Page): Promise<void> {
   const existingCount = await threadRows.count();
   await page.getByTestId("thread-open-button").click();
   await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.nth(existingCount).click();
+  await threadRows.first().click();
+}
+
+async function openCommandPalette(page: Page): Promise<void> {
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+  await expect(page.getByTestId("workspace-search-input")).toBeVisible();
 }
