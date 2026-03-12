@@ -60,11 +60,6 @@ Current public staging endpoints:
 - `https://staging.webcli.royding.ai`
 - `https://api.staging.webcli.royding.ai/api/health`
 
-Legacy aliases remain online during the cutover:
-
-- `https://webcli-staging.royding.ai`
-- `https://api.webcli-staging.royding.ai/api/health`
-
 Deployment assets and instructions live in:
 
 ```bash

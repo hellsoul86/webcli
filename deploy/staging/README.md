@@ -11,9 +11,6 @@ This directory contains the staging deployment scaffold for the following layout
 
 - Primary app: `staging.webcli.royding.ai`
 - API/ops endpoint: `api.staging.webcli.royding.ai`
-- Legacy compatibility aliases:
-  - `webcli-staging.royding.ai`
-  - `api.webcli-staging.royding.ai`
 
 The browser should only use `https://staging.webcli.royding.ai`.
 
@@ -23,11 +20,6 @@ Configure both records as `Proxied` A records pointing to the staging origin IP:
 
 - `staging.webcli.royding.ai`
 - `api.staging.webcli.royding.ai`
-
-The previous hostnames can stay in place as compatibility aliases:
-
-- `webcli-staging.royding.ai`
-- `api.webcli-staging.royding.ai`
 
 Recommended TLS mode: `Full (strict)`.
 
