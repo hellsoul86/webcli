@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type {
+  AccountLoginCancelStatus,
+  AccountLoginStartInput,
+  AccountLoginStartResponse,
+  AccountStateSnapshot,
   AccountSummary,
   AppClientMessage,
   AppServerMessage,
@@ -93,6 +97,7 @@ class FakeRuntime implements SessionRuntime {
     serviceTier: null,
     approvalPolicy: "on-request",
     sandboxMode: "danger-full-access",
+    forcedLoginMethod: null,
   };
 
   activeThreads: Array<RuntimeThreadRecord> = [];
@@ -121,6 +126,66 @@ class FakeRuntime implements SessionRuntime {
 
   async getAccountSummary(): Promise<AccountSummary> {
     return { ...this.account };
+  }
+
+  async readAccountState(): Promise<AccountStateSnapshot> {
+    return {
+      account: { ...this.account },
+      authStatus: {
+        authMethod:
+          this.account.accountType === "chatgpt"
+            ? "chatgpt"
+            : this.account.accountType === "apiKey"
+              ? "apikey"
+              : null,
+        requiresOpenaiAuth: this.account.requiresOpenaiAuth,
+      },
+    };
+  }
+
+  async loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse> {
+    if (input.type === "chatgpt") {
+      return {
+        type: "chatgpt",
+        loginId: "login-123",
+        authUrl: "https://example.com/login",
+      };
+    }
+    if (input.type === "deviceCode") {
+      return {
+        type: "deviceCode",
+        loginId: "device-login-123",
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "ABCD-EFGH",
+        expiresAt: Date.now() + 15 * 60_000,
+      };
+    }
+    this.account = {
+      ...this.account,
+      authenticated: true,
+      requiresOpenaiAuth: false,
+      accountType: input.type === "apiKey" ? "apiKey" : "chatgpt",
+      email: input.type === "apiKey" ? null : "user@example.com",
+      planType: input.type === "apiKey" ? null : "pro",
+    };
+    this.emit({ type: "account.updated", account: this.account });
+    return { type: input.type };
+  }
+
+  async cancelAccountLogin(): Promise<AccountLoginCancelStatus> {
+    return "canceled";
+  }
+
+  async logoutAccount(): Promise<void> {
+    this.account = {
+      authenticated: false,
+      requiresOpenaiAuth: true,
+      accountType: "unknown",
+      email: null,
+      planType: null,
+      usageWindows: [],
+    };
+    this.emit({ type: "account.updated", account: this.account });
   }
 
   async listModels(): Promise<Array<ModelOption>> {
@@ -250,10 +315,17 @@ class FakeRuntime implements SessionRuntime {
   }
 
   async getIntegrationSnapshot(): Promise<IntegrationSnapshot> {
+    const authMethod =
+      this.account.accountType === "chatgpt"
+        ? "chatgpt"
+        : this.account.accountType === "apiKey"
+          ? "apikey"
+          : null;
+
     return {
       authStatus: {
-        authMethod: "chatgpt",
-        requiresOpenaiAuth: false,
+        authMethod,
+        requiresOpenaiAuth: this.account.requiresOpenaiAuth,
       },
       config: { ...this.config },
       mcpServers: [],
@@ -583,6 +655,146 @@ describe("createApp", () => {
 
     expect(response.ok).toBe(false);
     expect(await response.text()).toContain("must stay inside");
+    await app.close();
+  });
+
+  it("handles account websocket rpc flows", async () => {
+    const env: AppEnv = {
+      host: "127.0.0.1",
+      port: 0,
+      codexCommand: "codex",
+      dataDir: tempDir,
+      dbPath: join(tempDir, "app.sqlite"),
+      webDistDir: join(tempDir, "missing-web"),
+    };
+
+    const runtime = new FakeRuntime();
+    const { app } = await createApp(env, {
+      runtime,
+      workspaceRepo: new WorkspaceRepo(env.dbPath),
+    });
+    await app.listen({ host: env.host, port: 0 });
+    const port = getBoundPort(app);
+
+    const messages: Array<AppServerMessage> = [];
+    const ws = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=account-session`);
+    ws.on("message", (payload: WebSocket.RawData) => {
+      messages.push(JSON.parse(payload.toString()) as AppServerMessage);
+    });
+
+    await waitForOpen(ws);
+    await waitFor(() => hasNotification(messages, "runtime.statusChanged"));
+
+    ws.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "account-read",
+        method: "account.read",
+        params: {},
+      } satisfies AppClientMessage),
+    );
+    await waitFor(() => hasResponse(messages, "account-read"));
+    const readResponse = getResponse(messages, "account-read");
+    expect(readResponse?.result && "state" in readResponse.result).toBe(true);
+    expect(
+      readResponse?.result && "state" in readResponse.result
+        ? readResponse.result.state.account.email
+        : null,
+    ).toBe("user@example.com");
+
+    ws.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "account-chatgpt-login",
+        method: "account.login.start",
+        params: { type: "chatgpt" },
+      } satisfies AppClientMessage),
+    );
+    await waitFor(() => hasResponse(messages, "account-chatgpt-login"));
+    const chatgptLogin = getResponse(messages, "account-chatgpt-login");
+    expect(chatgptLogin?.result && "login" in chatgptLogin.result).toBe(true);
+    expect(
+      chatgptLogin?.result && "login" in chatgptLogin.result && chatgptLogin.result.login.type === "chatgpt"
+        ? chatgptLogin.result.login.authUrl
+        : null,
+    ).toBe("https://example.com/login");
+
+    ws.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "account-device-code-login",
+        method: "account.login.start",
+        params: { type: "deviceCode" },
+      } satisfies AppClientMessage),
+    );
+    await waitFor(() => hasResponse(messages, "account-device-code-login"));
+    const deviceCodeLogin = getResponse(messages, "account-device-code-login");
+    expect(deviceCodeLogin?.result && "login" in deviceCodeLogin.result).toBe(true);
+    expect(
+      deviceCodeLogin?.result &&
+        "login" in deviceCodeLogin.result &&
+        deviceCodeLogin.result.login.type === "deviceCode"
+        ? deviceCodeLogin.result.login.userCode
+        : null,
+    ).toBe("ABCD-EFGH");
+
+    ws.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "account-login-cancel",
+        method: "account.login.cancel",
+        params: { loginId: "login-123" },
+      } satisfies AppClientMessage),
+    );
+    await waitFor(() => hasResponse(messages, "account-login-cancel"));
+    const cancelResponse = getResponse(messages, "account-login-cancel");
+    expect(cancelResponse?.result && "status" in cancelResponse.result).toBe(true);
+    expect(
+      cancelResponse?.result && "status" in cancelResponse.result
+        ? cancelResponse.result.status
+        : null,
+    ).toBe("canceled");
+
+    ws.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "account-api-login",
+        method: "account.login.start",
+        params: { type: "apiKey", apiKey: "sk-test" },
+      } satisfies AppClientMessage),
+    );
+    await waitFor(() => hasResponse(messages, "account-api-login"));
+    const apiLogin = getResponse(messages, "account-api-login");
+    expect(apiLogin?.result && "state" in apiLogin.result).toBe(true);
+    expect(
+      apiLogin?.result && "state" in apiLogin.result
+        ? apiLogin.result.state.account.accountType
+        : null,
+    ).toBe("apiKey");
+    expect(
+      apiLogin?.result && "snapshot" in apiLogin.result
+        ? apiLogin.result.snapshot.authStatus?.authMethod
+        : null,
+    ).toBe("apikey");
+
+    ws.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "account-logout",
+        method: "account.logout",
+        params: {},
+      } satisfies AppClientMessage),
+    );
+    await waitFor(() => hasResponse(messages, "account-logout"));
+    const logoutResponse = getResponse(messages, "account-logout");
+    expect(logoutResponse?.result && "state" in logoutResponse.result).toBe(true);
+    expect(
+      logoutResponse?.result && "state" in logoutResponse.result
+        ? logoutResponse.result.state.account.authenticated
+        : true,
+    ).toBe(false);
+
+    ws.close();
     await app.close();
   });
 

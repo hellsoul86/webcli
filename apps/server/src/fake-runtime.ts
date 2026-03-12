@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import type {
+  AccountLoginCancelStatus,
+  AccountLoginStartInput,
+  AccountLoginStartResponse,
+  AccountStateSnapshot,
   AccountSummary,
   ApprovalPolicy,
   ConfigSnapshot,
@@ -47,9 +51,10 @@ export class FakeRuntime implements SessionRuntime {
     serviceTier: null,
     approvalPolicy: "on-request",
     sandboxMode: "danger-full-access",
+    forcedLoginMethod: null,
   };
 
-  private readonly status: RuntimeStatus = {
+  private status: RuntimeStatus = {
     connected: true,
     childPid: 4242,
     authenticated: true,
@@ -58,7 +63,7 @@ export class FakeRuntime implements SessionRuntime {
     lastError: null,
   };
 
-  private readonly account: AccountSummary = {
+  private account: AccountSummary = {
     authenticated: true,
     requiresOpenaiAuth: false,
     accountType: "chatgpt",
@@ -145,6 +150,78 @@ export class FakeRuntime implements SessionRuntime {
 
   async getAccountSummary(): Promise<AccountSummary> {
     return { ...this.account };
+  }
+
+  async readAccountState(): Promise<AccountStateSnapshot> {
+    return {
+      account: { ...this.account },
+      authStatus: {
+        authMethod:
+          this.account.accountType === "chatgpt"
+            ? "chatgpt"
+            : this.account.accountType === "apiKey"
+              ? "apikey"
+              : null,
+        requiresOpenaiAuth: this.account.requiresOpenaiAuth,
+      },
+    };
+  }
+
+  async loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse> {
+    if (input.type === "chatgpt") {
+      return {
+        type: "chatgpt",
+        loginId: randomUUID(),
+        authUrl: "https://example.com/login",
+      };
+    }
+
+    if (input.type === "deviceCode") {
+      return {
+        type: "deviceCode",
+        loginId: randomUUID(),
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "ABCD-EFGH",
+        expiresAt: Date.now() + 15 * 60_000,
+      };
+    }
+
+    this.account = {
+      ...this.account,
+      authenticated: true,
+      requiresOpenaiAuth: false,
+      accountType: input.type === "apiKey" ? "apiKey" : "chatgpt",
+      email: input.type === "apiKey" ? null : "fake-runtime@example.com",
+      planType: input.type === "apiKey" ? null : "enterprise",
+    };
+    this.status = {
+      ...this.status,
+      authenticated: true,
+      requiresOpenaiAuth: false,
+    };
+    this.emit({ type: "account.updated", account: { ...this.account } });
+    return { type: input.type };
+  }
+
+  async cancelAccountLogin(): Promise<AccountLoginCancelStatus> {
+    return "canceled";
+  }
+
+  async logoutAccount(): Promise<void> {
+    this.account = {
+      authenticated: false,
+      requiresOpenaiAuth: true,
+      accountType: "unknown",
+      email: null,
+      planType: null,
+      usageWindows: [],
+    };
+    this.status = {
+      ...this.status,
+      authenticated: false,
+      requiresOpenaiAuth: true,
+    };
+    this.emit({ type: "account.updated", account: { ...this.account } });
   }
 
   async listModels(): Promise<Array<ModelOption>> {
@@ -536,10 +613,17 @@ export class FakeRuntime implements SessionRuntime {
   }
 
   async getIntegrationSnapshot(): Promise<IntegrationSnapshot> {
+    const authMethod =
+      this.account.accountType === "chatgpt"
+        ? "chatgpt"
+        : this.account.accountType === "apiKey"
+          ? "apikey"
+          : null;
+
     return {
       authStatus: {
-        authMethod: "chatgpt",
-        requiresOpenaiAuth: false,
+        authMethod,
+        requiresOpenaiAuth: this.account.requiresOpenaiAuth,
       },
       config: { ...this.config },
       mcpServers: [

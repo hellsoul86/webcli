@@ -14,13 +14,18 @@ import type { TFunction } from "i18next";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AccountSummary,
+  AccountStateSnapshot,
   AccountUsageWindow,
   ApprovalPolicy,
+  AuthStatusSnapshot,
   BootstrapResponse,
   ConfigSnapshot,
+  ForcedLoginMethod,
   GitBranchReference,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
+  IntegrationSnapshot,
   InspectorTab,
   ModelOption,
   PendingApproval,
@@ -97,6 +102,17 @@ type ComposerDropdownOption<T extends string> = {
 
 type ComposerSpeedMode = "standard" | "fast";
 
+type AccountLoginState = {
+  method: "chatgpt" | "deviceCode" | "apiKey" | "chatgptAuthTokens";
+  loginId: string | null;
+  authUrlOpened: boolean;
+  verificationUrl: string | null;
+  userCode: string | null;
+  expiresAt: number | null;
+  phase: "pending" | "failed";
+  error: string | null;
+};
+
 type QueuedPrompt = {
   id: string;
   threadId: string;
@@ -113,12 +129,12 @@ function buildPromptSuggestions(t: TFunction): Array<string> {
 
 function buildSettingsTabs(t: TFunction): Array<{ id: SettingsTab; label: string }> {
   return [
+    { id: "account", label: t("settings.tabs.account") },
     { id: "general", label: t("settings.tabs.general") },
+    { id: "defaults", label: t("settings.tabs.defaults") },
     { id: "integrations", label: t("settings.tabs.integrations") },
-    { id: "skills", label: t("settings.tabs.skills") },
-    { id: "apps", label: t("settings.tabs.apps") },
-    { id: "plugins", label: t("settings.tabs.plugins") },
-    { id: "archived", label: t("settings.tabs.archived") },
+    { id: "extensions", label: t("settings.tabs.extensions") },
+    { id: "history", label: t("settings.tabs.history") },
   ];
 }
 
@@ -159,6 +175,36 @@ function buildSettingsReasoningEffortOptions(t: TFunction): Array<{ value: "" | 
       label,
     })),
   ];
+}
+
+function splitPathSegments(value: string): Array<string> {
+  return value.split("/").filter(Boolean);
+}
+
+function arraysEqual(left: Array<string>, right: Array<string>): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}
+
+function getWorkspaceDuplicateHint(
+  workspace: WorkspaceRecord,
+  workspaces: Array<WorkspaceRecord>,
+): string | null {
+  if (workspaces.filter((entry) => entry.name === workspace.name).length < 2) {
+    return null;
+  }
+
+  const segments = splitPathSegments(workspace.absPath);
+  const worktreesIndex = segments.lastIndexOf("worktrees");
+  if (worktreesIndex >= 0 && segments[worktreesIndex - 1] === ".codex") {
+    const worktreeId = segments[worktreesIndex + 1];
+    return worktreeId ? `.codex/worktrees/${worktreeId}` : ".codex/worktrees";
+  }
+
+  return segments.at(-2) ?? workspace.absPath;
 }
 
 export function App() {
@@ -224,6 +270,7 @@ export function App() {
   const [commandRows, setCommandRows] = useState("30");
   const [workspaceMutationPending, setWorkspaceMutationPending] = useState(false);
   const [workspaceMutationError, setWorkspaceMutationError] = useState<string | null>(null);
+  const [accountLoginState, setAccountLoginState] = useState<AccountLoginState | null>(null);
   const [completedThreadMarks, setCompletedThreadMarks] = useState<Record<string, true>>({});
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [sidebarWidth, setSidebarWidth] = useState(() => readInitialSidebarWidth());
@@ -291,7 +338,7 @@ export function App() {
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: integrations.settingsOpen && integrations.settingsTab === "archived",
+    enabled: integrations.settingsOpen && integrations.settingsTab === "history",
     staleTime: 60_000,
   });
 
@@ -326,6 +373,23 @@ export function App() {
       allThreadEntries.filter((thread) => !thread.archived),
     [allThreadEntries],
   );
+  const workspaceIdsWithActiveThreads = useMemo(
+    () =>
+      new Set(
+        activeThreadEntries
+          .map((thread) => thread.workspaceId)
+          .filter((workspaceId): workspaceId is string => Boolean(workspaceId)),
+      ),
+    [activeThreadEntries],
+  );
+  const visibleSidebarWorkspaces = useMemo(
+    () =>
+      workspaces.filter(
+        (workspace) =>
+          workspace.source === "saved" || workspaceIdsWithActiveThreads.has(workspace.id),
+      ),
+    [workspaceIdsWithActiveThreads, workspaces],
+  );
   const archivedThreadEntries = useMemo(
     () =>
       (archivedThreadsQuery.data?.pages ?? [])
@@ -335,11 +399,11 @@ export function App() {
   );
   const workspaceTree = useMemo(
     () =>
-      workspaces.map((workspace) => ({
+      visibleSidebarWorkspaces.map((workspace) => ({
         workspace,
         threads: activeThreadEntries.filter((thread) => thread.workspaceId === workspace.id),
       })),
-    [activeThreadEntries, workspaces],
+    [activeThreadEntries, visibleSidebarWorkspaces],
   );
   const selectedWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
@@ -552,7 +616,7 @@ export function App() {
         setArchivedMode(archivedMode === "archived" ? "active" : "archived"),
       onOpenSettings: () => {
         setSettingsOpen(true);
-        setSettingsTab("general");
+        setSettingsTab("account");
       },
       onFocusInspector: (tab) => setInspectorTab(tab),
       onOpenWorkspaceModal: openCreateWorkspaceModal,
@@ -593,6 +657,64 @@ export function App() {
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    if (
+      !accountLoginState ||
+      accountLoginState.phase !== "pending" ||
+      (accountLoginState.method !== "chatgpt" && accountLoginState.method !== "deviceCode")
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          if (
+            accountLoginState.method === "deviceCode" &&
+            accountLoginState.expiresAt !== null &&
+            Date.now() >= accountLoginState.expiresAt
+          ) {
+            if (!cancelled) {
+              setAccountLoginState((current) =>
+                current && current.loginId === accountLoginState.loginId
+                  ? {
+                      ...current,
+                      phase: "failed",
+                      error: t("settings.deviceCodeExpired"),
+                    }
+                  : current,
+              );
+            }
+            return;
+          }
+          const response = await codexClient.call("account.read", {});
+          if (cancelled) {
+            return;
+          }
+          applyAccountResult(response);
+          if (response.state.account.authenticated) {
+            setAccountLoginState(null);
+            setSettingsNotice(
+              t(
+                accountLoginState.method === "deviceCode"
+                  ? "settings.notices.deviceCodeLoginSuccess"
+                  : "settings.notices.chatgptLoginSuccess",
+              ),
+            );
+          }
+        } catch {
+          // Keep polling until the user cancels or runtime notifies completion.
+        }
+      })();
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [accountLoginState, t]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -976,30 +1098,35 @@ export function App() {
 
     setConnection(bootstrap.runtime);
     syncBootstrapActiveThreads(bootstrap.activeThreads);
+  }, [bootstrap, setConnection, syncBootstrapActiveThreads]);
+
+  useEffect(() => {
+    if (!bootstrap) {
+      return;
+    }
 
     setExpandedWorkspaceIds((current) => {
-      const validIds = current.filter((id) => workspaces.some((workspace) => workspace.id === id));
-      return validIds.length > 0 ? validIds : workspaces.map((workspace) => workspace.id);
+      const validIds = current.filter((id) =>
+        visibleSidebarWorkspaces.some((workspace) => workspace.id === id),
+      );
+      const nextIds =
+        validIds.length > 0
+          ? validIds
+          : visibleSidebarWorkspaces.map((workspace) => workspace.id);
+      return arraysEqual(current, nextIds) ? current : nextIds;
     });
 
     if (activeWorkspaceId !== "all" && workspaces.some((workspace) => workspace.id === activeWorkspaceId)) {
       return;
     }
 
-    if (workspaces[0]) {
-      setActiveWorkspace(workspaces[0].id);
+    if (visibleSidebarWorkspaces[0]) {
+      setActiveWorkspace(visibleSidebarWorkspaces[0].id);
       return;
     }
 
     setActiveWorkspace("all");
-  }, [
-    activeWorkspaceId,
-    bootstrap,
-    setActiveWorkspace,
-    setConnection,
-    syncBootstrapActiveThreads,
-    workspaces,
-  ]);
+  }, [activeWorkspaceId, bootstrap, setActiveWorkspace, visibleSidebarWorkspaces, workspaces]);
 
   useEffect(() => {
     if (!bootstrap || workspaceModalOpen || autoOpenedWorkspaceModalRef.current || blocking) {
@@ -1721,6 +1848,7 @@ export function App() {
         serviceTier: baseConfig?.serviceTier ?? null,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: baseConfig?.sandboxMode ?? null,
+        forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
       });
       setIntegrationSnapshot(response.snapshot);
       patchBootstrapCache(queryClient, (current) => ({
@@ -1733,6 +1861,7 @@ export function App() {
             serviceTier: baseConfig?.serviceTier ?? null,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: baseConfig?.sandboxMode ?? null,
+            forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
           },
         },
       }));
@@ -1779,6 +1908,7 @@ export function App() {
         serviceTier: nextServiceTier,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: baseConfig?.sandboxMode ?? null,
+        forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
       });
       setIntegrationSnapshot(response.snapshot);
       patchBootstrapCache(queryClient, (current) => ({
@@ -1791,6 +1921,7 @@ export function App() {
             serviceTier: nextServiceTier,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: baseConfig?.sandboxMode ?? null,
+            forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
           },
         },
       }));
@@ -1820,6 +1951,7 @@ export function App() {
         serviceTier: baseConfig?.serviceTier ?? null,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: baseConfig?.sandboxMode ?? null,
+        forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
       });
       setIntegrationSnapshot(response.snapshot);
       patchBootstrapCache(queryClient, (current) => ({
@@ -1832,6 +1964,7 @@ export function App() {
             serviceTier: baseConfig?.serviceTier ?? null,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: baseConfig?.sandboxMode ?? null,
+            forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
           },
         },
       }));
@@ -1848,6 +1981,7 @@ export function App() {
         serviceTier: baseConfig?.serviceTier ?? null,
         approvalPolicy: nextPolicy,
         sandboxMode: baseConfig?.sandboxMode ?? null,
+        forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
       });
       setIntegrationSnapshot(response.snapshot);
       patchBootstrapCache(queryClient, (current) => ({
@@ -1861,6 +1995,7 @@ export function App() {
             serviceTier: baseConfig?.serviceTier ?? null,
             approvalPolicy: nextPolicy,
             sandboxMode: baseConfig?.sandboxMode ?? null,
+            forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
           },
         },
       }));
@@ -1877,6 +2012,7 @@ export function App() {
         serviceTier: baseConfig?.serviceTier ?? null,
         approvalPolicy: baseConfig?.approvalPolicy ?? null,
         sandboxMode: nextMode,
+        forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
       });
       setIntegrationSnapshot(response.snapshot);
       patchBootstrapCache(queryClient, (current) => ({
@@ -1890,6 +2026,7 @@ export function App() {
             serviceTier: baseConfig?.serviceTier ?? null,
             approvalPolicy: baseConfig?.approvalPolicy ?? null,
             sandboxMode: nextMode,
+            forcedLoginMethod: baseConfig?.forcedLoginMethod ?? null,
           },
         },
       }));
@@ -2021,6 +2158,135 @@ export function App() {
     });
   }
 
+  function applyAccountResult(input: {
+    state: AccountStateSnapshot;
+    snapshot: IntegrationSnapshot;
+  }): void {
+    setIntegrationSnapshot(input.snapshot);
+    patchBootstrapCache(queryClient, (current) => ({
+      ...current,
+      account: input.state.account,
+    }));
+  }
+
+  async function handleAccountRefresh(): Promise<void> {
+    await runAction(async () => {
+      const response = await codexClient.call("account.read", {});
+      applyAccountResult(response);
+      setSettingsNotice(t("settings.notices.accountRefreshed"));
+    });
+  }
+
+  async function handleChatgptLogin(): Promise<void> {
+    await runAction(async () => {
+      const response = await codexClient.call("account.login.start", {
+        type: "chatgpt",
+      });
+      applyAccountResult(response);
+      if (response.login.type === "chatgpt") {
+        window.open(response.login.authUrl, "_blank", "noopener,noreferrer");
+        setAccountLoginState({
+          method: "chatgpt",
+          loginId: response.login.loginId,
+          authUrlOpened: true,
+          verificationUrl: response.login.authUrl,
+          userCode: null,
+          expiresAt: null,
+          phase: "pending",
+          error: null,
+        });
+        setSettingsNotice(t("settings.notices.chatgptLoginPending"));
+      }
+    });
+  }
+
+  async function handleDeviceCodeLogin(): Promise<void> {
+    await runAction(async () => {
+      const response = await codexClient.call("account.login.start", {
+        type: "deviceCode",
+      });
+      applyAccountResult(response);
+      if (response.login.type === "deviceCode") {
+        setAccountLoginState({
+          method: "deviceCode",
+          loginId: response.login.loginId,
+          authUrlOpened: false,
+          verificationUrl: response.login.verificationUrl,
+          userCode: response.login.userCode,
+          expiresAt: response.login.expiresAt,
+          phase: "pending",
+          error: null,
+        });
+        setSettingsNotice(t("settings.notices.deviceCodeLoginPending"));
+      }
+    });
+  }
+
+  async function handleApiKeyLogin(apiKey: string): Promise<boolean> {
+    let success = false;
+    await runAction(async () => {
+      const response = await codexClient.call("account.login.start", {
+        type: "apiKey",
+        apiKey,
+      });
+      applyAccountResult(response);
+      setAccountLoginState(null);
+      setSettingsNotice(t("settings.notices.apiKeyLoginSuccess"));
+      success = true;
+    });
+    return success;
+  }
+
+  async function handleChatgptTokensLogin(input: {
+    accessToken: string;
+    chatgptAccountId: string;
+    chatgptPlanType?: string | null;
+  }): Promise<boolean> {
+    let success = false;
+    await runAction(async () => {
+      const response = await codexClient.call("account.login.start", {
+        type: "chatgptAuthTokens",
+        accessToken: input.accessToken,
+        chatgptAccountId: input.chatgptAccountId,
+        chatgptPlanType: input.chatgptPlanType ?? null,
+      });
+      applyAccountResult(response);
+      setAccountLoginState(null);
+      setSettingsNotice(t("settings.notices.tokensLoginSuccess"));
+      success = true;
+    });
+    return success;
+  }
+
+  async function handleCancelChatgptLogin(): Promise<void> {
+    const loginId = accountLoginState?.loginId;
+    if (!loginId) {
+      return;
+    }
+
+    await runAction(async () => {
+      const response = await codexClient.call("account.login.cancel", {
+        loginId,
+      });
+      applyAccountResult(response);
+      setAccountLoginState(null);
+      setSettingsNotice(
+        response.status === "canceled"
+          ? t("settings.notices.loginCanceled")
+          : t("settings.notices.loginCancelNotFound"),
+      );
+    });
+  }
+
+  async function handleAccountLogout(): Promise<void> {
+    await runAction(async () => {
+      const response = await codexClient.call("account.logout", {});
+      applyAccountResult(response);
+      setAccountLoginState(null);
+      setSettingsNotice(t("settings.notices.loggedOut"));
+    });
+  }
+
   function handlePaletteAction(action: PaletteAction): void {
     setPaletteOpen(false);
     setPaletteQuery("");
@@ -2068,7 +2334,7 @@ export function App() {
               data-testid="workspace-all-button"
               onClick={() => handleWorkspaceSelect("all")}
             >
-              <span>{t("sidebar.projectsCount", { count: workspaces.length })}</span>
+              <span>{t("sidebar.projectsCount", { count: visibleSidebarWorkspaces.length })}</span>
             </button>
             <button
               className="sidebar-icon-button"
@@ -2085,6 +2351,7 @@ export function App() {
               <div className="workspace-group" key={workspace.id}>
                 <WorkspaceListRow
                   workspace={workspace}
+                  subtitle={getWorkspaceDuplicateHint(workspace, visibleSidebarWorkspaces)}
                   active={workspace.id === activeWorkspaceId}
                   expanded={expandedWorkspaceIds.includes(workspace.id)}
                   onSelect={() => handleWorkspaceSelect(workspace.id)}
@@ -2245,7 +2512,7 @@ export function App() {
               title={t("common.settings")}
               onClick={() => {
                 setSettingsOpen(true);
-                setSettingsTab("general");
+                setSettingsTab("account");
                 setSettingsNotice(null);
               }}
             >
@@ -2493,9 +2760,9 @@ export function App() {
         <SettingsOverlay
           tab={integrations.settingsTab}
           notice={settingsNotice}
-          accountEmail={account?.email ?? null}
-          accountType={account?.accountType ?? "unknown"}
-          requiresOpenaiAuth={account?.requiresOpenaiAuth ?? false}
+          account={account}
+          authStatus={integrations.authStatus}
+          loginState={accountLoginState}
           config={bootstrap?.settings.config ?? integrations.config ?? null}
           models={models}
           mcpServers={integrations.mcpServers}
@@ -2511,6 +2778,13 @@ export function App() {
           onTabChange={(tab) => setSettingsTab(tab)}
           onConfigSave={(payload) => void handleConfigSave(payload)}
           onRefresh={() => void handleRefreshIntegrations()}
+          onAccountRefresh={() => void handleAccountRefresh()}
+          onChatgptLogin={() => void handleChatgptLogin()}
+          onDeviceCodeLogin={() => void handleDeviceCodeLogin()}
+          onApiKeyLogin={(apiKey) => handleApiKeyLogin(apiKey)}
+          onChatgptTokensLogin={(input) => handleChatgptTokensLogin(input)}
+          onCancelChatgptLogin={() => void handleCancelChatgptLogin()}
+          onAccountLogout={() => void handleAccountLogout()}
           onMcpLogin={(name) => void handleMcpLogin(name)}
           onMcpReload={() => void handleMcpReload()}
           onOpenArchivedThread={(threadId) => {
@@ -2567,6 +2841,7 @@ export function App() {
 
 function WorkspaceListRow(props: {
   workspace: WorkspaceRecord;
+  subtitle?: string | null;
   active: boolean;
   expanded: boolean;
   onSelect: () => void;
@@ -2582,9 +2857,12 @@ function WorkspaceListRow(props: {
         onClick={props.onSelect}
         title={props.workspace.absPath}
       >
-        <div className="workspace-row__title">
-          {props.expanded ? <FolderOpenIcon /> : <FolderIcon />}
-          <strong>{props.workspace.name}</strong>
+        <div className="workspace-row__content">
+          <div className="workspace-row__title">
+            {props.expanded ? <FolderOpenIcon /> : <FolderIcon />}
+            <strong>{props.workspace.name}</strong>
+          </div>
+          {props.subtitle ? <span>{props.subtitle}</span> : null}
         </div>
       </button>
       <div className="workspace-row__actions">
@@ -2892,7 +3170,7 @@ function EmptyThreadState(props: { thread: ThreadSummary; archived: boolean }) {
     <div className="conversation-ready">
       <div>
         <p className="conversation-empty__eyebrow">
-          {props.archived ? t("settings.tabs.archived") : describeThreadStatus(props.thread.status)}
+          {props.archived ? t("settings.archivedThreads") : describeThreadStatus(props.thread.status)}
         </p>
         <h2>{formatThreadTitle(props.thread)}</h2>
       </div>
@@ -3405,9 +3683,9 @@ function ApprovalRail(props: {
 function SettingsOverlay(props: {
   tab: SettingsTab;
   notice: string | null;
-  accountEmail: string | null;
-  accountType: string;
-  requiresOpenaiAuth: boolean;
+  account: AccountSummary | null;
+  authStatus: AuthStatusSnapshot | null;
+  loginState: AccountLoginState | null;
   config: ConfigSnapshot | null;
   models: Array<ModelOption>;
   mcpServers: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["mcpServers"];
@@ -3423,6 +3701,17 @@ function SettingsOverlay(props: {
   onTabChange: (tab: SettingsTab) => void;
   onConfigSave: (payload: ConfigSnapshot) => void;
   onRefresh: () => void;
+  onAccountRefresh: () => void;
+  onChatgptLogin: () => void;
+  onDeviceCodeLogin: () => void;
+  onApiKeyLogin: (apiKey: string) => Promise<boolean>;
+  onChatgptTokensLogin: (input: {
+    accessToken: string;
+    chatgptAccountId: string;
+    chatgptPlanType?: string | null;
+  }) => Promise<boolean>;
+  onCancelChatgptLogin: () => void;
+  onAccountLogout: () => void;
   onMcpLogin: (name: string) => void;
   onMcpReload: () => void;
   onOpenArchivedThread: (threadId: string) => void;
@@ -3438,9 +3727,30 @@ function SettingsOverlay(props: {
     () => buildSettingsReasoningEffortOptions(t),
     [t],
   );
+  const serviceTierOptions = useMemo(
+    () => [
+      { value: "standard", label: t("settings.serviceTierOptions.standard") },
+      { value: "fast", label: t("settings.serviceTierOptions.fast") },
+      { value: "flex", label: t("settings.serviceTierOptions.flex") },
+    ],
+    [t],
+  );
+  const accountSummary =
+    props.account ??
+    ({
+      authenticated: false,
+      requiresOpenaiAuth: true,
+      accountType: "unknown",
+      email: null,
+      planType: null,
+      usageWindows: [],
+    } satisfies AccountSummary);
   const [model, setModel] = useState(props.config?.model ?? "");
   const [reasoningEffort, setReasoningEffort] = useState<"" | ReasoningEffort>(
     normalizeReasoningEffort(props.config?.reasoningEffort) ?? "",
+  );
+  const [serviceTierMode, setServiceTierMode] = useState<"standard" | "fast" | "flex">(
+    serializeServiceTierMode(props.config?.serviceTier),
   );
   const [approvalPolicy, setApprovalPolicy] = useState(
     normalizeApprovalPolicy(props.config?.approvalPolicy) ?? "on-request",
@@ -3448,13 +3758,74 @@ function SettingsOverlay(props: {
   const [sandboxMode, setSandboxMode] = useState(
     normalizeSandboxMode(props.config?.sandboxMode) ?? "danger-full-access",
   );
+  const [apiKey, setApiKey] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [chatgptAccountId, setChatgptAccountId] = useState("");
+  const [chatgptPlanType, setChatgptPlanType] = useState("");
 
   useEffect(() => {
     setModel(props.config?.model ?? "");
     setReasoningEffort(normalizeReasoningEffort(props.config?.reasoningEffort) ?? "");
+    setServiceTierMode(serializeServiceTierMode(props.config?.serviceTier));
     setApprovalPolicy(normalizeApprovalPolicy(props.config?.approvalPolicy) ?? "on-request");
     setSandboxMode(normalizeSandboxMode(props.config?.sandboxMode) ?? "danger-full-access");
   }, [props.config]);
+
+  useEffect(() => {
+    if (props.tab === "account") {
+      return;
+    }
+
+    setApiKey("");
+    setAccessToken("");
+    setChatgptAccountId("");
+    setChatgptPlanType("");
+  }, [props.tab]);
+
+  const authMethodLabel = formatSettingsAuthMethodLabel(
+    props.authStatus?.authMethod ?? accountSummary.accountType,
+    t,
+  );
+  const forcedLoginMethodLabel = formatForcedLoginMethodLabel(
+    props.config?.forcedLoginMethod ?? null,
+    t,
+  );
+  const accountStateLabel = props.loginState?.phase === "pending"
+    ? t("settings.accountStates.pending")
+    : accountSummary.authenticated
+      ? t("settings.accountStates.connected")
+      : accountSummary.requiresOpenaiAuth
+        ? t("settings.accountStates.needsAuth")
+        : t("settings.accountStates.disconnected");
+
+  const handleApiKeySubmit = async (): Promise<void> => {
+    if (!apiKey.trim()) {
+      return;
+    }
+    const submitted = apiKey.trim();
+    setApiKey("");
+    const success = await props.onApiKeyLogin(submitted);
+    if (!success) {
+      setApiKey(submitted);
+    }
+  };
+
+  const handleChatgptTokensSubmit = async (): Promise<void> => {
+    if (!accessToken.trim() || !chatgptAccountId.trim()) {
+      return;
+    }
+    const payload = {
+      accessToken: accessToken.trim(),
+      chatgptAccountId: chatgptAccountId.trim(),
+      chatgptPlanType: chatgptPlanType.trim() || null,
+    };
+    const success = await props.onChatgptTokensLogin(payload);
+    if (success) {
+      setAccessToken("");
+      setChatgptAccountId("");
+      setChatgptPlanType("");
+    }
+  };
 
   return (
     <div className="overlay-shell" style={settingsOverlayStyle}>
@@ -3487,21 +3858,253 @@ function SettingsOverlay(props: {
         <section className="settings-content">
           {props.notice ? <div className="settings-notice">{props.notice}</div> : null}
 
+          {props.tab === "account" ? (
+            <div className="settings-stack">
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.accountSummary")}</strong>
+                  <span>{accountStateLabel}</span>
+                </div>
+                <div className="settings-detail-grid">
+                  <div>
+                    <span className="field-note">{t("settings.accountFields.email")}</span>
+                    <strong>{accountSummary.email ?? t("settings.accountDisconnected")}</strong>
+                  </div>
+                  <div>
+                    <span className="field-note">{t("settings.accountFields.plan")}</span>
+                    <strong>{accountSummary.planType ?? t("common.unknown")}</strong>
+                  </div>
+                  <div>
+                    <span className="field-note">{t("settings.accountFields.loginMethod")}</span>
+                    <strong>{formatSettingsAuthMethodLabel(accountSummary.accountType, t)}</strong>
+                  </div>
+                  <div>
+                    <span className="field-note">{t("settings.accountFields.authMethod")}</span>
+                    <strong>{authMethodLabel}</strong>
+                  </div>
+                </div>
+                <div className="settings-usage-grid">
+                  {accountSummary.usageWindows.length > 0 ? (
+                    accountSummary.usageWindows.map((window) => (
+                      <div
+                        key={window.label}
+                        className="settings-usage-item"
+                        title={buildUsageWindowTitle(window)}
+                      >
+                        <span className="field-note">{window.label}</span>
+                        <strong>{formatUsageRemaining(window.remainingPercent)}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="settings-empty-inline">{t("settings.accountUsageEmpty")}</div>
+                  )}
+                </div>
+                <div className="approval-actions">
+                  <button className="ghost-button" onClick={props.onAccountRefresh}>
+                    {t("settings.accountActions.refresh")}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    onClick={props.onAccountLogout}
+                    disabled={!accountSummary.authenticated}
+                  >
+                    {t("settings.accountActions.logout")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.accountLoginTitle")}</strong>
+                  <span>{accountStateLabel}</span>
+                </div>
+                <div className="settings-stack">
+                  <div className="settings-inline-actions">
+                    <button
+                      className="primary-button"
+                      onClick={props.onChatgptLogin}
+                      disabled={props.loginState?.phase === "pending"}
+                    >
+                      {t("settings.accountActions.loginWithChatgpt")}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={props.onDeviceCodeLogin}
+                      disabled={props.loginState?.phase === "pending"}
+                    >
+                      {t("settings.accountActions.loginWithDeviceCode")}
+                    </button>
+                  </div>
+
+                  <label>
+                    <span>{t("settings.accountActions.loginWithApiKey")}</span>
+                    <input
+                      type="password"
+                      data-testid="settings-api-key-input"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      placeholder={t("settings.accountApiKeyPlaceholder")}
+                    />
+                    <span className="field-note">{t("settings.accountApiKeyHelp")}</span>
+                  </label>
+
+                  <div className="approval-actions">
+                    <button
+                      className="primary-button"
+                      onClick={() => void handleApiKeySubmit()}
+                      disabled={!apiKey.trim() || props.loginState?.phase === "pending"}
+                    >
+                      {t("settings.accountActions.saveApiKey")}
+                    </button>
+                  </div>
+
+                  {props.loginState?.phase === "pending" ? (
+                    <div className="settings-login-pending">
+                      <div>
+                        <strong>
+                          {props.loginState.method === "deviceCode"
+                            ? t("settings.deviceCodePendingTitle")
+                            : t("settings.loginPendingTitle")}
+                        </strong>
+                        <p className="muted">
+                          {props.loginState.method === "deviceCode"
+                            ? t("settings.deviceCodePendingBody", {
+                                loginId: props.loginState.loginId ?? t("common.unknown"),
+                              })
+                            : t("settings.loginPendingBody", {
+                                loginId: props.loginState.loginId ?? t("common.unknown"),
+                              })}
+                        </p>
+                        {props.loginState.method === "deviceCode" ? (
+                          <div className="settings-diagnostics">
+                            <div>
+                              <span className="field-note">{t("settings.deviceCodeUrlLabel")}</span>
+                              <strong>{props.loginState.verificationUrl ?? t("common.unknown")}</strong>
+                            </div>
+                            <div>
+                              <span className="field-note">{t("settings.deviceCodeCodeLabel")}</span>
+                              <strong>{props.loginState.userCode ?? t("common.unknown")}</strong>
+                            </div>
+                            <div>
+                              <span className="field-note">{t("settings.deviceCodeExpiresLabel")}</span>
+                              <strong>
+                                {props.loginState.expiresAt
+                                  ? formatDateTime(props.loginState.expiresAt / 1000, locale)
+                                  : t("common.unknown")}
+                              </strong>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="approval-actions">
+                        {props.loginState.method === "deviceCode" && props.loginState.verificationUrl ? (
+                          <button
+                            className="ghost-button"
+                            onClick={() =>
+                              window.open(props.loginState?.verificationUrl ?? "", "_blank", "noopener,noreferrer")
+                            }
+                          >
+                            {t("settings.accountActions.openVerificationPage")}
+                          </button>
+                        ) : null}
+                        <button className="ghost-button" onClick={props.onCancelChatgptLogin}>
+                          {t("settings.accountActions.cancelLogin")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {props.loginState?.phase === "failed" && props.loginState.error ? (
+                    <div className="settings-empty-inline">{props.loginState.error}</div>
+                  ) : null}
+                </div>
+              </div>
+
+              <details className="settings-card settings-advanced" open={Boolean(props.loginState?.phase === "failed")}>
+                <summary className="settings-advanced__summary">
+                  <strong>{t("settings.accountAdvancedTitle")}</strong>
+                </summary>
+                <div className="settings-stack">
+                  <label>
+                    <span>{t("settings.accountFields.accessToken")}</span>
+                    <input
+                      type="password"
+                      value={accessToken}
+                      onChange={(event) => setAccessToken(event.target.value)}
+                    />
+                  </label>
+                  <div className="settings-form-grid">
+                    <label>
+                      <span>{t("settings.accountFields.chatgptAccountId")}</span>
+                      <input
+                        value={chatgptAccountId}
+                        onChange={(event) => setChatgptAccountId(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span>{t("settings.accountFields.chatgptPlanType")}</span>
+                      <input
+                        value={chatgptPlanType}
+                        onChange={(event) => setChatgptPlanType(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="approval-actions">
+                    <button
+                      className="ghost-button"
+                      onClick={() => void handleChatgptTokensSubmit()}
+                      disabled={!accessToken.trim() || !chatgptAccountId.trim()}
+                    >
+                      {t("settings.accountActions.importTokens")}
+                    </button>
+                  </div>
+
+                  <div className="settings-diagnostics">
+                    <div>
+                      <span className="field-note">{t("settings.accountFields.authMethod")}</span>
+                      <strong>{authMethodLabel}</strong>
+                    </div>
+                    <div>
+                      <span className="field-note">{t("settings.accountFields.requiresOpenaiAuth")}</span>
+                      <strong>
+                        {(props.authStatus?.requiresOpenaiAuth ?? accountSummary.requiresOpenaiAuth)
+                          ? t("common.yes")
+                          : t("common.no")}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="field-note">{t("settings.accountFields.forcedLoginMethod")}</span>
+                      <strong>{forcedLoginMethodLabel}</strong>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
+          ) : null}
+
           {props.tab === "general" ? (
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>{t("settings.account")}</strong>
-                  <span>{props.accountEmail ?? t("settings.accountDisconnected")}</span>
+                  <strong>{t("settings.generalTitle")}</strong>
                 </div>
-                <p className="muted">
-                  {t("settings.authMethod", {
-                    type: translate(`settings.authTypes.${props.accountType}`),
-                    required: props.requiresOpenaiAuth ? t("common.yes") : t("common.no"),
-                  })}
-                </p>
+                <label>
+                  <span>{t("settings.language")}</span>
+                  <select
+                    data-testid="settings-language"
+                    value={locale}
+                    onChange={(event) => void setLocale(event.target.value as "zh-CN" | "en-US")}
+                  >
+                    <option value="zh-CN">{t("settings.languageOptions.zhCN")}</option>
+                    <option value="en-US">{t("settings.languageOptions.enUS")}</option>
+                  </select>
+                </label>
               </div>
+            </div>
+          ) : null}
 
+          {props.tab === "defaults" ? (
+            <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
                   <strong>{t("settings.defaultAgentConfig")}</strong>
@@ -3526,22 +4129,6 @@ function SettingsOverlay(props: {
                     </datalist>
                   </label>
                   <label>
-                    <span>{t("settings.approvalPolicy")}</span>
-                    <select
-                      data-testid="settings-approval-policy"
-                      value={approvalPolicy}
-                      onChange={(event) =>
-                        setApprovalPolicy(event.target.value as EditableApprovalPolicy)
-                      }
-                    >
-                      {approvalPolicyOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
                     <span>{t("settings.reasoningEffort")}</span>
                     <select
                       data-testid="settings-reasoning-effort"
@@ -3552,6 +4139,38 @@ function SettingsOverlay(props: {
                     >
                       {settingsReasoningEffortOptions.map((option) => (
                         <option key={option.value || "default"} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{t("settings.serviceTier")}</span>
+                    <select
+                      data-testid="settings-service-tier"
+                      value={serviceTierMode}
+                      onChange={(event) =>
+                        setServiceTierMode(event.target.value as "standard" | "fast" | "flex")
+                      }
+                    >
+                      {serviceTierOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{t("settings.approvalPolicy")}</span>
+                    <select
+                      data-testid="settings-approval-policy"
+                      value={approvalPolicy}
+                      onChange={(event) =>
+                        setApprovalPolicy(event.target.value as EditableApprovalPolicy)
+                      }
+                    >
+                      {approvalPolicyOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
                       ))}
@@ -3573,17 +4192,6 @@ function SettingsOverlay(props: {
                       ))}
                     </select>
                   </label>
-                  <label>
-                    <span>{t("settings.language")}</span>
-                    <select
-                      data-testid="settings-language"
-                      value={locale}
-                      onChange={(event) => void setLocale(event.target.value as "zh-CN" | "en-US")}
-                    >
-                      <option value="zh-CN">{t("settings.languageOptions.zhCN")}</option>
-                      <option value="en-US">{t("settings.languageOptions.enUS")}</option>
-                    </select>
-                  </label>
                 </div>
                 <p className="muted">{t("settings.configHelp")}</p>
                 <div className="approval-actions">
@@ -3594,20 +4202,14 @@ function SettingsOverlay(props: {
                       props.onConfigSave({
                         model: model || null,
                         reasoningEffort: reasoningEffort || null,
-                        serviceTier: props.config?.serviceTier ?? null,
+                        serviceTier: deserializeServiceTierMode(serviceTierMode),
                         approvalPolicy,
                         sandboxMode,
+                        forcedLoginMethod: props.config?.forcedLoginMethod ?? null,
                       })
                     }
                   >
                     {t("settings.saveDefaults")}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    data-testid="settings-refresh-button"
-                    onClick={props.onRefresh}
-                  >
-                    {t("settings.refreshIntegrations")}
                   </button>
                 </div>
               </div>
@@ -3619,9 +4221,14 @@ function SettingsOverlay(props: {
               <div className="settings-card">
                 <div className="inspector-section__header">
                   <strong>{t("settings.integrationsTitle")}</strong>
-                  <button className="ghost-button" onClick={props.onMcpReload}>
-                    {t("settings.integrationsReload")}
-                  </button>
+                  <div className="approval-actions">
+                    <button className="ghost-button" onClick={props.onRefresh}>
+                      {t("settings.refreshIntegrations")}
+                    </button>
+                    <button className="ghost-button" onClick={props.onMcpReload}>
+                      {t("settings.integrationsReload")}
+                    </button>
+                  </div>
                 </div>
                 <div className="mcp-list">
                   {props.mcpServers.length > 0 ? (
@@ -3657,42 +4264,41 @@ function SettingsOverlay(props: {
             </div>
           ) : null}
 
-          {props.tab === "skills" ? (
-            <div className="settings-stack">
-              {props.skills.length > 0 ? (
-                props.skills.map((group) => (
-                  <div key={group.cwd} className="settings-card">
-                    <div className="inspector-section__header">
-                      <strong>{compactPath(group.cwd, 4)}</strong>
-                      <span>{t("settings.skillsCount", { count: group.skills.length })}</span>
-                    </div>
-                    <div className="tag-cloud">
-                      {group.skills.map((skill) => (
-                        <span key={skill.name} className="tag-chip">
-                          {skill.name}
-                        </span>
-                      ))}
-                    </div>
-                    {group.errors.length > 0 ? (
-                      <pre className="settings-pre">
-                        {group.errors.map((error) => error.message).join("\n")}
-                      </pre>
-                    ) : null}
-                  </div>
-                ))
-              ) : (
-                <div className="settings-card">
-                  <p className="muted">{t("settings.skillsEmpty")}</p>
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          {props.tab === "apps" ? (
+          {props.tab === "extensions" ? (
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
-                  <strong>{t("settings.appsTitle")}</strong>
+                  <strong>{t("settings.extensions.skills")}</strong>
+                </div>
+                {props.skills.length > 0 ? (
+                  props.skills.map((group) => (
+                    <div key={group.cwd} className="settings-section">
+                      <div className="inspector-section__header">
+                        <strong>{compactPath(group.cwd, 4)}</strong>
+                        <span>{t("settings.skillsCount", { count: group.skills.length })}</span>
+                      </div>
+                      <div className="tag-cloud">
+                        {group.skills.map((skill) => (
+                          <span key={skill.name} className="tag-chip">
+                            {skill.name}
+                          </span>
+                        ))}
+                      </div>
+                      {group.errors.length > 0 ? (
+                        <pre className="settings-pre">
+                          {group.errors.map((error) => error.message).join("\n")}
+                        </pre>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted">{t("settings.skillsEmpty")}</p>
+                )}
+              </div>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.extensions.apps")}</strong>
                   <span>{formatNumber(props.apps.length)}</span>
                 </div>
                 {props.apps.length > 0 ? (
@@ -3713,50 +4319,49 @@ function SettingsOverlay(props: {
                   <p className="muted">{t("settings.appsEmpty")}</p>
                 )}
               </div>
-            </div>
-          ) : null}
 
-          {props.tab === "plugins" ? (
-            <div className="settings-stack">
-              {props.plugins.length > 0 ? (
-                props.plugins.map((marketplace) => (
-                  <div key={marketplace.path} className="settings-card">
-                    <div className="inspector-section__header">
-                      <strong>{marketplace.name}</strong>
-                      <span>{t("settings.pluginsCount", { count: marketplace.plugins.length })}</span>
-                    </div>
-                    <div className="plugin-list">
-                      {marketplace.plugins.map((plugin) => (
-                        <div key={plugin.id} className="plugin-row">
-                          <div>
-                            <strong>{plugin.name}</strong>
-                            <p className="muted">
-                              {plugin.installed ? t("common.installed") : t("common.notInstalled")} ·{" "}
-                              {plugin.enabled ? t("common.enabled") : t("common.disabled")}
-                            </p>
-                          </div>
-                          {plugin.installed ? (
-                            <button
-                              className="ghost-button"
-                              onClick={() => props.onPluginUninstall(plugin.id)}
-                            >
-                              {t("settings.pluginUninstall")}
-                            </button>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="settings-card">
-                  <p className="muted">{t("settings.pluginsEmpty")}</p>
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.extensions.plugins")}</strong>
                 </div>
-              )}
+                {props.plugins.length > 0 ? (
+                  props.plugins.map((marketplace) => (
+                    <div key={marketplace.path} className="settings-section">
+                      <div className="inspector-section__header">
+                        <strong>{marketplace.name}</strong>
+                        <span>{t("settings.pluginsCount", { count: marketplace.plugins.length })}</span>
+                      </div>
+                      <div className="plugin-list">
+                        {marketplace.plugins.map((plugin) => (
+                          <div key={plugin.id} className="plugin-row">
+                            <div>
+                              <strong>{plugin.name}</strong>
+                              <p className="muted">
+                                {plugin.installed ? t("common.installed") : t("common.notInstalled")} ·{" "}
+                                {plugin.enabled ? t("common.enabled") : t("common.disabled")}
+                              </p>
+                            </div>
+                            {plugin.installed ? (
+                              <button
+                                className="ghost-button"
+                                onClick={() => props.onPluginUninstall(plugin.id)}
+                              >
+                                {t("settings.pluginUninstall")}
+                              </button>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted">{t("settings.pluginsEmpty")}</p>
+                )}
+              </div>
             </div>
           ) : null}
 
-          {props.tab === "archived" ? (
+          {props.tab === "history" ? (
             <div className="settings-stack">
               <div className="settings-card">
                 <div className="inspector-section__header">
@@ -4615,6 +5220,26 @@ function normalizeServiceTier(
   return null;
 }
 
+function serializeServiceTierMode(
+  value: ConfigSnapshot["serviceTier"] | undefined,
+): "standard" | "fast" | "flex" {
+  if (value === "fast" || value === "flex") {
+    return value;
+  }
+
+  return "standard";
+}
+
+function deserializeServiceTierMode(
+  value: "standard" | "fast" | "flex",
+): ServiceTier | null {
+  if (value === "fast" || value === "flex") {
+    return value;
+  }
+
+  return null;
+}
+
 function normalizeSandboxMode(
   value: WorkspaceRecord["sandboxMode"] | ConfigSnapshot["sandboxMode"] | undefined,
 ): EditableSandboxMode | null {
@@ -4647,6 +5272,38 @@ function formatApprovalPolicy(value: ApprovalPolicy | null | undefined): string 
   }
 
   return translate("common.default");
+}
+
+function formatSettingsAuthMethodLabel(
+  value: string | null | undefined,
+  t: TFunction,
+): string {
+  switch (value) {
+    case "chatgpt":
+      return t("settings.authTypes.chatgpt");
+    case "api":
+    case "apiKey":
+    case "apikey":
+      return t("settings.authTypes.apiKey");
+    case "chatgptAuthTokens":
+      return t("settings.authTypes.chatgptAuthTokens");
+    default:
+      return t("settings.authTypes.unknown");
+  }
+}
+
+function formatForcedLoginMethodLabel(
+  value: ForcedLoginMethod | null | undefined,
+  t: TFunction,
+): string {
+  switch (value) {
+    case "chatgpt":
+      return t("settings.forcedLoginMethods.chatgpt");
+    case "api":
+      return t("settings.forcedLoginMethods.api");
+    default:
+      return t("settings.forcedLoginMethods.default");
+  }
 }
 
 function formatSandboxMode(value: SandboxMode | null | undefined): string {

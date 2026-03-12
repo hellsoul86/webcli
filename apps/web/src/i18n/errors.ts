@@ -36,6 +36,16 @@ export function localizeErrorWithFallback(error: unknown, fallbackKey: string): 
         return translate("errors.gitNotRepo");
       case "git.branch_switch_failed":
         return translate("errors.gitBranchSwitchFailed", error.params);
+      case "account.api_key_invalid":
+        return translate("errors.accountApiKeyInvalid");
+      case "account.login_canceled":
+        return translate("errors.accountLoginCanceled");
+      case "account.auth_required":
+        return translate("errors.accountAuthRequired");
+      case "account.chatgpt_tokens_invalid":
+        return translate("errors.accountChatgptTokensInvalid");
+      case "account.device_code_start_failed":
+        return translate("errors.accountDeviceCodeStartFailed");
       default:
         return `${translate("errors.unknownPrefix")}: ${error.message}`;
     }

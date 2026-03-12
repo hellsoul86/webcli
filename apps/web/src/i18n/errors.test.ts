@@ -12,6 +12,12 @@ describe("localized errors", () => {
     expect(localizeError(new AppError("git.not_repo", "Current project is not a Git repository"))).toBe(
       "当前项目不是 Git 仓库。",
     );
+    expect(localizeError(new AppError("account.api_key_invalid", "Invalid API key"))).toBe(
+      "API Key 无效。",
+    );
+    expect(
+      localizeError(new AppError("account.device_code_start_failed", "Failed to start device code login")),
+    ).toBe("无法启动 Device Code 登录。");
   });
 
   it("falls back to English after locale switch", async () => {
@@ -19,6 +25,12 @@ describe("localized errors", () => {
     expect(
       localizeError(new AppError("workspace.not_directory", "Workspace path is not a directory")),
     ).toBe("Workspace path is not a directory.");
+    expect(localizeError(new AppError("account.chatgpt_tokens_invalid", "Invalid tokens"))).toBe(
+      "The ChatGPT Auth Tokens are invalid.",
+    );
+    expect(
+      localizeError(new AppError("account.device_code_start_failed", "Failed to start device code login")),
+    ).toBe("Failed to start device code login.");
   });
 
   it("keeps unknown errors readable with a localized prefix", async () => {

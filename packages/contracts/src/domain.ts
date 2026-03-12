@@ -14,7 +14,12 @@ export type AppErrorCode =
   | "thread.not_found"
   | "approval.not_pending"
   | "git.not_repo"
-  | "git.branch_switch_failed";
+  | "git.branch_switch_failed"
+  | "account.api_key_invalid"
+  | "account.login_canceled"
+  | "account.auth_required"
+  | "account.chatgpt_tokens_invalid"
+  | "account.device_code_start_failed";
 
 export type AppErrorPayload = {
   code: AppErrorCode;
@@ -55,14 +60,15 @@ export type SandboxMode = "danger-full-access" | "workspace-write" | "read-only"
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ServiceTier = "fast" | "flex";
 export type SettingsTab =
+  | "account"
   | "general"
+  | "defaults"
   | "integrations"
-  | "skills"
-  | "apps"
-  | "plugins"
-  | "archived";
+  | "extensions"
+  | "history";
 export type InspectorTab = "diff" | "review" | "plan" | "command" | "mcp";
 export type ThreadArchiveMode = "active" | "archived";
+export type ForcedLoginMethod = "chatgpt" | "api";
 export type TimelineItemKind =
   | "userMessage"
   | "agentMessage"
@@ -322,7 +328,53 @@ export type ConfigSnapshot = {
   serviceTier: ServiceTier | null;
   approvalPolicy: ApprovalPolicy | null;
   sandboxMode: SandboxMode | null;
+  forcedLoginMethod: ForcedLoginMethod | null;
 };
+
+export type AccountStateSnapshot = {
+  account: AccountSummary;
+  authStatus: AuthStatusSnapshot | null;
+};
+
+export type AccountLoginStartInput =
+  | {
+      type: "chatgpt";
+    }
+  | {
+      type: "deviceCode";
+    }
+  | {
+      type: "apiKey";
+      apiKey: string;
+    }
+  | {
+      type: "chatgptAuthTokens";
+      accessToken: string;
+      chatgptAccountId: string;
+      chatgptPlanType?: string | null;
+    };
+
+export type AccountLoginStartResponse =
+  | {
+      type: "chatgpt";
+      loginId: string;
+      authUrl: string;
+    }
+  | {
+      type: "deviceCode";
+      loginId: string;
+      verificationUrl: string;
+      userCode: string;
+      expiresAt: number | null;
+    }
+  | {
+      type: "apiKey";
+    }
+  | {
+      type: "chatgptAuthTokens";
+    };
+
+export type AccountLoginCancelStatus = "canceled" | "notFound";
 
 export type McpServerSnapshot = {
   name: string;

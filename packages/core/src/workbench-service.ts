@@ -213,6 +213,18 @@ export class WorkbenchService {
     message: AppClientMessage,
   ): Promise<AppRequestResult<AppRequestMethod>> {
     switch (message.method) {
+      case "account.read":
+        return this.handleAccountRead();
+      case "account.login.start":
+        return this.handleAccountLoginStart(
+          message.params as AppRequestParams<"account.login.start">,
+        );
+      case "account.login.cancel":
+        return this.handleAccountLoginCancel(
+          message.params as AppRequestParams<"account.login.cancel">,
+        );
+      case "account.logout":
+        return this.handleAccountLogout();
       case "thread.open":
         return this.handleThreadOpen(
           sessionId,
@@ -386,6 +398,53 @@ export class WorkbenchService {
     this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return { thread };
+  }
+
+  private async handleAccountRead(): Promise<AppRequestResult<"account.read">> {
+    const state = await this.runtime.readAccountState();
+    const snapshot = await this.refreshIntegrations();
+    return {
+      state,
+      snapshot,
+    };
+  }
+
+  private async handleAccountLoginStart(
+    params: AppRequestParams<"account.login.start">,
+  ): Promise<AppRequestResult<"account.login.start">> {
+    const login = await this.runtime.loginAccount(params);
+    const state = await this.runtime.readAccountState();
+    const snapshot = await this.refreshIntegrations();
+    this.broadcast("integrations.updated", { snapshot });
+    return {
+      login,
+      state,
+      snapshot,
+    };
+  }
+
+  private async handleAccountLoginCancel(
+    params: AppRequestParams<"account.login.cancel">,
+  ): Promise<AppRequestResult<"account.login.cancel">> {
+    const status = await this.runtime.cancelAccountLogin(params.loginId);
+    const state = await this.runtime.readAccountState();
+    const snapshot = await this.refreshIntegrations();
+    return {
+      status,
+      state,
+      snapshot,
+    };
+  }
+
+  private async handleAccountLogout(): Promise<AppRequestResult<"account.logout">> {
+    await this.runtime.logoutAccount();
+    const state = await this.runtime.readAccountState();
+    const snapshot = await this.refreshIntegrations();
+    this.broadcast("integrations.updated", { snapshot });
+    return {
+      state,
+      snapshot,
+    };
   }
 
   private async handleThreadResume(

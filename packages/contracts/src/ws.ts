@@ -1,5 +1,9 @@
 import type {
   AccountSummary,
+  AccountLoginCancelStatus,
+  AccountLoginStartInput,
+  AccountLoginStartResponse,
+  AccountStateSnapshot,
   AppErrorPayload,
   CommandSessionSnapshot,
   FuzzySearchSnapshot,
@@ -25,6 +29,24 @@ type RpcDefinition<TParams, TResult> = {
 };
 
 export type AppRequestMap = {
+  "account.read": RpcDefinition<Record<string, never>, {
+    state: AccountStateSnapshot;
+    snapshot: IntegrationSnapshot;
+  }>;
+  "account.login.start": RpcDefinition<AccountLoginStartInput, {
+    login: AccountLoginStartResponse;
+    state: AccountStateSnapshot;
+    snapshot: IntegrationSnapshot;
+  }>;
+  "account.login.cancel": RpcDefinition<{ loginId: string }, {
+    status: AccountLoginCancelStatus;
+    state: AccountStateSnapshot;
+    snapshot: IntegrationSnapshot;
+  }>;
+  "account.logout": RpcDefinition<Record<string, never>, {
+    state: AccountStateSnapshot;
+    snapshot: IntegrationSnapshot;
+  }>;
   "thread.open": RpcDefinition<{ workspaceId: string }, { thread: WorkbenchThread }>;
   "thread.resume": RpcDefinition<{ threadId: string }, { thread: WorkbenchThread }>;
   "thread.rename": RpcDefinition<{ threadId: string; name: string }, { ok: true }>;
@@ -71,6 +93,7 @@ export type AppRequestMap = {
     serviceTier: ServiceTier | null;
     approvalPolicy: string | null;
     sandboxMode: string | null;
+    forcedLoginMethod: import("./domain.js").ForcedLoginMethod | null;
   }, { snapshot: IntegrationSnapshot }>;
   "workspace.git.read": RpcDefinition<{
     workspaceId: string;

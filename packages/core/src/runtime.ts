@@ -1,4 +1,8 @@
 import type {
+  AccountLoginCancelStatus,
+  AccountLoginStartInput,
+  AccountLoginStartResponse,
+  AccountStateSnapshot,
   AccountSummary,
   ApprovalPolicy,
   CommandSessionSnapshot,
@@ -133,6 +137,10 @@ export interface SessionRuntime {
   subscribe(listener: SessionRuntimeListener): () => void;
   getStatus(): RuntimeStatus;
   getAccountSummary(force?: boolean): Promise<AccountSummary>;
+  readAccountState(): Promise<AccountStateSnapshot>;
+  loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse>;
+  cancelAccountLogin(loginId: string): Promise<AccountLoginCancelStatus>;
+  logoutAccount(): Promise<void>;
   listModels(): Promise<Array<ModelOption>>;
   listThreads(archived: boolean): Promise<Array<RuntimeThreadRecord>>;
   listLoadedThreadIds(): Promise<Array<string>>;

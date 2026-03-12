@@ -1,10 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
+import { AppError } from "@webcli/contracts";
 import type {
   AccountUsageWindow,
+  AccountLoginCancelStatus,
+  AccountLoginStartInput,
+  AccountLoginStartResponse,
+  AccountStateSnapshot,
   AccountSummary,
   ApprovalPolicy,
   ConfigSnapshot,
+  ForcedLoginMethod,
   FuzzySearchSnapshot,
   GitBranchReference,
   GitWorkingTreeSnapshot,
@@ -35,6 +42,8 @@ import type { CommandExecResponse } from "./generated/v2/CommandExecResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
 import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { GetAccountRateLimitsResponse } from "./generated/v2/GetAccountRateLimitsResponse";
+import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
+import type { CancelLoginAccountResponse } from "./generated/v2/CancelLoginAccountResponse";
 import type { ListMcpServerStatusResponse } from "./generated/v2/ListMcpServerStatusResponse";
 import type { McpServerOauthLoginResponse } from "./generated/v2/McpServerOauthLoginResponse";
 import type { ModelListResponse } from "./generated/v2/ModelListResponse";
@@ -91,6 +100,10 @@ type BridgeOptions = {
   codexCommand: string;
 };
 
+type PendingDeviceCodeLogin = {
+  child: ReturnType<typeof spawn>;
+};
+
 export class CodexRuntime implements SessionRuntime {
   private child: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<void> | null = null;
@@ -100,6 +113,8 @@ export class CodexRuntime implements SessionRuntime {
   private readonly listeners = new Set<SessionRuntimeListener>();
   private readonly pendingRequests = new Map<RequestId, PendingRequest>();
   private readonly pendingServerRequests = new Map<RequestId, PendingServerRequest>();
+  private readonly pendingDeviceCodeLogins = new Map<string, PendingDeviceCodeLogin>();
+  private readonly canceledDeviceCodeLogins = new Set<string>();
   private account: AccountSummary = {
     authenticated: false,
     requiresOpenaiAuth: true,
@@ -143,6 +158,12 @@ export class CodexRuntime implements SessionRuntime {
       this.restartTimer = null;
     }
 
+    for (const login of this.pendingDeviceCodeLogins.values()) {
+      login.child.kill();
+    }
+    this.pendingDeviceCodeLogins.clear();
+    this.canceledDeviceCodeLogins.clear();
+
     if (this.child) {
       this.child.kill();
     }
@@ -158,6 +179,96 @@ export class CodexRuntime implements SessionRuntime {
     }
 
     return { ...this.account };
+  }
+
+  async readAccountState(): Promise<AccountStateSnapshot> {
+    const [account, authStatus] = await Promise.all([
+      this.getAccountSummary(true),
+      this.readAuthStatusSnapshot(),
+    ]);
+    return {
+      account,
+      authStatus,
+    };
+  }
+
+  async loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse> {
+    try {
+      switch (input.type) {
+        case "chatgpt": {
+          const response = await this.call<LoginAccountResponse, "account/login/start">(
+            "account/login/start",
+            { type: "chatgpt" },
+          );
+          if (response.type !== "chatgpt") {
+            throw new Error("Unexpected login response");
+          }
+          return {
+            type: "chatgpt",
+            loginId: response.loginId,
+            authUrl: response.authUrl,
+          };
+        }
+        case "deviceCode":
+          return this.startDeviceCodeLogin();
+        case "apiKey": {
+          const response = await this.call<LoginAccountResponse, "account/login/start">(
+            "account/login/start",
+            { type: "apiKey", apiKey: input.apiKey },
+          );
+          if (response.type !== "apiKey") {
+            throw new Error("Unexpected login response");
+          }
+          await this.refreshAccountSummary();
+          this.emit({ type: "account.updated", account: { ...this.account } });
+          this.emitStatus();
+          return { type: "apiKey" };
+        }
+        case "chatgptAuthTokens": {
+          const response = await this.call<LoginAccountResponse, "account/login/start">(
+            "account/login/start",
+            {
+              type: "chatgptAuthTokens",
+              accessToken: input.accessToken,
+              chatgptAccountId: input.chatgptAccountId,
+              chatgptPlanType: input.chatgptPlanType ?? null,
+            },
+          );
+          if (response.type !== "chatgptAuthTokens") {
+            throw new Error("Unexpected login response");
+          }
+          await this.refreshAccountSummary();
+          this.emit({ type: "account.updated", account: { ...this.account } });
+          this.emitStatus();
+          return { type: "chatgptAuthTokens" };
+        }
+      }
+    } catch (error) {
+      throw normalizeAccountLoginError(input.type, error);
+    }
+  }
+
+  async cancelAccountLogin(loginId: string): Promise<AccountLoginCancelStatus> {
+    const pendingDeviceCodeLogin = this.pendingDeviceCodeLogins.get(loginId);
+    if (pendingDeviceCodeLogin) {
+      this.canceledDeviceCodeLogins.add(loginId);
+      this.pendingDeviceCodeLogins.delete(loginId);
+      pendingDeviceCodeLogin.child.kill();
+      return "canceled";
+    }
+
+    const response = await this.call<CancelLoginAccountResponse, "account/login/cancel">(
+      "account/login/cancel",
+      { loginId },
+    );
+    return response.status;
+  }
+
+  async logoutAccount(): Promise<void> {
+    await this.call("account/logout", undefined);
+    await this.refreshAccountSummary();
+    this.emit({ type: "account.updated", account: { ...this.account } });
+    this.emitStatus();
   }
 
   async listModels(): Promise<Array<ModelOption>> {
@@ -400,6 +511,7 @@ export class CodexRuntime implements SessionRuntime {
       serviceTier: response.config.service_tier ?? null,
       approvalPolicy: normalizeApprovalPolicy(response.config.approval_policy),
       sandboxMode: normalizeSandboxMode(response.config.sandbox_mode),
+      forcedLoginMethod: normalizeForcedLoginMethod(response.config.forced_login_method),
     };
   }
 
@@ -700,6 +812,17 @@ export class CodexRuntime implements SessionRuntime {
     }
 
     await this.startPromise;
+  }
+
+  private async readAuthStatusSnapshot() {
+    const authStatus = await this.call<GetAuthStatusResponse, "getAuthStatus">("getAuthStatus", {
+      includeToken: false,
+      refreshToken: false,
+    });
+    return {
+      authMethod: authStatus.authMethod ?? null,
+      requiresOpenaiAuth: authStatus.requiresOpenaiAuth ?? false,
+    };
   }
 
   private writeMessage(message: JsonRpcMessage): void {
@@ -1177,6 +1300,134 @@ export class CodexRuntime implements SessionRuntime {
     return data;
   }
 
+  private async startDeviceCodeLogin(): Promise<AccountLoginStartResponse> {
+    const loginId = randomUUID();
+    const child = spawn(this.options.codexCommand, ["login", "--device-auth"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        FORCE_COLOR: "0",
+        NO_COLOR: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    this.pendingDeviceCodeLogins.set(loginId, { child });
+
+    let output = "";
+    let settled = false;
+
+    return new Promise<AccountLoginStartResponse>((resolve, reject) => {
+      const startupTimer = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        this.pendingDeviceCodeLogins.delete(loginId);
+        child.kill();
+        reject(
+          new AppError(
+            "account.device_code_start_failed",
+            "Failed to read device code login instructions",
+          ),
+        );
+      }, 10_000);
+
+      const maybeResolve = () => {
+        if (settled) {
+          return;
+        }
+
+        const parsed = parseDeviceCodePrompt(output);
+        if (!parsed.verificationUrl || !parsed.userCode) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(startupTimer);
+        resolve({
+          type: "deviceCode",
+          loginId,
+          verificationUrl: parsed.verificationUrl,
+          userCode: parsed.userCode,
+          expiresAt: parsed.expiresAt,
+        });
+      };
+
+      const handleChunk = (chunk: string) => {
+        output += stripAnsi(chunk);
+        maybeResolve();
+      };
+
+      child.stdout.on("data", (chunk) => {
+        handleChunk(chunk.toString());
+      });
+
+      child.stderr.on("data", (chunk) => {
+        handleChunk(chunk.toString());
+      });
+
+      child.once("error", (error) => {
+        clearTimeout(startupTimer);
+        this.pendingDeviceCodeLogins.delete(loginId);
+        if (!settled) {
+          settled = true;
+          reject(new AppError("account.device_code_start_failed", error.message));
+          return;
+        }
+        this.setLastError(error.message);
+      });
+
+      child.once("exit", (code, signal) => {
+        clearTimeout(startupTimer);
+        void this.handleDeviceCodeLoginExit(loginId, code, signal, output, settled, reject);
+      });
+    });
+  }
+
+  private async handleDeviceCodeLoginExit(
+    loginId: string,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    output: string,
+    settled: boolean,
+    reject: (error: Error) => void,
+  ): Promise<void> {
+    const wasCanceled = this.canceledDeviceCodeLogins.delete(loginId);
+    this.pendingDeviceCodeLogins.delete(loginId);
+
+    if (wasCanceled) {
+      return;
+    }
+
+    if (!settled) {
+      reject(
+        new AppError(
+          "account.device_code_start_failed",
+          output.trim() || `codex login --device-auth exited (${signal ?? code ?? "unknown"})`,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await this.refreshAccountSummary();
+      this.emit({ type: "account.updated", account: { ...this.account } });
+      this.emitStatus();
+    } catch (error) {
+      if (error instanceof Error) {
+        this.setLastError(error.message);
+      }
+      return;
+    }
+
+    if (code !== 0 || signal !== null) {
+      this.setLastError(
+        output.trim() || `Device code login exited (${signal ?? "code"}:${code ?? "unknown"})`,
+      );
+    }
+  }
+
   private setLastError(message: string): void {
     this.status = {
       ...this.status,
@@ -1630,6 +1881,71 @@ function normalizeSandboxMode(
   }
 
   return null;
+}
+
+function normalizeForcedLoginMethod(
+  value: string | null | undefined,
+): ForcedLoginMethod | null {
+  if (value === "chatgpt" || value === "api") {
+    return value;
+  }
+
+  return null;
+}
+
+function normalizeAccountLoginError(
+  type: AccountLoginStartInput["type"],
+  error: unknown,
+) {
+  if (error instanceof AppError) {
+    return error;
+  }
+
+  if (!(error instanceof Error)) {
+    return error;
+  }
+
+  const message = error.message.toLowerCase();
+  if (
+    type === "apiKey" &&
+    (message.includes("api key") || message.includes("invalid_api_key") || message.includes("unauthorized") || message.includes("401"))
+  ) {
+    return new AppError("account.api_key_invalid", error.message);
+  }
+
+  if (
+    type === "chatgptAuthTokens" &&
+    (message.includes("token") || message.includes("jwt") || message.includes("account id") || message.includes("chatgpt"))
+  ) {
+    return new AppError("account.chatgpt_tokens_invalid", error.message);
+  }
+
+  if (type === "deviceCode") {
+    return new AppError("account.device_code_start_failed", error.message);
+  }
+
+  return error;
+}
+
+function stripAnsi(value: string): string {
+  return value
+    .replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "");
+}
+
+function parseDeviceCodePrompt(output: string): {
+  verificationUrl: string | null;
+  userCode: string | null;
+  expiresAt: number | null;
+} {
+  const verificationUrl = output.match(/https:\/\/auth\.openai\.com\/codex\/device\S*/i)?.[0] ?? null;
+  const userCode = output.match(/\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b/)?.[1] ?? null;
+  const minutes = output.match(/expires in (\d+) minutes?/i)?.[1];
+  return {
+    verificationUrl,
+    userCode,
+    expiresAt: minutes ? Date.now() + Number.parseInt(minutes, 10) * 60_000 : null,
+  };
 }
 
 function normalizeSessionSource(source: Thread["source"]): string {

@@ -14,7 +14,7 @@ export const defaultConnection = {
 
 export const defaultIntegrations: IntegrationState = {
   settingsOpen: false,
-  settingsTab: "general",
+  settingsTab: "account",
   authStatus: null,
   config: null,
   mcpServers: [],
