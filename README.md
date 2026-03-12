@@ -66,6 +66,12 @@ Deployment assets and instructions live in:
 deploy/staging/README.md
 ```
 
+Manual GitHub Actions deploy support is defined in:
+
+```bash
+.github/workflows/deploy-staging.yml
+```
+
 ## Test
 
 ```bash
