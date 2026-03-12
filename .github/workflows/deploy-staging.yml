@@ -76,8 +76,19 @@ jobs:
       - name: Verify staging endpoints
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location "${STAGING_API_HEALTH_URL}"
-          curl --fail --silent --show-error --location --head "${STAGING_APP_URL}"
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --location "${STAGING_API_HEALTH_URL}" >/dev/null \
+              && curl --fail --silent --show-error --location --head "${STAGING_APP_URL}" >/dev/null; then
+              exit 0
+            fi
+
+            if [[ "${attempt}" -eq 12 ]]; then
+              echo "Staging endpoints did not become healthy in time." >&2
+              exit 1
+            fi
+
+            sleep 5
+          done
 
       - name: Publish summary
         run: |
