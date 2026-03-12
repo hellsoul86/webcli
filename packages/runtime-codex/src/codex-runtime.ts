@@ -14,6 +14,8 @@ import type {
   ForcedLoginMethod,
   FuzzySearchSnapshot,
   GitBranchReference,
+  GitFileReviewDetail,
+  GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
@@ -69,7 +71,12 @@ import {
   type JsonRpcError,
   type JsonRpcMessage,
 } from "./jsonrpc.js";
-import { readGitBranches, readGitWorkingTreeSnapshot, switchGitBranch } from "./git-working-tree.js";
+import {
+  readGitBranches,
+  readGitFileReviewDetail,
+  readGitWorkingTreeSnapshot,
+  switchGitBranch,
+} from "./git-working-tree.js";
 import {
   type ClientRequestMethod,
   type ClientRequestParams,
@@ -668,6 +675,13 @@ export class CodexRuntime implements SessionRuntime {
 
   async switchWorkspaceGitBranch(cwd: string, branch: string): Promise<void> {
     await switchGitBranch(cwd, branch);
+  }
+
+  async readWorkspaceGitFileDetail(
+    cwd: string,
+    file: GitWorkingTreeFile,
+  ): Promise<GitFileReviewDetail> {
+    return readGitFileReviewDetail(cwd, file);
   }
 
   async resolveApproval(

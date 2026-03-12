@@ -31,8 +31,15 @@ test("creates a workspace, opens a thread, and replays approvals after reload", 
 
   await page.getByTestId("git-workbench-open-button").click();
   await expect(page.getByTestId("git-workbench")).toBeVisible();
-  await expect(page.getByTestId("git-workbench")).toContainText("README.md");
-  await expect(page.getByTestId("git-workbench")).toContainText("new line");
+  await expect(page.getByTestId("git-review-group-conflicted")).toBeVisible();
+  await expect(page.getByTestId("git-review-group-staged-unstaged")).toBeVisible();
+  await expect(page.getByTestId("git-review-fallback")).toBeVisible();
+  const stagedUnstagedGroup = page.getByTestId("git-review-group-staged-unstaged");
+  await stagedUnstagedGroup.getByRole("button", { name: /web/i }).click();
+  await stagedUnstagedGroup.getByRole("button", { name: /src/i }).click();
+  await stagedUnstagedGroup.getByRole("button", { name: /App.tsx/i }).click();
+  await expect(page.getByTestId("git-review-path")).toContainText("App.tsx");
+  await expect(page.getByTestId("git-review-diff-viewer")).toBeVisible();
   await page.getByRole("button", { name: "返回会话" }).click();
 
   const approvalCard = page.locator('[data-testid^="approval-card-"]').first();

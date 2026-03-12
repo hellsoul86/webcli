@@ -365,6 +365,10 @@ export class WorkbenchService {
         return this.handleWorkspaceGitBranchSwitch(
           message.params as AppRequestParams<"workspace.git.branch.switch">,
         );
+      case "workspace.git.file.read":
+        return this.handleWorkspaceGitFileRead(
+          message.params as AppRequestParams<"workspace.git.file.read">,
+        );
       case "workspace.searchFiles":
         return this.handleWorkspaceSearch(
           message.params as AppRequestParams<"workspace.searchFiles">,
@@ -685,6 +689,38 @@ export class WorkbenchService {
       snapshot,
       branches: branchState.branches,
       currentBranch: branchState.currentBranch,
+    };
+  }
+
+  private async handleWorkspaceGitFileRead(
+    params: { workspaceId: string; path: string },
+  ): Promise<{ detail: import("@webcli/contracts").GitFileReviewDetail }> {
+    const workspace = await this.resolveWorkspace(params.workspaceId);
+    if (!workspace) {
+      throw new AppError("workspace.not_found", "Workspace not found");
+    }
+
+    let snapshot = this.workspaceGitSnapshots.get(workspace.id);
+    let file = snapshot?.files.find((entry) => entry.path === params.path) ?? null;
+
+    if (!snapshot || !file) {
+      snapshot = await this.runtime.readWorkspaceGitSnapshot(
+        workspace.absPath,
+        workspace.id,
+        workspace.name,
+      );
+      this.workspaceGitSnapshots.set(workspace.id, snapshot);
+      file = snapshot.files.find((entry) => entry.path === params.path) ?? null;
+    }
+
+    if (!file) {
+      throw new AppError("git.file_not_found", "Git file not found", {
+        path: params.path,
+      });
+    }
+
+    return {
+      detail: await this.runtime.readWorkspaceGitFileDetail(workspace.absPath, file),
     };
   }
 

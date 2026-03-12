@@ -9,6 +9,8 @@ import type {
   ConfigSnapshot,
   FuzzySearchSnapshot,
   GitBranchReference,
+  GitFileReviewDetail,
+  GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
@@ -185,6 +187,7 @@ export interface SessionRuntime {
     cwd: string,
   ): Promise<{ branches: Array<GitBranchReference>; currentBranch: string | null }>;
   switchWorkspaceGitBranch(cwd: string, branch: string): Promise<void>;
+  readWorkspaceGitFileDetail(cwd: string, file: GitWorkingTreeFile): Promise<GitFileReviewDetail>;
   loginMcp(name: string): Promise<string>;
   reloadMcp(): Promise<void>;
   uninstallPlugin(pluginId: string): Promise<void>;

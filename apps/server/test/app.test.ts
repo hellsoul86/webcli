@@ -15,6 +15,8 @@ import type {
   ConfigSnapshot,
   FuzzySearchSnapshot,
   GitBranchReference,
+  GitFileReviewDetail,
+  GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
@@ -370,6 +372,13 @@ class FakeRuntime implements SessionRuntime {
     this.gitCurrentBranch = branch;
   }
 
+  async readWorkspaceGitFileDetail(
+    _cwd: string,
+    file: GitWorkingTreeFile,
+  ): Promise<GitFileReviewDetail> {
+    return makeGitFileReviewDetail(file);
+  }
+
   async loginMcp(): Promise<string> {
     return "https://example.com/auth";
   }
@@ -573,6 +582,29 @@ describe("createApp", () => {
         : null
     ) as GitWorkingTreeSnapshot | null;
     expect(gitSnapshot?.workspaceId).toBe(savedWorkspace.id);
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "git-file-read-1",
+        method: "workspace.git.file.read",
+        params: {
+          workspaceId: savedWorkspace.id,
+          path: "README.md",
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "git-file-read-1"));
+    const gitFileReadResponse = getResponse(sessionAMessages, "git-file-read-1");
+    expect(gitFileReadResponse?.result && "detail" in gitFileReadResponse.result).toBe(true);
+    expect(
+      gitFileReadResponse?.result &&
+        "detail" in gitFileReadResponse.result &&
+        gitFileReadResponse.result.detail.mode === "inline-diff"
+        ? gitFileReadResponse.result.detail.modifiedText
+        : null,
+    ).toContain("new");
 
     const openedThreadId = runtime.activeThreads[0]?.id;
     expect(openedThreadId).toBeTruthy();
@@ -915,6 +947,30 @@ function makeGitSnapshot(
         oldPath: null,
       },
     ],
+  };
+}
+
+function makeGitFileReviewDetail(file: GitWorkingTreeFile): GitFileReviewDetail {
+  if (file.path === "README.md") {
+    return {
+      path: file.path,
+      oldPath: file.oldPath ?? null,
+      status: file.status,
+      language: "markdown",
+      mode: "inline-diff",
+      originalText: "old\n",
+      modifiedText: "new\nline\n",
+    };
+  }
+
+  return {
+    path: file.path,
+    oldPath: file.oldPath ?? null,
+    status: file.status,
+    language: "plaintext",
+    mode: "patch",
+    patch: file.patch,
+    reason: "Patch fallback",
   };
 }
 

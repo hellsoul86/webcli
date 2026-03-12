@@ -14,6 +14,8 @@ export type AppErrorCode =
   | "thread.not_found"
   | "approval.not_pending"
   | "git.not_repo"
+  | "git.file_not_found"
+  | "git.file_read_failed"
   | "git.branch_switch_failed"
   | "account.api_key_invalid"
   | "account.login_canceled"
@@ -272,6 +274,26 @@ export type GitBranchReference = {
   name: string;
   current: boolean;
 };
+
+export type GitFileReviewDetail =
+  | {
+      path: string;
+      oldPath: string | null;
+      status: GitWorkingTreeFileStatus;
+      language: string | null;
+      mode: "inline-diff";
+      originalText: string;
+      modifiedText: string;
+    }
+  | {
+      path: string;
+      oldPath: string | null;
+      status: GitWorkingTreeFileStatus;
+      language: string | null;
+      mode: "patch" | "binary" | "unavailable";
+      patch: string;
+      reason: string;
+    };
 
 export type WorkbenchThread = {
   thread: ThreadSummary;

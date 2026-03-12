@@ -12,6 +12,9 @@ describe("localized errors", () => {
     expect(localizeError(new AppError("git.not_repo", "Current project is not a Git repository"))).toBe(
       "当前项目不是 Git 仓库。",
     );
+    expect(localizeError(new AppError("git.file_not_found", "Missing file"))).toBe(
+      "找不到这个 Git 文件。",
+    );
     expect(localizeError(new AppError("account.api_key_invalid", "Invalid API key"))).toBe(
       "API Key 无效。",
     );
@@ -25,6 +28,9 @@ describe("localized errors", () => {
     expect(
       localizeError(new AppError("workspace.not_directory", "Workspace path is not a directory")),
     ).toBe("Workspace path is not a directory.");
+    expect(localizeError(new AppError("git.file_read_failed", "Failed to read file"))).toBe(
+      "Failed to read Git file contents.",
+    );
     expect(localizeError(new AppError("account.chatgpt_tokens_invalid", "Invalid tokens"))).toBe(
       "The ChatGPT Auth Tokens are invalid.",
     );

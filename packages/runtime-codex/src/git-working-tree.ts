@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { extname, join } from "node:path";
 import { AppError } from "@webcli/contracts";
 import type {
   GitBranchReference,
+  GitFileReviewDetail,
   GitWorkingTreeFile,
   GitWorkingTreeFileStatus,
   GitWorkingTreeSnapshot,
@@ -24,6 +27,12 @@ type StatusRecord = {
 type CommandResult = {
   code: number;
   stdout: string;
+  stderr: string;
+};
+
+type BufferCommandResult = {
+  code: number;
+  stdout: Buffer;
   stderr: string;
 };
 
@@ -151,6 +160,68 @@ export async function switchGitBranch(cwd: string, branch: string): Promise<void
       switchResult.stderr.trim() || `Failed to switch Git branch to ${branch}`,
       { branch },
     );
+  }
+}
+
+export async function readGitFileReviewDetail(
+  cwd: string,
+  file: GitWorkingTreeFile,
+): Promise<GitFileReviewDetail> {
+  const repoRootResult = await runCommand(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    cwd,
+    [0, 128],
+  );
+
+  if (repoRootResult.code !== 0) {
+    throw new AppError("git.not_repo", "Current project is not a Git repository");
+  }
+
+  const repoRoot = repoRootResult.stdout.trim();
+  const language = inferGitFileLanguage(file.path);
+  const fallbackPatch = file.patch || "";
+
+  if (file.status === "conflicted") {
+    return {
+      path: file.path,
+      oldPath: file.oldPath ?? null,
+      status: file.status,
+      language,
+      mode: "patch",
+      patch: fallbackPatch,
+      reason: "Merge conflicts are shown as raw patch output.",
+    };
+  }
+
+  if (file.status === "copied" || file.status === "typechange") {
+    return {
+      path: file.path,
+      oldPath: file.oldPath ?? null,
+      status: file.status,
+      language,
+      mode: "patch",
+      patch: fallbackPatch,
+      reason: "This change is shown as raw patch output.",
+    };
+  }
+
+  try {
+    const detail = await buildGitFileReviewDetail(repoRoot, file, language);
+    return detail;
+  } catch (error) {
+    return {
+      path: file.path,
+      oldPath: file.oldPath ?? null,
+      status: file.status,
+      language,
+      mode: "unavailable",
+      patch: fallbackPatch,
+      reason:
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to load file contents for inline diff.",
+    };
   }
 }
 
@@ -362,6 +433,198 @@ function trimTrailingNewline(value: string): string {
   return value.replace(/\n+$/u, "");
 }
 
+async function buildGitFileReviewDetail(
+  repoRoot: string,
+  file: GitWorkingTreeFile,
+  language: string | null,
+): Promise<GitFileReviewDetail> {
+  const [originalBuffer, modifiedBuffer] = await Promise.all([
+    readGitOriginalBuffer(repoRoot, file),
+    readGitModifiedBuffer(repoRoot, file),
+  ]);
+
+  const originalText = decodeGitTextBuffer(originalBuffer);
+  const modifiedText = decodeGitTextBuffer(modifiedBuffer);
+
+  if (originalText === null || modifiedText === null) {
+    return {
+      path: file.path,
+      oldPath: file.oldPath ?? null,
+      status: file.status,
+      language,
+      mode: "binary",
+      patch: file.patch || "",
+      reason: "Binary or non-text content cannot be rendered as inline diff.",
+    };
+  }
+
+  return {
+    path: file.path,
+    oldPath: file.oldPath ?? null,
+    status: file.status,
+    language,
+    mode: "inline-diff",
+    originalText,
+    modifiedText,
+  };
+}
+
+async function readGitOriginalBuffer(repoRoot: string, file: GitWorkingTreeFile): Promise<Buffer> {
+  switch (file.status) {
+    case "added":
+    case "untracked":
+      return Buffer.alloc(0);
+    case "renamed":
+      return readGitObjectBuffer(repoRoot, file.oldPath ?? file.path);
+    case "deleted":
+    case "modified":
+      return readGitObjectBuffer(repoRoot, file.path);
+    default:
+      return Buffer.alloc(0);
+  }
+}
+
+async function readGitModifiedBuffer(repoRoot: string, file: GitWorkingTreeFile): Promise<Buffer> {
+  switch (file.status) {
+    case "deleted":
+      return Buffer.alloc(0);
+    case "modified":
+    case "added":
+    case "untracked":
+    case "renamed":
+      return readWorkingTreeBuffer(repoRoot, file.path);
+    default:
+      return Buffer.alloc(0);
+  }
+}
+
+async function readGitObjectBuffer(repoRoot: string, path: string): Promise<Buffer> {
+  if (!path) {
+    return Buffer.alloc(0);
+  }
+
+  const result = await runCommandBuffer(
+    "git",
+    ["show", `HEAD:${path}`],
+    repoRoot,
+    [0],
+  );
+  return result.stdout;
+}
+
+async function readWorkingTreeBuffer(repoRoot: string, path: string): Promise<Buffer> {
+  try {
+    return await readFile(join(repoRoot, path));
+  } catch {
+    throw new AppError("git.file_read_failed", "Unable to read file from working tree", {
+      path,
+    });
+  }
+}
+
+function decodeGitTextBuffer(buffer: Buffer): string | null {
+  if (buffer.length === 0) {
+    return "";
+  }
+
+  if (buffer.includes(0)) {
+    return null;
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return null;
+  }
+}
+
+function inferGitFileLanguage(path: string): string | null {
+  const normalized = path.replace(/\\/g, "/");
+  const fileName = normalized.split("/").pop()?.toLowerCase() ?? "";
+  const extension = extname(fileName).toLowerCase();
+
+  if (fileName === "dockerfile") {
+    return "dockerfile";
+  }
+  if (fileName === "makefile") {
+    return "makefile";
+  }
+  if (fileName.endsWith(".test.ts") || fileName.endsWith(".spec.ts") || extension === ".ts") {
+    return "typescript";
+  }
+  if (fileName.endsWith(".test.tsx") || fileName.endsWith(".spec.tsx") || extension === ".tsx") {
+    return "typescript";
+  }
+  if (extension === ".js" || extension === ".mjs" || extension === ".jsx") {
+    return "javascript";
+  }
+  if (extension === ".json") {
+    return "json";
+  }
+  if (extension === ".md") {
+    return "markdown";
+  }
+  if (extension === ".py") {
+    return "python";
+  }
+  if (extension === ".rs") {
+    return "rust";
+  }
+  if (extension === ".go") {
+    return "go";
+  }
+  if (extension === ".java") {
+    return "java";
+  }
+  if (extension === ".css" || extension === ".scss") {
+    return "css";
+  }
+  if (extension === ".html") {
+    return "html";
+  }
+  if (extension === ".xml") {
+    return "xml";
+  }
+  if (extension === ".yml" || extension === ".yaml") {
+    return "yaml";
+  }
+  if (extension === ".sh") {
+    return "shell";
+  }
+  if (extension === ".sql") {
+    return "sql";
+  }
+  if (extension === ".toml") {
+    return "ini";
+  }
+  if (extension === ".php") {
+    return "php";
+  }
+  if (extension === ".rb") {
+    return "ruby";
+  }
+  if (extension === ".swift") {
+    return "swift";
+  }
+  if (extension === ".kt" || extension === ".kts") {
+    return "kotlin";
+  }
+  if (extension === ".cpp" || extension === ".cc" || extension === ".hpp" || extension === ".h") {
+    return "cpp";
+  }
+  if (extension === ".c") {
+    return "c";
+  }
+  if (extension === ".lua") {
+    return "lua";
+  }
+  if (extension === ".txt") {
+    return "plaintext";
+  }
+
+  return extension ? "plaintext" : null;
+}
+
 async function runCommand(
   command: string,
   args: Array<string>,
@@ -406,6 +669,55 @@ async function runCommand(
       resolve({
         code: exitCode,
         stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+async function runCommandBuffer(
+  command: string,
+  args: Array<string>,
+  cwd: string,
+  acceptedExitCodes: Array<number>,
+): Promise<BufferCommandResult> {
+  return new Promise<BufferCommandResult>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdoutChunks: Array<Buffer> = [];
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      const exitCode = code ?? -1;
+      if (!acceptedExitCodes.includes(exitCode)) {
+        reject(
+          new Error(
+            stderr.trim() || `${command} ${args.join(" ")} failed with exit code ${exitCode}`,
+          ),
+        );
+        return;
+      }
+
+      resolve({
+        code: exitCode,
+        stdout: Buffer.concat(stdoutChunks),
         stderr,
       });
     });
