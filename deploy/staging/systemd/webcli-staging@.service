@@ -1,0 +1,22 @@
+[Unit]
+Description=WebCLI staging server for %i
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/srv/webcli-staging/current
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/etc/webcli-staging.env
+Environment=HOST=127.0.0.1
+Environment=PORT=4000
+Environment=CODEX_COMMAND=codex
+Environment=WEBCLI_DATA_DIR=/srv/webcli-staging/shared/data
+ExecStart=/usr/bin/env npm run start -w @webcli/server
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
