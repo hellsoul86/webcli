@@ -47,6 +47,25 @@ npm run start -w @webcli/server
 
 If `apps/web/dist` exists, the Fastify server will also serve the built SPA.
 
+## Staging Deploy
+
+The staging deployment target uses:
+
+- Alibaba Cloud origin host
+- Nginx for static files and reverse proxy
+- Cloudflare for proxied DNS and TLS
+
+Current public staging endpoints:
+
+- `https://staging.webcli.royding.ai`
+- `https://api.staging.webcli.royding.ai/api/health`
+
+Deployment assets and instructions live in:
+
+```bash
+deploy/staging/README.md
+```
+
 ## Test
 
 ```bash

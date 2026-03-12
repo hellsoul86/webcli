@@ -1,6 +1,6 @@
-export * from "./generated/index";
-export type { GetAccountParams } from "./generated/v2/GetAccountParams";
-export type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
-export * from "./jsonrpc";
-export * from "./ws";
+export * from "./generated/index.js";
+export type { GetAccountParams } from "./generated/v2/GetAccountParams.js";
+export type { GetAccountResponse } from "./generated/v2/GetAccountResponse.js";
+export * from "./jsonrpc.js";
+export * from "./ws.js";
 export * from "./codex-runtime.js";

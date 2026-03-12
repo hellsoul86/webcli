@@ -14,6 +14,8 @@
     "build:workspaces": "npm run build --workspaces --if-present",
     "dev": "npm run build -w @webcli/contracts && npm run build -w @webcli/core && npm run build -w @webcli/runtime-codex && concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @webcli/server\" \"npm run dev -w @webcli/web\"",
     "build": "npm run build:workspaces",
+    "deploy:staging": "bash ./deploy/staging/bin/deploy.sh",
+    "deploy:staging:rollback": "bash ./deploy/staging/bin/rollback.sh",
     "test:repo": "node --test ./scripts/task-workflow.test.mjs",
     "test:workspaces": "npm run test --workspaces --if-present",
     "test": "npm run test:repo && npm run test:workspaces",
