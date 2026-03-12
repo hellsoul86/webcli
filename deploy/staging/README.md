@@ -9,33 +9,41 @@ This directory contains the staging deployment scaffold for the following layout
 
 ## Domains
 
-- Primary app: `webcli-staging.royding.ai`
-- API/ops endpoint: `api.webcli-staging.royding.ai`
+- Primary app: `staging.webcli.royding.ai`
+- API/ops endpoint: `api.staging.webcli.royding.ai`
+- Legacy compatibility aliases:
+  - `webcli-staging.royding.ai`
+  - `api.webcli-staging.royding.ai`
 
-The browser should only use `https://webcli-staging.royding.ai`.
+The browser should only use `https://staging.webcli.royding.ai`.
 
 ## Cloudflare
 
 Configure both records as `Proxied` A records pointing to the staging origin IP:
+
+- `staging.webcli.royding.ai`
+- `api.staging.webcli.royding.ai`
+
+The previous hostnames can stay in place as compatibility aliases:
 
 - `webcli-staging.royding.ai`
 - `api.webcli-staging.royding.ai`
 
 Recommended TLS mode: `Full (strict)`.
 
-The API hostname is nested under `webcli-staging`, so the Cloudflare edge certificate must
+The API hostname is nested under `staging.webcli`, so the Cloudflare edge certificate must
 explicitly cover either:
 
-- `api.webcli-staging.royding.ai`
-- or `*.webcli-staging.royding.ai`
+- `api.staging.webcli.royding.ai`
+- or `*.staging.webcli.royding.ai`
 
-`*.royding.ai` alone is not enough for `api.webcli-staging.royding.ai`.
+`*.royding.ai` alone is not enough for `api.staging.webcli.royding.ai`.
 
 The current staging setup uses:
 
 - proxied DNS for both hostnames
 - Cloudflare Origin CA on the source host
-- an advanced edge certificate that covers `*.webcli-staging.royding.ai`
+- an advanced edge certificate that covers `*.webcli.royding.ai` and `*.staging.webcli.royding.ai`
 
 ## Source Checkout
 
@@ -171,9 +179,9 @@ sudo WEBCLI_STAGING_SERVICE_INSTANCE=roy bash ./deploy/staging/bin/rollback.sh 2
 
 ## Verification
 
-- `https://webcli-staging.royding.ai/api/health`
-- `https://api.webcli-staging.royding.ai/api/health`
-- open `https://webcli-staging.royding.ai`
+- `https://staging.webcli.royding.ai/api/health`
+- `https://api.staging.webcli.royding.ai/api/health`
+- open `https://staging.webcli.royding.ai`
 - confirm thread bootstrap, streaming turns, and WebSocket connectivity
 
 As of March 12, 2026, these two public endpoints are live and returning successful responses
