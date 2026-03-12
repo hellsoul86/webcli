@@ -149,6 +149,31 @@ git pull --ff-only
 sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> bash ./deploy/staging/bin/deploy.sh
 ```
 
+## GitHub Actions Manual Deploy
+
+The repository also supports a manual GitHub Actions deploy via the `Deploy Staging`
+workflow (`workflow_dispatch` only).
+
+Configure these GitHub Actions variables:
+
+- `STAGING_SSH_HOST=8.216.82.40`
+- `STAGING_SSH_USER=ecs-user`
+- `STAGING_REPO_DIR=/srv/webcli-staging/repo`
+- `STAGING_SERVICE_INSTANCE=ecs-user`
+- `STAGING_APP_URL=https://staging.webcli.royding.ai`
+- `STAGING_API_HEALTH_URL=https://api.staging.webcli.royding.ai/api/health`
+
+Configure these GitHub Actions secrets:
+
+- `STAGING_SSH_PRIVATE_KEY`
+  - the private key that can SSH into the staging host as `ecs-user`
+- `STAGING_SSH_KNOWN_HOSTS`
+  - output of `ssh-keyscan -H 8.216.82.40`
+
+The workflow logs into the staging host over SSH, fast-forwards the server checkout to
+`origin/main`, runs `bash ./deploy/staging/bin/deploy.sh`, and then checks the public
+health endpoint.
+
 ## Rollback
 
 List releases:
