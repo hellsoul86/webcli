@@ -270,6 +270,7 @@ export function App() {
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceRecord | null>(null);
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const [codePreview, setCodePreview] = useState<CodeLinkReference | null>(null);
+  const [codePreviewVisible, setCodePreviewVisible] = useState(false);
   const [imagePreview, setImagePreview] = useState<ImagePreviewReference | null>(null);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Array<string>>([]);
   const [threadMenuId, setThreadMenuId] = useState<string | null>(null);
@@ -304,6 +305,7 @@ export function App() {
   >({});
   const [gitBranchSwitchPending, setGitBranchSwitchPending] = useState(false);
   const autoOpenedWorkspaceModalRef = useRef(false);
+  const codePreviewClearTimerRef = useRef<number | null>(null);
   const sidebarResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const sidebarResizeFrameRef = useRef<number | null>(null);
   const liveSidebarWidthRef = useRef(sidebarWidth);
@@ -367,9 +369,17 @@ export function App() {
   const codePreviewQuery = useQuery({
     queryKey: ["code-preview", codePreview?.path],
     queryFn: () => api.resourceText(codePreview!.path),
-    enabled: Boolean(codePreview?.path),
+    enabled: Boolean(codePreviewVisible && codePreview?.path),
     staleTime: 30_000,
   });
+
+  useEffect(() => {
+    return () => {
+      if (codePreviewClearTimerRef.current !== null) {
+        window.clearTimeout(codePreviewClearTimerRef.current);
+      }
+    };
+  }, []);
 
   const bootstrap = bootstrapQuery.data ?? null;
   const account = bootstrap?.account ?? null;
@@ -1384,11 +1394,23 @@ export function App() {
   }
 
   function openCodePreview(reference: CodeLinkReference): void {
+    if (codePreviewClearTimerRef.current !== null) {
+      window.clearTimeout(codePreviewClearTimerRef.current);
+      codePreviewClearTimerRef.current = null;
+    }
     setCodePreview(reference);
+    setCodePreviewVisible(true);
   }
 
   function closeCodePreview(): void {
-    setCodePreview(null);
+    setCodePreviewVisible(false);
+    if (codePreviewClearTimerRef.current !== null) {
+      window.clearTimeout(codePreviewClearTimerRef.current);
+    }
+    codePreviewClearTimerRef.current = window.setTimeout(() => {
+      setCodePreview(null);
+      codePreviewClearTimerRef.current = null;
+    }, 0);
   }
 
   function openImagePreview(reference: ImagePreviewReference): void {
@@ -2749,7 +2771,7 @@ export function App() {
         />
       ) : null}
 
-      {codePreview ? (
+      {codePreview && codePreviewVisible ? (
         <Suspense fallback={<CodePreviewDialogLoadingState reference={codePreview} onClose={closeCodePreview} />}>
           <LazyCodePreviewDialog
             reference={codePreview}
