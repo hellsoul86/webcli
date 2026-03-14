@@ -66,6 +66,7 @@ import {
   summarizeGitSnapshot,
   type GitFileTreeNode,
 } from "./inspector-helpers";
+import { GitReviewPanel } from "./git-review-panel";
 
 const DEFAULT_SIDEBAR_WIDTH = 326;
 const DEFAULT_INSPECTOR_WIDTH = 360;
@@ -442,27 +443,6 @@ export function App() {
     ? gitBranchesByWorkspaceId[currentGitWorkspaceId] ?? []
     : [];
   const gitFiles = activeGitSnapshot?.files ?? [];
-  const selectedGitFilePath =
-    currentGitWorkspaceId && gitFiles.length > 0
-      ? resolvePreferredSelection(
-          gitFiles.map((file) => file.path),
-          selectedGitFileByWorkspaceId[currentGitWorkspaceId],
-        )
-      : null;
-  const selectedGitFile =
-    gitFiles.find((file) => file.path === selectedGitFilePath) ?? gitFiles[0] ?? null;
-  const gitDiffStats = useMemo(
-    () =>
-      gitFiles.reduce(
-        (totals, file) => ({
-          files: totals.files + 1,
-          additions: totals.additions + file.additions,
-          deletions: totals.deletions + file.deletions,
-        }),
-        { files: 0, additions: 0, deletions: 0 },
-      ),
-    [gitFiles],
-  );
   const reviewThreadId =
     activeThreadEntry && activeThreadEntry.workspaceId === currentGitWorkspaceId
       ? activeThreadEntry.id
@@ -1761,6 +1741,18 @@ export function App() {
     }
   }
 
+  async function handleReadGitFileDetail(path: string) {
+    if (!currentGitWorkspaceId) {
+      throw new Error(t("git.noCurrentProjectDetail"));
+    }
+
+    const response = await codexClient.call("workspace.git.file.read", {
+      workspaceId: currentGitWorkspaceId,
+      path,
+    });
+    return response.detail;
+  }
+
   async function handleForkThread(thread: ThreadSummary): Promise<void> {
     setBusyMessage(t("composer.busy.forkingThread"));
     await runAction(async () => {
@@ -2530,16 +2522,18 @@ export function App() {
             }
           >
             {gitWorkbenchExpanded ? (
-              <GitWorkbenchPanel
+              <GitReviewPanel
                 workspace={currentGitWorkspace}
                 snapshot={activeGitSnapshot}
-                summary={gitSummary}
-                selectedFile={selectedGitFile}
+                selectedPath={
+                  currentGitWorkspaceId
+                    ? selectedGitFileByWorkspaceId[currentGitWorkspaceId] ?? null
+                    : null
+                }
                 treeFilter={currentGitTreeFilter}
                 treeWidth={inspectorWidth}
                 treeBounds={inspectorBounds}
                 treeResizing={inspectorResizing}
-                canReview={Boolean(reviewThreadId)}
                 onClose={() => setGitWorkbenchExpanded(false)}
                 onSelectFile={(path) => {
                   if (!currentGitWorkspaceId) {
@@ -2557,7 +2551,7 @@ export function App() {
                   }));
                 }}
                 onRefresh={() => void handleRefreshWorkspaceGit()}
-                onReview={() => void handleRunReview()}
+                onReadFileDetail={handleReadGitFileDetail}
                 onResizeStart={handleInspectorResizeStart}
                 onResizeKeyDown={handleInspectorResizeKeyDown}
               />

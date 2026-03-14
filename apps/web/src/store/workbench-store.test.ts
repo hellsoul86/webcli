@@ -290,13 +290,13 @@ describe("workbench store", () => {
     expect(session.status).toBe("completed");
   });
 
-  it("stores git snapshots by workspace and falls back to the first available file", () => {
+  it("stores git snapshots by workspace without forcing a new file selection", () => {
     const store = useWorkbenchStore.getState();
     store.setWorkspaceGitSnapshot(makeGitSnapshot());
 
     const state = useWorkbenchStore.getState();
     expect(state.gitSnapshotsByWorkspaceId["workspace-1"]?.files).toHaveLength(2);
-    expect(state.selectedGitFileByWorkspaceId["workspace-1"]).toBe("src/app.ts");
+    expect(state.selectedGitFileByWorkspaceId["workspace-1"]).toBeNull();
   });
 
   it("keeps a valid selected git file when the workspace snapshot refreshes", () => {

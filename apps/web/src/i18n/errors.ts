@@ -34,6 +34,10 @@ export function localizeErrorWithFallback(error: unknown, fallbackKey: string): 
         return translate("errors.approvalNotPending");
       case "git.not_repo":
         return translate("errors.gitNotRepo");
+      case "git.file_not_found":
+        return translate("errors.gitFileNotFound");
+      case "git.file_read_failed":
+        return translate("errors.gitFileReadFailed");
       case "git.branch_switch_failed":
         return translate("errors.gitBranchSwitchFailed", error.params);
       case "account.api_key_invalid":

@@ -94,7 +94,7 @@ export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSli
             (file) => file.path === state.selectedGitFileByWorkspaceId[snapshot.workspaceId],
           )
             ? state.selectedGitFileByWorkspaceId[snapshot.workspaceId] ?? null
-            : snapshot.files[0]?.path ?? null,
+            : null,
       },
     })),
   selectWorkspaceGitFile: (workspaceId, path) =>

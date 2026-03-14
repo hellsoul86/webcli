@@ -105,6 +105,10 @@ export type AppRequestMap = {
     workspaceId: string;
     branch: string;
   }, { snapshot: GitWorkingTreeSnapshot; branches: Array<GitBranchReference>; currentBranch: string | null }>;
+  "workspace.git.file.read": RpcDefinition<{
+    workspaceId: string;
+    path: string;
+  }, { detail: import("./domain.js").GitFileReviewDetail }>;
   "workspace.searchFiles": RpcDefinition<{
     workspaceId: string;
     query: string;

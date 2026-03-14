@@ -10,6 +10,8 @@ import type {
   ConfigSnapshot,
   FuzzySearchSnapshot,
   GitBranchReference,
+  GitFileReviewDetail,
+  GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
@@ -695,6 +697,13 @@ export class FakeRuntime implements SessionRuntime {
     this.gitBranchByCwd.set(cwd, branch);
   }
 
+  async readWorkspaceGitFileDetail(
+    cwd: string,
+    file: GitWorkingTreeFile,
+  ): Promise<GitFileReviewDetail> {
+    return makeGitFileReviewDetail(cwd, file);
+  }
+
   async loginMcp(name: string): Promise<string> {
     return `https://example.com/oauth/${encodeURIComponent(name)}`;
   }
@@ -852,19 +861,64 @@ function makeGitSnapshot(
     branch,
     isGitRepository: true,
     clean: false,
-    stagedCount: 1,
-    unstagedCount: 1,
+    stagedCount: 2,
+    unstagedCount: 5,
     untrackedCount: 1,
     generatedAt: Date.now(),
     files: [
+      {
+        path: "apps/web/src/App.tsx",
+        status: "modified",
+        staged: true,
+        unstaged: true,
+        additions: 9,
+        deletions: 3,
+        patch:
+          "diff --git a/apps/web/src/App.tsx b/apps/web/src/App.tsx\n@@ -1,4 +1,7 @@\n-import { App } from \"./legacy\";\n+import { WorkbenchScreen } from \"./app/shell/WorkbenchScreen\";\n \n-export default App;\n+export default function App() {\n+  return <WorkbenchScreen />;\n+}\n",
+        oldPath: null,
+      },
       {
         path: "README.md",
         status: "modified",
         staged: false,
         unstaged: true,
-        additions: 2,
+        additions: 4,
         deletions: 1,
-        patch: "diff --git a/README.md b/README.md\n@@ -1 +1,2 @@\n-old line\n+new line\n+more text",
+        patch:
+          "diff --git a/README.md b/README.md\n@@ -1,3 +1,6 @@\n-Old heading\n+# WebCLI\n+\n+New review experience\n+\n+Extra context\n",
+        oldPath: null,
+      },
+      {
+        path: "docs/review/notes.md",
+        status: "conflicted",
+        staged: false,
+        unstaged: true,
+        additions: 7,
+        deletions: 3,
+        patch:
+          "diff --cc docs/review/notes.md\nindex 1234567,89abcde..0000000\n--- a/docs/review/notes.md\n+++ b/docs/review/notes.md\n@@@ -1,3 -1,3 +1,8 @@@\n++<<<<<<< HEAD\n +Current note\n++=======\n+ Incoming note\n++>>>>>>> feature/review\n",
+        oldPath: null,
+      },
+      {
+        path: "packages/core/src/git-review-panel.ts",
+        status: "renamed",
+        staged: true,
+        unstaged: false,
+        additions: 6,
+        deletions: 6,
+        patch:
+          "diff --git a/packages/core/src/git-panel.ts b/packages/core/src/git-review-panel.ts\nsimilarity index 72%\nrename from packages/core/src/git-panel.ts\nrename to packages/core/src/git-review-panel.ts\n@@ -1,3 +1,3 @@\n-export const legacyPanel = true;\n+export const reviewPanel = true;\n",
+        oldPath: "packages/core/src/git-panel.ts",
+      },
+      {
+        path: "src/deleted-file.ts",
+        status: "deleted",
+        staged: false,
+        unstaged: true,
+        additions: 0,
+        deletions: 5,
+        patch:
+          "diff --git a/src/deleted-file.ts b/src/deleted-file.ts\ndeleted file mode 100644\n--- a/src/deleted-file.ts\n+++ /dev/null\n@@ -1,5 +0,0 @@\n-export const removed = true;\n-export function legacy() {\n-  return removed;\n-}\n-\n",
         oldPath: null,
       },
       {
@@ -874,9 +928,123 @@ function makeGitSnapshot(
         unstaged: true,
         additions: 3,
         deletions: 0,
-        patch: "diff --git a/src/new-file.ts b/src/new-file.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new-file.ts\n@@ -0,0 +1,3 @@\n+export const value = 1;\n+export const doubled = value * 2;\n+",
+        patch:
+          "diff --git a/src/new-file.ts b/src/new-file.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new-file.ts\n@@ -0,0 +1,3 @@\n+export const value = 1;\n+export const doubled = value * 2;\n+export const triple = value * 3;\n",
         oldPath: null,
       },
     ],
   };
+}
+
+function makeGitFileReviewDetail(cwd: string, file: GitWorkingTreeFile): GitFileReviewDetail {
+  const language = inferFakeGitLanguage(file.path);
+
+  switch (file.path) {
+    case "apps/web/src/App.tsx":
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "inline-diff",
+        originalText: [
+          "import { App } from \"./legacy\";",
+          "",
+          "export default App;",
+        ].join("\n"),
+        modifiedText: [
+          "import { WorkbenchScreen } from \"./app/shell/WorkbenchScreen\";",
+          "",
+          "export default function App() {",
+          "  return <WorkbenchScreen />;",
+          "}",
+        ].join("\n"),
+      };
+    case "README.md":
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "inline-diff",
+        originalText: ["Old heading", "", "Legacy content"].join("\n"),
+        modifiedText: ["# WebCLI", "", "New review experience", "", "Extra context"].join("\n"),
+      };
+    case "packages/core/src/git-review-panel.ts":
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "inline-diff",
+        originalText: [
+          "export const legacyPanel = true;",
+          "export const legacyTitle = \"Git panel\";",
+        ].join("\n"),
+        modifiedText: [
+          "export const reviewPanel = true;",
+          "export const reviewTitle = \"Git review panel\";",
+        ].join("\n"),
+      };
+    case "src/deleted-file.ts":
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "inline-diff",
+        originalText: [
+          "export const removed = true;",
+          "export function legacy() {",
+          "  return removed;",
+          "}",
+        ].join("\n"),
+        modifiedText: "",
+      };
+    case "src/new-file.ts":
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "inline-diff",
+        originalText: "",
+        modifiedText: [
+          "export const value = 1;",
+          "export const doubled = value * 2;",
+          "export const triple = value * 3;",
+        ].join("\n"),
+      };
+    case "docs/review/notes.md":
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "patch",
+        patch: file.patch,
+        reason: "Merge conflicts are shown as raw patch output.",
+      };
+    default:
+      return {
+        path: file.path,
+        oldPath: file.oldPath ?? null,
+        status: file.status,
+        language,
+        mode: "unavailable",
+        patch: file.patch,
+        reason: `No fake review detail fixture for ${cwd}/${file.path}`,
+      };
+  }
+}
+
+function inferFakeGitLanguage(path: string): string | null {
+  const normalized = path.toLowerCase();
+  if (normalized.endsWith(".tsx") || normalized.endsWith(".ts")) {
+    return "typescript";
+  }
+  if (normalized.endsWith(".md")) {
+    return "markdown";
+  }
+  return "plaintext";
 }
