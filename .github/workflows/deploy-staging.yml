@@ -2,6 +2,11 @@ name: Deploy Staging
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -13,6 +18,13 @@ concurrency:
 jobs:
   deploy:
     name: deploy-staging
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: staging
@@ -91,6 +103,10 @@ jobs:
           done
 
       - name: Publish summary
+        env:
+          DEPLOY_TRIGGER: ${{ github.event_name }}
+          DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+          DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: |
           {
             echo "## Staging Deploy"
@@ -99,5 +115,7 @@ jobs:
             echo "- Repo: \`${STAGING_REPO_DIR}\`"
             echo "- App: ${STAGING_APP_URL}"
             echo "- Health: ${STAGING_API_HEALTH_URL}"
-            echo "- Ref: \`${GITHUB_SHA}\`"
+            echo "- Trigger: \`${DEPLOY_TRIGGER}\`"
+            echo "- Ref: \`${DEPLOY_REF}\`"
+            echo "- SHA: \`${DEPLOY_SHA}\`"
           } >> "${GITHUB_STEP_SUMMARY}"

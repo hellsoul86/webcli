@@ -149,10 +149,12 @@ git pull --ff-only
 sudo WEBCLI_STAGING_SERVICE_INSTANCE=<unix-user> bash ./deploy/staging/bin/deploy.sh
 ```
 
-## GitHub Actions Manual Deploy
+## GitHub Actions Deploy
 
-The repository also supports a manual GitHub Actions deploy via the `Deploy Staging`
-workflow (`workflow_dispatch` only).
+The repository supports both:
+
+- automatic staging deploys after the `CI` workflow completes successfully on `main`
+- manual staging deploys via the `Deploy Staging` workflow (`workflow_dispatch`)
 
 Configure these GitHub Actions variables:
 
@@ -172,7 +174,7 @@ Configure these GitHub Actions secrets:
 
 The workflow logs into the staging host over SSH, fast-forwards the server checkout to
 `origin/main`, runs `bash ./deploy/staging/bin/deploy.sh`, and then checks the public
-health endpoint.
+health endpoints.
 
 ## Rollback
 
