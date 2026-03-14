@@ -1,5 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { formatNumber } from "../../i18n/format";
 import { useAppLocale } from "../../i18n/use-i18n";
 import {
@@ -15,6 +15,26 @@ type CodePreviewDialogProps = {
   onClose: () => void;
 };
 
+type MonacoModel = {
+  dispose: () => void;
+};
+
+type MonacoNamespace = {
+  Range: new (startLine: number, startColumn: number, endLine: number, endColumn: number) => unknown;
+  Uri: {
+    parse: (value: string) => unknown;
+  };
+  editor: {
+    getModel: (uri: unknown) => MonacoModel | null;
+  };
+};
+
+type MonacoDecorationCollection = {
+  clear: () => void;
+};
+
+let codePreviewModelScope = 0;
+
 const centeredModalOverlayStyle: CSSProperties = {
   pointerEvents: "none",
   justifyItems: "center",
@@ -27,7 +47,20 @@ const interactiveOverlayPanelStyle: CSSProperties = {
 
 export function CodePreviewDialog(props: CodePreviewDialogProps) {
   const { t } = useAppLocale();
+  const monacoRef = useRef<MonacoNamespace | null>(null);
+  const decorationsRef = useRef<MonacoDecorationCollection | null>(null);
+  const mountedRef = useRef(true);
+  const modelScopeRef = useRef<string>("");
+  if (!modelScopeRef.current) {
+    codePreviewModelScope += 1;
+    modelScopeRef.current = `code-preview-${codePreviewModelScope}`;
+  }
+
   const language = useMemo(() => inferCodeLanguage(props.reference.path), [props.reference.path]);
+  const modelPath = useMemo(
+    () => buildCodePreviewModelPath(modelScopeRef.current, props.reference.path),
+    [props.reference.path],
+  );
   const fileName =
     props.reference.label?.trim() || props.reference.path.split("/").pop() || props.reference.path;
   const locationLabel =
@@ -40,8 +73,30 @@ export function CodePreviewDialog(props: CodePreviewDialogProps) {
         : t("modal.line", { line: formatNumber(props.reference.line) })
       : null;
 
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      decorationsRef.current?.clear();
+      decorationsRef.current = null;
+      const monaco = monacoRef.current;
+      window.setTimeout(() => {
+        disposeMonacoModel(monaco, modelPath);
+      }, 0);
+    };
+  }, [modelPath]);
+
   const handleEditorMount = useMemo<OnMount>(
     () => (editor, monaco) => {
+      monacoRef.current = monaco as MonacoNamespace;
+      decorationsRef.current?.clear();
+      decorationsRef.current = null;
+
+      if (!mountedRef.current) {
+        return;
+      }
+
       if (props.reference.line === null) {
         return;
       }
@@ -50,7 +105,7 @@ export function CodePreviewDialog(props: CodePreviewDialogProps) {
       const column = Math.max(1, props.reference.column ?? 1);
       editor.revealLineInCenter(lineNumber);
       editor.setPosition({ lineNumber, column });
-      editor.createDecorationsCollection([
+      decorationsRef.current = editor.createDecorationsCollection([
         {
           range: new monaco.Range(lineNumber, 1, lineNumber, 1),
           options: {
@@ -109,12 +164,16 @@ export function CodePreviewDialog(props: CodePreviewDialogProps) {
         {!props.loading && !props.error ? (
           <div className="code-preview-editor" data-testid="code-preview-editor">
             <Editor
-              key={`${props.reference.path}:${props.reference.line ?? 0}:${props.reference.column ?? 0}`}
+              key={modelPath}
               height="100%"
-              path={props.reference.path}
+              path={modelPath}
               language={language}
               theme="vs-dark"
               value={props.content}
+              keepCurrentModel
+              beforeMount={(monaco) => {
+                monacoRef.current = monaco as MonacoNamespace;
+              }}
               onMount={handleEditorMount}
               options={{
                 readOnly: true,
@@ -145,4 +204,16 @@ function compactPath(value: string, keepSegments = 3): string {
   }
 
   return `.../${parts.slice(-keepSegments).join("/")}`;
+}
+
+function buildCodePreviewModelPath(scope: string, filePath: string): string {
+  return `inmemory://webcli/code-preview/${scope}/${encodeURIComponent(filePath)}`;
+}
+
+function disposeMonacoModel(monaco: MonacoNamespace | null, modelPath: string): void {
+  if (!monaco) {
+    return;
+  }
+
+  monaco.editor.getModel(monaco.Uri.parse(modelPath))?.dispose();
 }

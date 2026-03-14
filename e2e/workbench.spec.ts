@@ -143,6 +143,48 @@ test("opens local code links in a syntax-highlighted preview modal", async ({ pa
   await expect(page.getByTestId("code-preview-editor")).toBeVisible();
 });
 
+test("does not log monaco dispose errors when closing review and code preview", async ({
+  page,
+}) => {
+  const consoleErrors: Array<string> = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await ensureWorkspace(page);
+  await ensureThread(page);
+
+  await page.getByTestId("git-workbench-open-button").click();
+  await expect(page.getByTestId("git-workbench")).toBeVisible();
+  const stagedUnstagedGroup = page.getByTestId("git-review-group-staged-unstaged");
+  await stagedUnstagedGroup.getByRole("button", { name: /web/i }).click();
+  await stagedUnstagedGroup.getByRole("button", { name: /src/i }).click();
+  await stagedUnstagedGroup.getByRole("button", { name: /App.tsx/i }).click();
+  await expect(page.getByTestId("git-review-diff-viewer")).toBeVisible();
+  await page.getByRole("button", { name: "返回会话" }).click();
+  await page.waitForTimeout(300);
+
+  const filePath = `${process.cwd()}/apps/web/src/App.tsx`;
+  await page.getByTestId("composer-input").fill(`[App.tsx](${filePath}#L1)`);
+  await page.getByTestId("send-button").click();
+
+  const timeline = page.getByTestId("timeline-list");
+  await timeline.getByRole("link", { name: "App.tsx" }).click();
+  await expect(page.getByTestId("code-preview-modal")).toBeVisible();
+  await page.getByRole("button", { name: "关闭" }).last().click();
+  await page.waitForTimeout(300);
+
+  const monacoDisposeErrors = consoleErrors.filter((entry) =>
+    /TextModel got disposed before Diff|TextModel.*disposed|Diff.*disposed/i.test(entry),
+  );
+  expect(monacoDisposeErrors).toEqual([]);
+});
+
 async function ensureWorkspace(page: Page): Promise<void> {
   const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
   const threadOpenButton = page.getByTestId("thread-open-button");
