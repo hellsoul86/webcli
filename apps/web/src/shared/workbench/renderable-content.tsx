@@ -1,8 +1,6 @@
-import { memo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Fragment, lazy, memo, Suspense } from "react";
 
-type RenderableMarkdownProps = {
+export type RenderableMarkdownProps = {
   text: string;
   cwd?: string | null;
   compact?: boolean;
@@ -33,6 +31,24 @@ type MediaDescriptor = {
   alt?: string | null;
   label?: string | null;
 };
+
+const LazyRichMarkdownRenderer = lazy(() =>
+  import("./rich-markdown-renderer").then((module) => ({
+    default: module.RichMarkdownRenderer,
+  })),
+);
+
+const RICH_MARKDOWN_PATTERNS = [
+  /(^|\n)#{1,6}\s/m,
+  /(^|\n)\s*[-*+]\s/m,
+  /(^|\n)\s*\d+\.\s/m,
+  /(^|\n)\s*>\s/m,
+  /```|~~~/,
+  /!\[[^\]]*\]\(([^)]+)\)/,
+  /\[[^\]]+\]\(([^)]+)\)/,
+  /`[^`\n]+`/,
+  /\|.+\|/,
+];
 
 const IMAGE_EXTENSIONS = new Set([
   ".png",
@@ -100,115 +116,51 @@ const CODE_EXTENSIONS = new Set([
 ]);
 
 export const RenderableMarkdown = memo(function RenderableMarkdown(props: RenderableMarkdownProps) {
-  if (!props.text.trim()) {
+  const normalizedText = props.text.trim();
+  if (!normalizedText) {
     return null;
   }
 
+  const useRichMarkdown = shouldUseRichMarkdown(normalizedText, props.cwd);
+
   return (
     <div className={props.compact ? "stream-markdown stream-markdown--compact" : "stream-markdown"}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(url) => resolveRenderableResourceUrl(url, props.cwd)}
-        components={{
-          h1: ({ children }) => <h1 className="content-heading content-heading--1">{children}</h1>,
-          h2: ({ children }) => <h2 className="content-heading content-heading--2">{children}</h2>,
-          h3: ({ children }) => <h3 className="content-heading content-heading--3">{children}</h3>,
-          h4: ({ children }) => <h4 className="content-heading content-heading--4">{children}</h4>,
-          p: ({ node, children }) => {
-            const descriptor = extractStandaloneMedia(node, children, props.cwd);
-            if (descriptor) {
-              return (
-                <RenderableMedia
-                  descriptor={descriptor}
-                  onImageActivate={props.onImageActivate}
-                />
-              );
-            }
-
-            return <p className="content-paragraph">{children}</p>;
-          },
-          ul: ({ children }) => <ul className="content-list content-list--unordered">{children}</ul>,
-          ol: ({ children }) => <ol className="content-list content-list--ordered">{children}</ol>,
-          li: ({ children }) => <li className="content-list__item">{children}</li>,
-          blockquote: ({ children }) => <blockquote className="content-quote">{children}</blockquote>,
-          img: ({ src, alt }) => {
-            const resolved = resolveRenderableResourceUrl(String(src ?? ""), props.cwd);
-            if (!resolved) {
-              return null;
-            }
-
-            if (props.onImageActivate) {
-              return (
-                <button
-                  type="button"
-                  className="renderable-image-trigger"
-                  onClick={() =>
-                    props.onImageActivate?.({
-                      src: resolved,
-                      alt: alt ?? null,
-                      label: alt ?? null,
-                    })
-                  }
-                >
-                  <img
-                    className="renderable-inline-image"
-                    src={resolved}
-                    alt={alt ?? ""}
-                    loading="lazy"
-                  />
-                </button>
-              );
-            }
-
-            return (
-              <img className="renderable-inline-image" src={resolved} alt={alt ?? ""} loading="lazy" />
-            );
-          },
-          a: ({ href, children }) => {
-            const resolved = resolveRenderableResourceUrl(String(href ?? ""), props.cwd);
-            const isLocal = isProxyResourceUrl(resolved);
-            const codeLink = detectCodeLinkReference(String(href ?? ""), props.cwd);
-            const label = flattenReactText(children).trim();
-
-            return (
-              <a
-                href={resolved}
-                target={isLocal ? "_self" : "_blank"}
-                rel="noreferrer"
-                onClick={(event) => {
-                  if (!codeLink || !props.onCodeLinkActivate) {
-                    return;
-                  }
-
-                  event.preventDefault();
-                  props.onCodeLinkActivate({
-                    ...codeLink,
-                    label: label || codeLink.label,
-                  });
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
-          code: (({ className, children, ...rest }: any) => {
-            const inline = !className && !String(children ?? "").includes("\n");
-            if (inline) {
-              return <code className="code-inline">{children}</code>;
-            }
-
-            const language = className?.replace(/^language-/, "") ?? "";
-            const value = flattenReactText(children).replace(/\n$/, "");
-            return <RenderableCodeBlock value={value} language={language} {...rest} />;
-          }) as any,
-          pre: ({ children }) => <>{children}</>,
-        }}
-      >
-        {props.text}
-      </ReactMarkdown>
+      {useRichMarkdown ? (
+        <Suspense fallback={<PlainTextContent text={normalizedText} />}>
+          <LazyRichMarkdownRenderer {...props} />
+        </Suspense>
+      ) : (
+        <PlainTextContent text={normalizedText} />
+      )}
     </div>
   );
 });
+
+function PlainTextContent(props: { text: string }) {
+  const blocks = props.text
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return (
+    <>
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split("\n");
+        return (
+          <p key={`${blockIndex}-${block}`} className="content-paragraph">
+            {lines.map((line, lineIndex) => (
+              <Fragment key={`${lineIndex}-${line}`}>
+                {lineIndex > 0 ? <br /> : null}
+                {line}
+              </Fragment>
+            ))}
+          </p>
+        );
+      })}
+    </>
+  );
+}
 
 type RenderableCodeBlockProps = {
   value: string;
@@ -385,7 +337,11 @@ export function detectRenderableMedia(value: string, cwd?: string | null): Media
   };
 }
 
-function extractStandaloneMedia(node: any, children: unknown, cwd?: string | null): MediaDescriptor | null {
+export function extractStandaloneMedia(
+  node: any,
+  children: unknown,
+  cwd?: string | null,
+): MediaDescriptor | null {
   const nodeChildren = Array.isArray(node?.children)
     ? node.children.filter((child: any) => !(child?.type === "text" && !String(child.value ?? "").trim()))
     : [];
@@ -432,44 +388,7 @@ function extractStandaloneMedia(node: any, children: unknown, cwd?: string | nul
   return text ? detectRenderableMedia(text, cwd) : null;
 }
 
-function RenderableMedia({
-  descriptor,
-  onImageActivate,
-}: {
-  descriptor: MediaDescriptor;
-  onImageActivate?: (image: ImagePreviewReference) => void;
-}) {
-  const imagePreview = {
-    src: descriptor.src,
-    alt: descriptor.alt ?? null,
-    label: descriptor.label ?? null,
-  } satisfies ImagePreviewReference;
-
-  return (
-    <figure className={`renderable-media renderable-media--${descriptor.kind}`}>
-      {descriptor.kind === "image" ? (
-        onImageActivate ? (
-          <button
-            type="button"
-            className="renderable-image-trigger"
-            onClick={() => onImageActivate(imagePreview)}
-          >
-            <img src={descriptor.src} alt={descriptor.alt ?? ""} loading="lazy" />
-          </button>
-        ) : (
-          <img src={descriptor.src} alt={descriptor.alt ?? ""} loading="lazy" />
-        )
-      ) : null}
-      {descriptor.kind === "audio" ? <audio controls preload="metadata" src={descriptor.src} /> : null}
-      {descriptor.kind === "video" ? <video controls preload="metadata" src={descriptor.src} /> : null}
-      {descriptor.label && descriptor.label !== descriptor.src ? (
-        <figcaption>{descriptor.label}</figcaption>
-      ) : null}
-    </figure>
-  );
-}
-
-function flattenReactText(value: unknown): string {
+export function flattenReactText(value: unknown): string {
   if (typeof value === "string" || typeof value === "number") {
     return String(value);
   }
@@ -515,8 +434,24 @@ function isWebUrl(value: string): boolean {
   return /^(https?:|data:|blob:|mailto:|tel:)/i.test(value);
 }
 
-function isProxyResourceUrl(value: string): boolean {
+export function isProxyResourceUrl(value: string): boolean {
   return value.startsWith("/api/resource?");
+}
+
+function shouldUseRichMarkdown(text: string, cwd?: string | null): boolean {
+  if (RICH_MARKDOWN_PATTERNS.some((pattern) => pattern.test(text))) {
+    return true;
+  }
+
+  if (/(https?:\/\/|data:image\/|data:audio\/|data:video\/|mailto:|tel:)/i.test(text)) {
+    return true;
+  }
+
+  return text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .some((block) => Boolean(detectRenderableMedia(block, cwd)));
 }
 
 function buildProxyResourceUrl(path: string, line?: number | null, column?: number | null): string {
