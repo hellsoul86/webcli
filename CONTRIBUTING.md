@@ -71,6 +71,24 @@ npm run e2e
 
 These checks are aligned with the required GitHub checks on `main`.
 
+## Repository Notes
+
+- This repository is a Node.js 25 npm-workspaces monorepo spanning the Fastify server, the Vite web app, and the shared/runtime packages.
+- Live runtime flows depend on `codex` being installed on the host and already authenticated with `codex login`.
+- Treat `apps/server/data/webcli.sqlite` as local state. It should not be treated as a committed artifact.
+
+Useful repo-specific commands:
+
+```bash
+npm run dev
+npm run task:start -- <task-slug>
+npm run task:sync
+npm run task:finish -- <task-slug>
+```
+
+- `npm run dev` starts the web app at `http://127.0.0.1:5173` and the API/WebSocket server at `http://127.0.0.1:4000`.
+- `npm run task:start`, `npm run task:sync`, and `npm run task:finish` are the standard task workflow helpers for this repository.
+
 ## Pull Requests
 
 After the first push, open a draft PR:
