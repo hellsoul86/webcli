@@ -1,5 +1,6 @@
-import { DiffEditor } from "@monaco-editor/react";
 import {
+  Suspense,
+  lazy,
   useEffect,
   useMemo,
   useState,
@@ -27,6 +28,12 @@ import {
   type GitReviewGroupId,
   type GitReviewTreeNode,
 } from "./git-review-helpers";
+
+const LazyGitDiffViewer = lazy(() =>
+  import("./git-diff-viewer").then((module) => ({
+    default: module.GitDiffViewer,
+  })),
+);
 
 type GitReviewPanelProps = {
   workspace: WorkspaceRecord | null;
@@ -327,30 +334,21 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
             ) : detailError && !detail ? (
               <GitReviewEmptyState title={t("git.detailLoadFailedTitle")} detail={detailError} />
             ) : detail?.mode === "inline-diff" ? (
-              <div className="git-review-panel__editor" data-testid="git-review-diff-viewer">
-                <DiffEditor
-                  key={`${snapshotIdentity}:${detail.path}`}
-                  theme="vs-dark"
-                  language={detail.language ?? undefined}
-                  original={detail.originalText}
-                  modified={detail.modifiedText}
-                  options={{
-                    readOnly: true,
-                    renderSideBySide: false,
-                    originalEditable: false,
-                    scrollBeyondLastLine: false,
-                    minimap: { enabled: false },
-                    glyphMargin: false,
-                    folding: true,
-                    lineNumbers: "on",
-                    renderIndicators: true,
-                    renderOverviewRuler: false,
-                    diffCodeLens: false,
-                    wordWrap: "off",
-                    stickyScroll: { enabled: false },
-                  }}
+              <Suspense
+                fallback={
+                  <GitReviewEmptyState
+                    title={t("git.loadingDetailTitle")}
+                    detail={compactReviewPath(selectedFile.path)}
+                  />
+                }
+              >
+                <LazyGitDiffViewer
+                  diffKey={`${snapshotIdentity}:${detail.path}`}
+                  language={detail.language}
+                  originalText={detail.originalText}
+                  modifiedText={detail.modifiedText}
                 />
-              </div>
+              </Suspense>
             ) : detail ? (
               <div className="git-review-panel__fallback" data-testid="git-review-fallback">
                 <div className="git-review-panel__fallback-copy">

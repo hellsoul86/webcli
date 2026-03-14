@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   memo,
   useEffect,
   useLayoutEffect,
@@ -11,7 +13,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { TFunction } from "i18next";
-import Editor, { type OnMount } from "@monaco-editor/react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AccountSummary,
@@ -48,7 +49,6 @@ import { routeWorkbenchServerMessage } from "../../shared/workbench/event-router
 import {
   type CodeLinkReference,
   type ImagePreviewReference,
-  inferCodeLanguage,
   RenderableCodeBlock,
   RenderableMarkdown,
 } from "../../shared/workbench/renderable-content";
@@ -66,7 +66,18 @@ import {
   summarizeGitSnapshot,
   type GitFileTreeNode,
 } from "./inspector-helpers";
-import { GitReviewPanel } from "./git-review-panel";
+
+const LazyGitReviewPanel = lazy(() =>
+  import("./git-review-panel").then((module) => ({
+    default: module.GitReviewPanel,
+  })),
+);
+
+const LazyCodePreviewDialog = lazy(() =>
+  import("./code-preview-dialog").then((module) => ({
+    default: module.CodePreviewDialog,
+  })),
+);
 
 const DEFAULT_SIDEBAR_WIDTH = 326;
 const DEFAULT_INSPECTOR_WIDTH = 360;
@@ -2522,39 +2533,41 @@ export function App() {
             }
           >
             {gitWorkbenchExpanded ? (
-              <GitReviewPanel
-                workspace={currentGitWorkspace}
-                snapshot={activeGitSnapshot}
-                selectedPath={
-                  currentGitWorkspaceId
-                    ? selectedGitFileByWorkspaceId[currentGitWorkspaceId] ?? null
-                    : null
-                }
-                treeFilter={currentGitTreeFilter}
-                treeWidth={inspectorWidth}
-                treeBounds={inspectorBounds}
-                treeResizing={inspectorResizing}
-                onClose={() => setGitWorkbenchExpanded(false)}
-                onSelectFile={(path) => {
-                  if (!currentGitWorkspaceId) {
-                    return;
+              <Suspense fallback={<GitReviewPanelLoadingState />}>
+                <LazyGitReviewPanel
+                  workspace={currentGitWorkspace}
+                  snapshot={activeGitSnapshot}
+                  selectedPath={
+                    currentGitWorkspaceId
+                      ? selectedGitFileByWorkspaceId[currentGitWorkspaceId] ?? null
+                      : null
                   }
-                  selectWorkspaceGitFile(currentGitWorkspaceId, path);
-                }}
-                onTreeFilterChange={(nextValue) => {
-                  if (!currentGitWorkspaceId) {
-                    return;
-                  }
-                  setGitTreeFilterByWorkspaceId((current) => ({
-                    ...current,
-                    [currentGitWorkspaceId]: nextValue,
-                  }));
-                }}
-                onRefresh={() => void handleRefreshWorkspaceGit()}
-                onReadFileDetail={handleReadGitFileDetail}
-                onResizeStart={handleInspectorResizeStart}
-                onResizeKeyDown={handleInspectorResizeKeyDown}
-              />
+                  treeFilter={currentGitTreeFilter}
+                  treeWidth={inspectorWidth}
+                  treeBounds={inspectorBounds}
+                  treeResizing={inspectorResizing}
+                  onClose={() => setGitWorkbenchExpanded(false)}
+                  onSelectFile={(path) => {
+                    if (!currentGitWorkspaceId) {
+                      return;
+                    }
+                    selectWorkspaceGitFile(currentGitWorkspaceId, path);
+                  }}
+                  onTreeFilterChange={(nextValue) => {
+                    if (!currentGitWorkspaceId) {
+                      return;
+                    }
+                    setGitTreeFilterByWorkspaceId((current) => ({
+                      ...current,
+                      [currentGitWorkspaceId]: nextValue,
+                    }));
+                  }}
+                  onRefresh={() => void handleRefreshWorkspaceGit()}
+                  onReadFileDetail={handleReadGitFileDetail}
+                  onResizeStart={handleInspectorResizeStart}
+                  onResizeKeyDown={handleInspectorResizeKeyDown}
+                />
+              </Suspense>
             ) : (
               <>
                 <div
@@ -2737,13 +2750,15 @@ export function App() {
       ) : null}
 
       {codePreview ? (
-        <CodePreviewModal
-          reference={codePreview}
-          content={codePreviewQuery.data ?? ""}
-          loading={codePreviewQuery.isLoading}
-          error={codePreviewQuery.error instanceof Error ? codePreviewQuery.error.message : null}
-          onClose={closeCodePreview}
-        />
+        <Suspense fallback={<CodePreviewDialogLoadingState reference={codePreview} onClose={closeCodePreview} />}>
+          <LazyCodePreviewDialog
+            reference={codePreview}
+            content={codePreviewQuery.data ?? ""}
+            loading={codePreviewQuery.isLoading}
+            error={codePreviewQuery.error instanceof Error ? codePreviewQuery.error.message : null}
+            onClose={closeCodePreview}
+          />
+        </Suspense>
       ) : null}
 
       {imagePreview ? (
@@ -4680,50 +4695,22 @@ function WorkspaceModal(props: {
   );
 }
 
-function CodePreviewModal(props: {
+function GitReviewPanelLoadingState() {
+  const { t } = useAppLocale();
+
+  return (
+    <div className="git-review-panel git-review-panel--empty" data-testid="git-workbench">
+      <strong>{t("git.loadingDetailTitle")}</strong>
+      <p>{t("git.readingTreeDetail")}</p>
+    </div>
+  );
+}
+
+function CodePreviewDialogLoadingState(props: {
   reference: CodeLinkReference;
-  content: string;
-  loading: boolean;
-  error: string | null;
   onClose: () => void;
 }) {
   const { t } = useAppLocale();
-  const language = useMemo(() => inferCodeLanguage(props.reference.path), [props.reference.path]);
-  const fileName =
-    props.reference.label?.trim() || props.reference.path.split("/").pop() || props.reference.path;
-  const locationLabel =
-    props.reference.line !== null
-      ? props.reference.column !== null
-        ? t("modal.lineColumn", {
-            line: formatNumber(props.reference.line),
-            column: formatNumber(props.reference.column),
-          })
-        : t("modal.line", { line: formatNumber(props.reference.line) })
-      : null;
-
-  const handleEditorMount = useMemo<OnMount>(
-    () => (editor, monaco) => {
-      if (props.reference.line === null) {
-        return;
-      }
-
-      const lineNumber = Math.max(1, props.reference.line);
-      const column = Math.max(1, props.reference.column ?? 1);
-      editor.revealLineInCenter(lineNumber);
-      editor.setPosition({ lineNumber, column });
-      editor.createDecorationsCollection([
-        {
-          range: new monaco.Range(lineNumber, 1, lineNumber, 1),
-          options: {
-            isWholeLine: true,
-            className: "code-preview__line-highlight",
-            linesDecorationsClassName: "code-preview__line-gutter",
-          },
-        },
-      ]);
-    },
-    [props.reference.column, props.reference.line],
-  );
 
   return (
     <div className="overlay-shell" style={centeredModalOverlayStyle}>
@@ -4735,65 +4722,18 @@ function CodePreviewModal(props: {
         <div className="modal-panel__header">
           <div>
             <p className="settings-sidebar__eyebrow">{t("modal.codePreview")}</p>
-            <strong data-testid="code-preview-title">{fileName}</strong>
-            <div className="conversation-header__meta">
-              <span>{compactPath(props.reference.path, 5)}</span>
-              {locationLabel ? (
-                <>
-                  <span>·</span>
-                  <span>{locationLabel}</span>
-                </>
-              ) : null}
-              <span>·</span>
-              <span>{language}</span>
-            </div>
+            <strong data-testid="code-preview-title">
+              {props.reference.label?.trim() || props.reference.path.split("/").pop() || props.reference.path}
+            </strong>
           </div>
           <button className="ghost-button" onClick={props.onClose}>
             {t("common.close")}
           </button>
         </div>
-
-        {props.loading ? (
-          <div className="inspector-empty" style={{ height: "100%" }}>
-            <strong>{t("modal.loadingCode")}</strong>
-            <p>{compactPath(props.reference.path, 5)}</p>
-          </div>
-        ) : null}
-
-        {!props.loading && props.error ? (
-          <div className="inspector-empty" style={{ height: "100%" }}>
-            <strong>{t("modal.codePreviewFailed")}</strong>
-            <p>{props.error}</p>
-          </div>
-        ) : null}
-
-        {!props.loading && !props.error ? (
-          <div className="code-preview-editor" data-testid="code-preview-editor">
-            <Editor
-              key={`${props.reference.path}:${props.reference.line ?? 0}:${props.reference.column ?? 0}`}
-              height="100%"
-              path={props.reference.path}
-              language={language}
-              theme="vs-dark"
-              value={props.content}
-              onMount={handleEditorMount}
-              options={{
-                readOnly: true,
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                wordWrap: "on",
-                lineNumbers: "on",
-                glyphMargin: false,
-                folding: true,
-                renderLineHighlight: "all",
-                padding: {
-                  top: 14,
-                  bottom: 14,
-                },
-              }}
-            />
-          </div>
-        ) : null}
+        <div className="inspector-empty" style={{ height: "100%" }}>
+          <strong>{t("modal.loadingCode")}</strong>
+          <p>{compactPath(props.reference.path, 5)}</p>
+        </div>
       </div>
     </div>
   );
