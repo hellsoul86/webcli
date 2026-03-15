@@ -24,6 +24,9 @@ describe("renderable content", () => {
     expect(resolveRenderableResourceUrl("./diagram.png", "/Users/roy/Developments/webcli")).toBe(
       "/api/resource?path=%2FUsers%2Froy%2FDevelopments%2Fwebcli%2Fdiagram.png",
     );
+    expect(
+      resolveRenderableResourceUrl("/srv/webcli-staging/repo/assets/diagram.png"),
+    ).toBe("/api/resource?path=%2Fsrv%2Fwebcli-staging%2Frepo%2Fassets%2Fdiagram.png");
   });
 
   it("renders standalone local images and remote audio resources", async () => {
@@ -87,6 +90,22 @@ describe("renderable content", () => {
         "/api/resource?path=%2FUsers%2Froy%2FDevelopments%2Fwebcli%2Fapps%2Fweb%2Fsrc%2FApp.tsx#L12",
       label: null,
     });
+    expect(detectCodeLinkReference("/srv/webcli-staging/repo/apps/web/src/App.tsx#L12")).toEqual({
+      path: "/srv/webcli-staging/repo/apps/web/src/App.tsx",
+      line: 12,
+      column: null,
+      href: "/srv/webcli-staging/repo/apps/web/src/App.tsx#L12",
+      resolvedHref:
+        "/api/resource?path=%2Fsrv%2Fwebcli-staging%2Frepo%2Fapps%2Fweb%2Fsrc%2FApp.tsx#L12",
+      label: null,
+    });
+  });
+
+  it("keeps site-relative routes as normal links", () => {
+    expect(resolveRenderableResourceUrl("/settings")).toBe("/settings");
+    expect(resolveRenderableResourceUrl("/docs/getting-started")).toBe("/docs/getting-started");
+    expect(detectCodeLinkReference("/settings")).toBeNull();
+    expect(detectCodeLinkReference("/docs/getting-started")).toBeNull();
   });
 
   it("infers syntax languages from code file paths", () => {

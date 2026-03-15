@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -883,6 +883,53 @@ describe("createApp", () => {
     expect(body.toString()).toBe("png-bytes");
 
     await app.close();
+  });
+
+  it("serves thread-scoped local resources outside the home directory", async () => {
+    const threadRoot = mkdtempSync(join(tmpdir(), "webcli-resource-"));
+    const mediaPath = join(threadRoot, "preview.png");
+    writeFileSync(mediaPath, Buffer.from("png-bytes"));
+
+    const env: AppEnv = {
+      host: "127.0.0.1",
+      port: 0,
+      codexCommand: "codex",
+      dataDir: tempDir,
+      dbPath: join(tempDir, "app.sqlite"),
+      webDistDir: join(tempDir, "missing-web"),
+    };
+
+    const runtime = new FakeRuntime();
+    runtime.activeThreads = [
+      makeRuntimeThread(threadRoot, {
+        id: "thread-outside-home",
+        name: "Outside home",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    ];
+
+    const { app } = await createApp(env, {
+      runtime,
+      workspaceRepo: new WorkspaceRepo(env.dbPath),
+    });
+
+    try {
+      await app.listen({ host: env.host, port: 0 });
+      const port = getBoundPort(app);
+
+      const response = await fetch(
+        `http://${env.host}:${port}/api/resource?path=${encodeURIComponent(mediaPath)}`,
+      );
+      const body = Buffer.from(await response.arrayBuffer());
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("image/png");
+      expect(body.toString()).toBe("png-bytes");
+    } finally {
+      await app.close();
+      rmSync(threadRoot, { recursive: true, force: true });
+    }
   });
 });
 
