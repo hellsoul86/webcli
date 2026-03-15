@@ -20,6 +20,15 @@ describe("renderable content", () => {
     });
   });
 
+  it("can force plain text mode for streaming content", async () => {
+    render(<RenderableMarkdown text={"**Bold**\n\n- one"} renderMode="plain" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("**Bold**")).toBeVisible();
+      expect(screen.queryByRole("list")).toBeNull();
+    });
+  });
+
   it("rewrites local file paths through the resource proxy", () => {
     expect(resolveRenderableResourceUrl("./diagram.png", "/Users/roy/Developments/webcli")).toBe(
       "/api/resource?path=%2FUsers%2Froy%2FDevelopments%2Fwebcli%2Fdiagram.png",

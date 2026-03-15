@@ -67,6 +67,15 @@ export type SessionSlice = {
     kind: TimelineEntry["kind"],
     delta: string,
   ) => void;
+  appendDeltaBatch: (
+    entries: Array<{
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      kind: TimelineEntry["kind"];
+      delta: string;
+    }>,
+  ) => void;
   setLatestDiff: (threadId: string, diff: string) => void;
   setLatestPlan: (threadId: string, payload: ThreadView["latestPlan"]) => void;
   setReview: (threadId: string, review: ReviewOutput | null) => void;

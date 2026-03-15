@@ -15,6 +15,75 @@ import type { SessionSlice, TimelineEntry, WorkbenchState } from "./workbench-st
 
 const MAX_HYDRATED_THREADS = 2;
 
+function applyDeltaEntries(
+  threadViewState: WorkbenchState,
+  entries: Array<{
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    kind: TimelineEntry["kind"];
+    delta: string;
+  }>,
+) {
+  if (entries.length === 0) {
+    return threadViewState;
+  }
+
+  const nextHydratedThreads = { ...threadViewState.hydratedThreads };
+  let nextHydratedOrder = threadViewState.hydratedOrder;
+  let changed = false;
+
+  for (const entry of entries) {
+    const summary = threadViewState.threadSummaries[entry.threadId];
+    const threadView =
+      nextHydratedThreads[entry.threadId] ?? createEmptyThreadView(entry.threadId, summary);
+    const turn = threadView.turns[entry.turnId] ?? createEmptyTurn(entry.turnId);
+    const current =
+      turn.items[entry.itemId] ?? buildPlaceholderItem(entry.itemId, entry.turnId, entry.kind);
+    const nextItem: TimelineEntry =
+      entry.kind === "reasoning"
+        ? {
+            ...current,
+            body: current.body ? `${current.body}\n${entry.delta}`.trim() : entry.delta,
+          }
+        : {
+            ...current,
+            body: `${current.body}${entry.delta}`,
+          };
+
+    nextHydratedThreads[entry.threadId] = {
+      ...threadView,
+      turnOrder: threadView.turnOrder.includes(entry.turnId)
+        ? threadView.turnOrder
+        : [...threadView.turnOrder, entry.turnId],
+      turns: {
+        ...threadView.turns,
+        [entry.turnId]: {
+          ...turn,
+          itemOrder: turn.itemOrder.includes(entry.itemId)
+            ? turn.itemOrder
+            : [...turn.itemOrder, entry.itemId],
+          items: {
+            ...turn.items,
+            [entry.itemId]: nextItem,
+          },
+        },
+      },
+    };
+    nextHydratedOrder = touchOrderedIds(nextHydratedOrder, entry.threadId);
+    changed = true;
+  }
+
+  if (!changed) {
+    return threadViewState;
+  }
+
+  return {
+    hydratedThreads: nextHydratedThreads,
+    hydratedOrder: nextHydratedOrder,
+  };
+}
+
 export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSlice> = (set) => ({
   threadSummaries: {},
   hydratedThreads: {},
@@ -225,48 +294,19 @@ export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSli
       };
     }),
   appendDelta: (threadId, turnId, itemId, kind, delta) =>
-    set((state) => {
-      const summary = state.threadSummaries[threadId];
-      const threadView = state.hydratedThreads[threadId] ?? createEmptyThreadView(threadId, summary);
-      const turn = threadView.turns[turnId] ?? createEmptyTurn(turnId);
-      const current = turn.items[itemId] ?? buildPlaceholderItem(itemId, turnId, kind);
-      const nextItem: TimelineEntry =
-        kind === "reasoning"
-          ? {
-              ...current,
-              body: current.body ? `${current.body}\n${delta}`.trim() : delta,
-            }
-          : {
-              ...current,
-              body: `${current.body}${delta}`,
-            };
-
-      return {
-        hydratedThreads: {
-          ...state.hydratedThreads,
-          [threadId]: {
-            ...threadView,
-            turnOrder: threadView.turnOrder.includes(turnId)
-              ? threadView.turnOrder
-              : [...threadView.turnOrder, turnId],
-            turns: {
-              ...threadView.turns,
-              [turnId]: {
-                ...turn,
-                itemOrder: turn.itemOrder.includes(itemId)
-                  ? turn.itemOrder
-                  : [...turn.itemOrder, itemId],
-                items: {
-                  ...turn.items,
-                  [itemId]: nextItem,
-                },
-              },
-            },
-          },
+    set((state) =>
+      applyDeltaEntries(state, [
+        {
+          threadId,
+          turnId,
+          itemId,
+          kind,
+          delta,
         },
-        hydratedOrder: touchOrderedIds(state.hydratedOrder, threadId),
-      };
-    }),
+      ]),
+    ),
+  appendDeltaBatch: (entries) =>
+    set((state) => applyDeltaEntries(state, entries)),
   setLatestDiff: (threadId, diff) =>
     set((state) => {
       const threadView = state.hydratedThreads[threadId];
