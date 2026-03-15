@@ -589,7 +589,12 @@ function resolveLocalResourcePath(value: string, cwd?: string | null): string | 
     return normalized;
   }
 
-  if (/^[A-Za-z]:\//.test(normalized) || normalized.startsWith("/Users/") || normalized.startsWith("/home/")) {
+  if (
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.startsWith("/Users/") ||
+    normalized.startsWith("/home/") ||
+    looksLikeAbsolutePosixFilePath(normalized)
+  ) {
     return normalized;
   }
 
@@ -607,6 +612,24 @@ function resolveLocalResourcePath(value: string, cwd?: string | null): string | 
   }
 
   return null;
+}
+
+function looksLikeAbsolutePosixFilePath(value: string): boolean {
+  if (!value.startsWith("/") || value.startsWith("//")) {
+    return false;
+  }
+
+  const fileName = value.split("/").pop()?.trim() ?? "";
+  if (!fileName || fileName === "." || fileName === "..") {
+    return false;
+  }
+
+  const normalizedFileName = fileName.toLowerCase();
+  if (normalizedFileName === "dockerfile" || normalizedFileName === "makefile") {
+    return true;
+  }
+
+  return fileName.includes(".") && !fileName.endsWith(".");
 }
 
 function detectMediaKind(value: string): MediaKind | null {

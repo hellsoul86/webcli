@@ -4,6 +4,7 @@ export type AppErrorCode =
   | "invalid.json"
   | "resource.path_required"
   | "resource.not_found"
+  | "resource.outside_scope"
   | "thread_summaries.invalid_query"
   | "workspace.not_found"
   | "workspace.payload_required"

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve, sep } from "node:path";
 import { AppError } from "@webcli/contracts";
 import type {
   AppClientCallEnvelope,
@@ -31,8 +32,10 @@ import { CommandService } from "./command-service.js";
 import {
   ensureHomeScopedDirectory,
   ensureHomeScopedPath,
+  isWithinHomePath,
   listHomePathSuggestions,
   resolveHomeDirectory,
+  resolveWorkspacePath,
 } from "./home-paths.js";
 import type { SessionRuntime, SessionRuntimeEvent } from "./runtime.js";
 import { ThreadProjectionService } from "./thread-projection-service.js";
@@ -148,6 +151,33 @@ export class WorkbenchService {
 
   listPathSuggestions(query: string | undefined) {
     return listHomePathSuggestions(query, this.homePath);
+  }
+
+  async resolveReadableResourcePath(value: string): Promise<string> {
+    const normalized = resolveWorkspacePath(value, this.homePath);
+    if (isWithinHomePath(normalized, this.homePath)) {
+      return normalized;
+    }
+
+    await this.ensureThreadSummaryCache();
+    const allowedRoots = new Set<string>([resolve(process.cwd())]);
+    for (const workspace of this.workspaceRepo.list()) {
+      allowedRoots.add(resolve(workspace.absPath));
+    }
+    for (const thread of this.threadSummaries.values()) {
+      allowedRoots.add(resolve(thread.cwd));
+    }
+
+    for (const root of allowedRoots) {
+      if (normalized === root || normalized.startsWith(`${root}${sep}`)) {
+        return normalized;
+      }
+    }
+
+    throw new AppError(
+      "resource.outside_scope",
+      "Resource path must stay inside the home directory or a known thread root",
+    );
   }
 
   createWorkspace(input: WorkspaceCreateInput): WorkspaceRecord {

@@ -21,7 +21,6 @@ import type {
 import {
   WorkbenchService,
   WorkspaceRepo,
-  ensureHomeScopedPath,
   type SessionRuntime,
 } from "@webcli/core";
 import { CodexRuntime } from "@webcli/runtime-codex";
@@ -121,7 +120,7 @@ export async function createApp(
         );
       }
 
-      const absPath = ensureHomeScopedPath(requestedPath);
+      const absPath = await service.resolveReadableResourcePath(requestedPath);
       const stats = statSync(absPath, { throwIfNoEntry: false });
       if (!stats || !stats.isFile()) {
         reply.code(404);

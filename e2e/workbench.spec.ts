@@ -143,6 +143,40 @@ test("opens local code links in a syntax-highlighted preview modal", async ({ pa
   await expect(page.getByTestId("code-preview-editor")).toBeVisible();
 });
 
+test("opens /srv absolute code links in the preview modal", async ({ page }) => {
+  const filePath = "/srv/webcli-staging/repo/apps/web/src/App.tsx";
+  await page.route("**/api/resource?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/resource" && url.searchParams.get("path") === filePath) {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/plain; charset=utf-8",
+        body: "export const App = () => <main>srv preview</main>;\n",
+      });
+      return;
+    }
+
+    await route.fallback();
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await ensureWorkspace(page);
+  await ensureThread(page);
+
+  await page.getByTestId("composer-input").fill(`[App.tsx](${filePath}#L1)`);
+  await page.getByTestId("send-button").click();
+
+  const timeline = page.getByTestId("timeline-list");
+  await timeline.getByRole("link", { name: "App.tsx" }).click();
+
+  await expect(page.getByTestId("code-preview-modal")).toBeVisible();
+  await expect(page.getByTestId("code-preview-title")).toContainText("App.tsx");
+  await expect(page.getByTestId("code-preview-editor")).toBeVisible();
+  await expect(page.getByTestId("code-preview-modal")).toContainText("第 1 行");
+});
+
 test("does not log monaco dispose errors when closing review and code preview", async ({
   page,
 }) => {
