@@ -445,7 +445,7 @@ describe("createApp", () => {
         createdAt: 5,
         updatedAt: 6,
       }),
-      makeRuntimeThread("/tmp/outside-workspace", {
+      makeRuntimeThread("/srv/outside-workspace", {
         id: "thread-outside",
         name: "Outside",
         createdAt: 7,
@@ -490,7 +490,7 @@ describe("createApp", () => {
       expect.objectContaining({ label: "1w", remainingPercent: 48 }),
     ]);
     expect(bootstrap.models).toHaveLength(1);
-    expect(bootstrap.workspaces).toHaveLength(2);
+    expect(bootstrap.workspaces).toHaveLength(3);
     expect(bootstrap.activeThreads).toHaveLength(3);
     expect(bootstrap.archivedThreadCount).toBe(1);
     expect(
@@ -498,7 +498,13 @@ describe("createApp", () => {
         .map((thread: { workspaceName: string | null }) => thread.workspaceName)
         .filter(Boolean)
         .sort(),
-    ).toEqual(["Workspace", "derived-project"]);
+    ).toEqual(["Workspace", "derived-project", "outside-workspace"]);
+    expect(
+      bootstrap.activeThreads.find((thread: { id: string }) => thread.id === "thread-outside"),
+    ).toMatchObject({
+      workspaceId: "derived:/srv/outside-workspace",
+      workspaceName: "outside-workspace",
+    });
 
     const archivedPage = await fetch(
       `http://${env.host}:${port}/api/thread-summaries?archived=true&limit=1`,
@@ -529,8 +535,23 @@ describe("createApp", () => {
     const workspacesAfterDismiss = await fetch(`http://${env.host}:${port}/api/workspaces`).then(
       (response) => response.json(),
     );
-    expect(workspacesAfterDismiss).toHaveLength(1);
-    expect(workspacesAfterDismiss[0].id).toBe(savedWorkspace.id);
+    expect(workspacesAfterDismiss).toHaveLength(2);
+    expect(workspacesAfterDismiss.map((workspace: { id: string }) => workspace.id)).toEqual(
+      expect.arrayContaining(["derived:/srv/outside-workspace", savedWorkspace.id]),
+    );
+
+    const dismissOutsideResponse = await fetch(`http://${env.host}:${port}/api/workspaces/dismiss`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ absPath: "/srv/outside-workspace" }),
+    });
+    expect(dismissOutsideResponse.status).toBe(204);
+
+    const workspacesAfterOutsideDismiss = await fetch(
+      `http://${env.host}:${port}/api/workspaces`,
+    ).then((response) => response.json());
+    expect(workspacesAfterOutsideDismiss).toHaveLength(1);
+    expect(workspacesAfterOutsideDismiss[0].id).toBe(savedWorkspace.id);
 
     const sessionAMessages: Array<AppServerMessage> = [];
     const sessionBMessages: Array<AppServerMessage> = [];

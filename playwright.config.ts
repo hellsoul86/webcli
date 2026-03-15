@@ -27,6 +27,7 @@ export default defineConfig({
       "HOST=127.0.0.1",
       `PORT=${apiPort}`,
       "WEBCLI_FAKE_RUNTIME=1",
+      "WEBCLI_FAKE_EXTERNAL_THREAD_CWD=/srv/webcli-staging/repo",
       `WEBCLI_DATA_DIR=${e2eDataDir}`,
       `WEBCLI_WEB_PORT=${webPort}`,
       `WEBCLI_API_PORT=${apiPort}`,

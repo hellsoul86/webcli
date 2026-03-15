@@ -121,7 +121,9 @@ export class FakeRuntime implements SessionRuntime {
     },
   ];
 
-  constructor(private readonly projectRoot: string) {}
+  constructor(private readonly projectRoot: string) {
+    this.seedThreadFromEnvironment();
+  }
 
   async start(): Promise<void> {
     this.emit({
@@ -810,6 +812,35 @@ export class FakeRuntime implements SessionRuntime {
       processId,
       session: payload,
     });
+  }
+
+  private seedThreadFromEnvironment(): void {
+    const seededCwd = process.env.WEBCLI_FAKE_EXTERNAL_THREAD_CWD?.trim();
+    if (!seededCwd) {
+      return;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const thread: RuntimeThreadRecord = {
+      id: "thread-external-seed",
+      name: "Staging repo",
+      preview: "Outside-home thread for sidebar coverage",
+      archived: false,
+      cwd: seededCwd,
+      createdAt: now - 120,
+      updatedAt: now - 60,
+      status: { type: "idle" },
+      modelProvider: "openai",
+      source: "appServer",
+      agentNickname: null,
+      agentRole: null,
+      gitInfo: null,
+      path: null,
+      ephemeral: false,
+      turns: [],
+    };
+
+    this.threads.set(thread.id, thread);
   }
 }
 

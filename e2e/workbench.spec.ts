@@ -219,6 +219,49 @@ test("does not log monaco dispose errors when closing review and code preview", 
   expect(monacoDisposeErrors).toEqual([]);
 });
 
+test("groups outside-home threads under a derived workspace and can dismiss it", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  const externalWorkspaceRow = page
+    .locator('[data-testid^="workspace-row-"]')
+    .filter({ hasText: "repo" })
+    .first();
+  await expect(externalWorkspaceRow).toBeVisible();
+
+  const externalThreadRow = page
+    .locator('[data-testid^="thread-row-"]')
+    .filter({ hasText: "Staging repo" })
+    .first();
+  await expect(externalThreadRow).toBeVisible();
+  await externalThreadRow.click();
+
+  await page.getByTestId("git-workbench-open-button").click();
+  await expect(page.getByTestId("git-workbench")).toBeVisible();
+  await expect(page.getByTestId("git-review-group-conflicted")).toBeVisible();
+  await expect(page.getByTestId("git-review-path")).toContainText("docs/review/notes.md");
+  await page.getByRole("button", { name: "返回会话" }).click();
+
+  const externalWorkspaceCard = externalWorkspaceRow.locator(
+    "xpath=ancestor::div[contains(@class,'workspace-row')]",
+  );
+  await externalWorkspaceCard.getByRole("button", { name: "维护项目" }).click();
+  await expect(page.getByText("接管项目")).toBeVisible();
+  await page.getByRole("button", { name: "移除" }).click();
+
+  await expect(
+    page.locator('[data-testid^="workspace-row-"]').filter({ hasText: "repo" }),
+  ).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await expect(
+    page.locator('[data-testid^="workspace-row-"]').filter({ hasText: "repo" }),
+  ).toHaveCount(0);
+});
+
 async function ensureWorkspace(page: Page): Promise<void> {
   const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
   const threadOpenButton = page.getByTestId("thread-open-button");
