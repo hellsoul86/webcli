@@ -71,14 +71,14 @@ describe("workspace projection helpers", () => {
     expect(summary.archived).toBe(true);
   });
 
-  it("builds derived workspaces for home-scoped threads outside saved projects", () => {
+  it("builds derived workspaces for home-scoped and outside-home threads outside saved projects", () => {
     const catalog = new WorkspaceCatalogService().buildWorkspaceCatalog(
       [makeWorkspace("saved", "/Users/roy/Development/webcli")],
       [
         makeThread("/Users/roy"),
         makeThread("/Users/roy/OtherProject"),
         makeThread("/Users/roy/Development/webcli/subdir"),
-        makeThread("/tmp/outside"),
+        makeThread("/srv/staging/repo"),
       ],
       "/Users/roy",
     );
@@ -87,9 +87,13 @@ describe("workspace projection helpers", () => {
       "/Users/roy",
       "/Users/roy/Development/webcli",
       "/Users/roy/OtherProject",
+      "/srv/staging/repo",
     ]);
-    expect(catalog.filter((workspace) => workspace.source === "derived")).toHaveLength(2);
+    expect(catalog.filter((workspace) => workspace.source === "derived")).toHaveLength(3);
     expect(catalog.find((workspace) => workspace.absPath === "/Users/roy")?.name).toBe("~");
+    expect(catalog.find((workspace) => workspace.absPath === "/srv/staging/repo")?.name).toBe(
+      "repo",
+    );
   });
 
   it("still infers nested projects when home root itself is saved", () => {
@@ -114,9 +118,14 @@ describe("workspace projection helpers", () => {
   it("skips derived workspaces inside ignored paths", () => {
     const catalog = new WorkspaceCatalogService().buildWorkspaceCatalog(
       [],
-      [makeThread("/Users/roy/Documents"), makeThread("/Users/roy/Documents/nested")],
+      [
+        makeThread("/Users/roy/Documents"),
+        makeThread("/Users/roy/Documents/nested"),
+        makeThread("/srv/staging/repo"),
+        makeThread("/srv/staging/repo/apps/web"),
+      ],
       "/Users/roy",
-      ["/Users/roy/Documents"],
+      ["/Users/roy/Documents", "/srv/staging/repo"],
     );
 
     expect(catalog).toHaveLength(0);

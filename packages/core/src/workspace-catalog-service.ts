@@ -1,6 +1,5 @@
 import { basename, resolve, sep } from "node:path";
 import type { ThreadSummary, WorkspaceRecord } from "@webcli/contracts";
-import { isWithinHomePath } from "./home-paths.js";
 
 type WorkspaceCatalogThread = {
   cwd: string;
@@ -58,10 +57,6 @@ export class WorkspaceCatalogService {
 
     for (const thread of threads) {
       const normalizedCwd = normalizePath(thread.cwd);
-      if (!isWithinHomePath(normalizedCwd, homePath)) {
-        continue;
-      }
-
       if (normalizedIgnoredPaths.some((ignoredPath) => isBoundaryPrefix(ignoredPath, normalizedCwd))) {
         continue;
       }

@@ -31,7 +31,6 @@ import { ApprovalBroker } from "./approval-broker.js";
 import { CommandService } from "./command-service.js";
 import {
   ensureHomeScopedDirectory,
-  ensureHomeScopedPath,
   isWithinHomePath,
   listHomePathSuggestions,
   resolveHomeDirectory,
@@ -188,7 +187,7 @@ export class WorkbenchService {
   }
 
   dismissWorkspace(input: WorkspaceDismissInput): void {
-    const absPath = ensureHomeScopedPath(input.absPath, this.homePath);
+    const absPath = resolveWorkspacePath(input.absPath, this.homePath);
     this.workspaceRepo.ignorePath(absPath);
     this.invalidateWorkspaceCatalog();
   }
