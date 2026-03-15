@@ -2,6 +2,7 @@ import {
   Suspense,
   lazy,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -45,7 +46,7 @@ import { formatDateTime, formatNumber, formatPercent, formatRelativeShort } from
 import { translate } from "../../i18n/init";
 import { useAppLocale } from "../../i18n/use-i18n";
 import { codexClient } from "../../lib/codex-client";
-import { routeWorkbenchServerMessage } from "../../shared/workbench/event-router";
+import { createWorkbenchMessageDispatcher } from "../../shared/workbench/event-router";
 import {
   type CodeLinkReference,
   type ImagePreviewReference,
@@ -260,6 +261,7 @@ export function App() {
   const setCommandSession = useWorkbenchStore((state) => state.setCommandSession);
   const appendCommandOutput = useWorkbenchStore((state) => state.appendCommandOutput);
   const appendDelta = useWorkbenchStore((state) => state.appendDelta);
+  const appendDeltaBatch = useWorkbenchStore((state) => state.appendDeltaBatch);
   const setIntegrationSnapshot = useWorkbenchStore((state) => state.setIntegrationSnapshot);
   const setFuzzySearch = useWorkbenchStore((state) => state.setFuzzySearch);
   const clearFuzzySearch = useWorkbenchStore((state) => state.clearFuzzySearch);
@@ -293,6 +295,8 @@ export function App() {
   const [gitWorkbenchExpanded, setGitWorkbenchExpanded] = useState(false);
   const [gitTreeFilterByWorkspaceId, setGitTreeFilterByWorkspaceId] = useState<Record<string, string>>({});
   const [visibleTimelineCount, setVisibleTimelineCount] = useState(INITIAL_TIMELINE_WINDOW_SIZE);
+  const [timelineDeltaVersion, setTimelineDeltaVersion] = useState(0);
+  const [streamingPlainItems, setStreamingPlainItems] = useState<Record<string, true>>({});
   const [threadTitleEditing, setThreadTitleEditing] = useState(false);
   const [threadTitleDraft, setThreadTitleDraft] = useState("");
   const [queuedPrompts, setQueuedPrompts] = useState<Record<string, Array<QueuedPrompt>>>({});
@@ -319,6 +323,8 @@ export function App() {
     null,
   );
   const timelineWindowLoadingRef = useRef(false);
+  const streamingPlainItemTimersRef = useRef<Record<string, number>>({});
+  const activeThreadIdRef = useRef<string | null>(activeThreadId);
   const previousActiveThreadIdRef = useRef<string | null>(null);
   const previousThreadStatusesRef = useRef<Record<string, ThreadSummary["status"]>>({});
   const queuedDispatchingThreadsRef = useRef(new Set<string>());
@@ -867,26 +873,82 @@ export function App() {
     };
   }, [inspectorResizing]);
 
+  const markStreamingItems = useCallback(
+    (
+      entries: Array<{
+        threadId: string;
+        itemId: string;
+        kind: TimelineEntry["kind"];
+      }>,
+    ) => {
+      const activeId = activeThreadIdRef.current;
+      const nextItemIds = entries
+        .filter(
+          (entry) =>
+            entry.threadId === activeId &&
+            (entry.kind === "agentMessage" || entry.kind === "reasoning"),
+        )
+        .map((entry) => entry.itemId);
+
+      if (nextItemIds.length === 0) {
+        return;
+      }
+
+      setTimelineDeltaVersion((current) => current + 1);
+      setStreamingPlainItems((current) => {
+        const next = { ...current };
+        for (const itemId of nextItemIds) {
+          next[itemId] = true;
+        }
+        return next;
+      });
+
+      for (const itemId of nextItemIds) {
+        const existingTimer = streamingPlainItemTimersRef.current[itemId];
+        if (existingTimer !== undefined) {
+          window.clearTimeout(existingTimer);
+        }
+        streamingPlainItemTimersRef.current[itemId] = window.setTimeout(() => {
+          delete streamingPlainItemTimersRef.current[itemId];
+          setStreamingPlainItems((current) => {
+            if (!current[itemId]) {
+              return current;
+            }
+            const next = { ...current };
+            delete next[itemId];
+            return next;
+          });
+        }, 220);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     void codexClient.connect();
+    const dispatcher = createWorkbenchMessageDispatcher({
+      queryClient,
+      setConnection,
+      upsertThread,
+      applyTurn,
+      applyTimelineItem,
+      appendDelta,
+      appendDeltaBatch,
+      setLatestDiff,
+      setLatestPlan,
+      setReview,
+      setWorkspaceGitSnapshot,
+      queueApproval,
+      resolveApproval: resolveApprovalInStore,
+      setCommandSession,
+      appendCommandOutput,
+      setIntegrationSnapshot,
+      onTimelineDeltaFlush: (entries) => {
+        markStreamingItems(entries);
+      },
+    });
     const unsubscribeMessages = codexClient.subscribe((message) => {
-      routeWorkbenchServerMessage(message, {
-        queryClient,
-        setConnection,
-        upsertThread,
-        applyTurn,
-        applyTimelineItem,
-        appendDelta,
-        setLatestDiff,
-        setLatestPlan,
-        setReview,
-        setWorkspaceGitSnapshot,
-        queueApproval,
-        resolveApproval: resolveApprovalInStore,
-        setCommandSession,
-        appendCommandOutput,
-        setIntegrationSnapshot,
-      });
+      dispatcher.dispatch(message);
     });
     const unsubscribeConnection = codexClient.onConnectionChange((connected) => {
       setConnection({ connected });
@@ -896,14 +958,17 @@ export function App() {
     });
 
     return () => {
+      dispatcher.dispose();
       unsubscribeMessages();
       unsubscribeConnection();
     };
   }, [
     appendCommandOutput,
     appendDelta,
+    appendDeltaBatch,
     applyTimelineItem,
     applyTurn,
+    markStreamingItems,
     queryClient,
     queueApproval,
     resolveApprovalInStore,
@@ -1005,6 +1070,17 @@ export function App() {
     timelinePrependRestoreRef.current = null;
     timelineWindowLoadingRef.current = false;
     autoFollowTimelineRef.current = true;
+    activeThreadIdRef.current = activeThreadId;
+    setStreamingPlainItems({});
+    setTimelineDeltaVersion(0);
+    for (const timerId of Object.values(streamingPlainItemTimersRef.current)) {
+      window.clearTimeout(timerId);
+    }
+    streamingPlainItemTimersRef.current = {};
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    activeThreadIdRef.current = activeThreadId;
   }, [activeThreadId]);
 
   const latestTimelineEntry = timeline.length > 0 ? timeline[timeline.length - 1] ?? null : null;
@@ -1021,6 +1097,16 @@ export function App() {
     timelinePrependRestoreRef.current = null;
     timelineWindowLoadingRef.current = false;
   }, [timeline.length]);
+
+  useEffect(
+    () => () => {
+      for (const timerId of Object.values(streamingPlainItemTimersRef.current)) {
+        window.clearTimeout(timerId);
+      }
+      streamingPlainItemTimersRef.current = {};
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     const container = conversationBodyRef.current;
@@ -1052,12 +1138,12 @@ export function App() {
     activeThreadId,
     timeline.length,
     latestTimelineEntry?.id,
-    latestTimelineEntry?.body.length,
+    timelineDeltaVersion,
     activeTurn?.turn.id,
     activeTurn?.turn.status,
   ]);
 
-  function loadOlderTimelineEntries(): void {
+  const loadOlderTimelineEntries = useCallback((): void => {
     const container = conversationBodyRef.current;
     if (
       !container ||
@@ -1075,9 +1161,9 @@ export function App() {
     setVisibleTimelineCount((current) =>
       Math.min(timelineEntryCount, current + TIMELINE_WINDOW_BATCH_SIZE),
     );
-  }
+  }, [hiddenTimelineEntryCount, timelineEntryCount]);
 
-  function handleConversationScroll(): void {
+  const handleConversationScroll = useCallback((): void => {
     const container = conversationBodyRef.current;
     if (!container) {
       return;
@@ -1090,7 +1176,7 @@ export function App() {
     ) {
       loadOlderTimelineEntries();
     }
-  }
+  }, [hiddenTimelineEntryCount, loadOlderTimelineEntries]);
 
   useEffect(() => {
     if (!bootstrap) {
@@ -1393,14 +1479,14 @@ export function App() {
     setWorkspaceModalOpen(false);
   }
 
-  function openCodePreview(reference: CodeLinkReference): void {
+  const openCodePreview = useCallback((reference: CodeLinkReference): void => {
     if (codePreviewClearTimerRef.current !== null) {
       window.clearTimeout(codePreviewClearTimerRef.current);
       codePreviewClearTimerRef.current = null;
     }
     setCodePreview(reference);
     setCodePreviewVisible(true);
-  }
+  }, []);
 
   function closeCodePreview(): void {
     setCodePreviewVisible(false);
@@ -1413,9 +1499,9 @@ export function App() {
     }, 0);
   }
 
-  function openImagePreview(reference: ImagePreviewReference): void {
+  const openImagePreview = useCallback((reference: ImagePreviewReference): void => {
     setImagePreview(reference);
-  }
+  }, []);
 
   function closeImagePreview(): void {
     setImagePreview(null);
@@ -2601,34 +2687,16 @@ export function App() {
                     <EmptyWorkspaceState onCreateWorkspace={openCreateWorkspaceModal} />
                   ) : activeThreadView ? (
                     timeline.length > 0 ? (
-                      <div className="timeline-stream" data-testid="timeline-list">
-                        {hiddenTimelineEntryCount > 0 ? (
-                          <div className="timeline-stream__window-banner">
-                            <span className="timeline-stream__window-summary">
-                              {t("timeline.windowSummary", {
-                                visible: formatNumber(timeline.length),
-                                total: formatNumber(timelineEntryCount),
-                              })}
-                            </span>
-                            <button
-                              className="timeline-stream__window-button"
-                              type="button"
-                              onClick={loadOlderTimelineEntries}
-                            >
-                              {t("timeline.loadOlder")}
-                            </button>
-                          </div>
-                        ) : null}
-                        {timeline.map((entry) => (
-                          <ConversationEntry
-                            key={entry.id}
-                            entry={entry}
-                            cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
-                            onCodeLinkActivate={openCodePreview}
-                            onImageActivate={openImagePreview}
-                          />
-                        ))}
-                      </div>
+                      <ConversationTimeline
+                        timeline={timeline}
+                        hiddenTimelineEntryCount={hiddenTimelineEntryCount}
+                        timelineEntryCount={timelineEntryCount}
+                        cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
+                        streamingPlainItems={streamingPlainItems}
+                        onCodeLinkActivate={openCodePreview}
+                        onImageActivate={openImagePreview}
+                        onLoadOlder={loadOlderTimelineEntries}
+                      />
                     ) : (
                       <EmptyThreadState
                         thread={activeThreadView.thread}
@@ -3256,17 +3324,64 @@ function ComposerPlanCard(props: {
   );
 }
 
+const ConversationTimeline = memo(function ConversationTimeline(props: {
+  timeline: Array<TimelineEntry>;
+  hiddenTimelineEntryCount: number;
+  timelineEntryCount: number;
+  cwd?: string | null;
+  streamingPlainItems: Record<string, true>;
+  onCodeLinkActivate?: (reference: CodeLinkReference) => void;
+  onImageActivate?: (reference: ImagePreviewReference) => void;
+  onLoadOlder: () => void;
+}) {
+  useAppLocale();
+
+  return (
+    <div className="timeline-stream" data-testid="timeline-list">
+      {props.hiddenTimelineEntryCount > 0 ? (
+        <div className="timeline-stream__window-banner">
+          <span className="timeline-stream__window-summary">
+            {translate("timeline.windowSummary", {
+              visible: formatNumber(props.timeline.length),
+              total: formatNumber(props.timelineEntryCount),
+            })}
+          </span>
+          <button
+            className="timeline-stream__window-button"
+            type="button"
+            onClick={props.onLoadOlder}
+          >
+            {translate("timeline.loadOlder")}
+          </button>
+        </div>
+      ) : null}
+      {props.timeline.map((entry) => (
+        <ConversationEntry
+          key={entry.id}
+          entry={entry}
+          cwd={props.cwd}
+          streamingPlainText={Boolean(props.streamingPlainItems[entry.id])}
+          onCodeLinkActivate={props.onCodeLinkActivate}
+          onImageActivate={props.onImageActivate}
+        />
+      ))}
+    </div>
+  );
+});
+
 const ConversationEntry = memo(function ConversationEntry(props: {
   entry: TimelineEntry;
   cwd?: string | null;
+  streamingPlainText?: boolean;
   onCodeLinkActivate?: (reference: CodeLinkReference) => void;
   onImageActivate?: (reference: ImagePreviewReference) => void;
 }) {
-  const { entry, cwd, onCodeLinkActivate, onImageActivate } = props;
+  const { entry, cwd, streamingPlainText, onCodeLinkActivate, onImageActivate } = props;
   return isMessageEntry(entry.kind) ? (
     <MessageEntry
       entry={entry}
       cwd={cwd}
+      streamingPlainText={Boolean(streamingPlainText && entry.kind === "agentMessage")}
       onCodeLinkActivate={onCodeLinkActivate}
       onImageActivate={onImageActivate}
     />
@@ -3274,6 +3389,7 @@ const ConversationEntry = memo(function ConversationEntry(props: {
     <ActivityEntry
       entry={entry}
       cwd={cwd}
+      streamingPlainText={Boolean(streamingPlainText && entry.kind === "reasoning")}
       onCodeLinkActivate={onCodeLinkActivate}
       onImageActivate={onImageActivate}
     />
@@ -3283,11 +3399,12 @@ const ConversationEntry = memo(function ConversationEntry(props: {
 const MessageEntry = memo(function MessageEntry(props: {
   entry: TimelineEntry;
   cwd?: string | null;
+  streamingPlainText?: boolean;
   onCodeLinkActivate?: (reference: CodeLinkReference) => void;
   onImageActivate?: (reference: ImagePreviewReference) => void;
 }) {
   useAppLocale();
-  const { entry, cwd, onCodeLinkActivate, onImageActivate } = props;
+  const { entry, cwd, streamingPlainText, onCodeLinkActivate, onImageActivate } = props;
   const placeholder = entry.kind === "agentMessage" ? translate("common.loading") : "...";
 
   return (
@@ -3301,6 +3418,7 @@ const MessageEntry = memo(function MessageEntry(props: {
         <RenderableMarkdown
           text={entry.body}
           cwd={cwd}
+          renderMode={streamingPlainText ? "plain" : "auto"}
           onCodeLinkActivate={onCodeLinkActivate}
           onImageActivate={onImageActivate}
         />
@@ -3314,11 +3432,12 @@ const MessageEntry = memo(function MessageEntry(props: {
 const ActivityEntry = memo(function ActivityEntry(props: {
   entry: TimelineEntry;
   cwd?: string | null;
+  streamingPlainText?: boolean;
   onCodeLinkActivate?: (reference: CodeLinkReference) => void;
   onImageActivate?: (reference: ImagePreviewReference) => void;
 }) {
   useAppLocale();
-  const { entry, cwd, onCodeLinkActivate, onImageActivate } = props;
+  const { entry, cwd, streamingPlainText, onCodeLinkActivate, onImageActivate } = props;
   const summary = describeActivitySummary(entry);
   const details = describeActivityDetails(entry);
   const collapsible = shouldCollapseActivityByDefault(entry.kind) && Boolean(details?.trim());
@@ -3353,6 +3472,7 @@ const ActivityEntry = memo(function ActivityEntry(props: {
             text={details}
             cwd={cwd}
             compact
+            renderMode={streamingPlainText ? "plain" : "auto"}
             onCodeLinkActivate={onCodeLinkActivate}
             onImageActivate={onImageActivate}
           />

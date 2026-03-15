@@ -429,23 +429,28 @@ export class FakeRuntime implements SessionRuntime {
       });
     }, 30);
 
-    this.schedule(() => {
-      this.emit({
-        type: "timeline.delta",
-        threadId,
-        item: makeTimelineEntry({
-          id: replyItemId,
-          turnId,
-          kind: "agentMessage",
-          title: "Codex",
-          body: "READY",
-          raw: {
+    const replyChunks = prompt.startsWith("stream-")
+      ? ["RE", "ADY ", prompt]
+      : ["RE", "AD", "Y"];
+    replyChunks.forEach((chunk, index) => {
+      this.schedule(() => {
+        this.emit({
+          type: "timeline.delta",
+          threadId,
+          item: makeTimelineEntry({
             id: replyItemId,
-            type: "agentMessage",
-          },
-        }),
-      });
-    }, 40);
+            turnId,
+            kind: "agentMessage",
+            title: "Codex",
+            body: chunk,
+            raw: {
+              id: replyItemId,
+              type: "agentMessage",
+            },
+          }),
+        });
+      }, 40 + index * 220);
+    });
 
     this.schedule(() => {
       this.emit({
@@ -467,7 +472,7 @@ export class FakeRuntime implements SessionRuntime {
         type: "approval.requested",
         approval,
       });
-    }, 80);
+    }, 560);
 
     return cloneTurn(turn);
   }

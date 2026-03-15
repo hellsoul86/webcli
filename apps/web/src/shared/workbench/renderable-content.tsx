@@ -4,6 +4,7 @@ export type RenderableMarkdownProps = {
   text: string;
   cwd?: string | null;
   compact?: boolean;
+  renderMode?: "auto" | "plain";
   onCodeLinkActivate?: (reference: CodeLinkReference) => void;
   onImageActivate?: (image: ImagePreviewReference) => void;
 };
@@ -121,7 +122,8 @@ export const RenderableMarkdown = memo(function RenderableMarkdown(props: Render
     return null;
   }
 
-  const useRichMarkdown = shouldUseRichMarkdown(normalizedText, props.cwd);
+  const useRichMarkdown =
+    props.renderMode !== "plain" && shouldUseRichMarkdown(normalizedText, props.cwd);
 
   return (
     <div className={props.compact ? "stream-markdown stream-markdown--compact" : "stream-markdown"}>

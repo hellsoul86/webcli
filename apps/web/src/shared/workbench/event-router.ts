@@ -4,6 +4,7 @@ import type {
   AppServerMessage,
   BootstrapResponse,
   ThreadSummary,
+  TimelineEntry as WorkbenchTimelineEntry,
 } from "@webcli/contracts";
 import { useWorkbenchStore } from "../../store/workbench-store";
 
@@ -16,6 +17,7 @@ export type WorkbenchEventContext = {
   applyTurn: StoreState["applyTurn"];
   applyTimelineItem: StoreState["applyTimelineItem"];
   appendDelta: StoreState["appendDelta"];
+  appendDeltaBatch: StoreState["appendDeltaBatch"];
   setLatestDiff: StoreState["setLatestDiff"];
   setLatestPlan: StoreState["setLatestPlan"];
   setReview: StoreState["setReview"];
@@ -25,6 +27,23 @@ export type WorkbenchEventContext = {
   setCommandSession: StoreState["setCommandSession"];
   appendCommandOutput: StoreState["appendCommandOutput"];
   setIntegrationSnapshot: StoreState["setIntegrationSnapshot"];
+  onTimelineDeltaFlush?: (
+    entries: Array<{
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      kind: WorkbenchTimelineEntry["kind"];
+      delta: string;
+    }>,
+  ) => void;
+};
+
+type TimelineDeltaEntry = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  kind: WorkbenchTimelineEntry["kind"];
+  delta: string;
 };
 
 export function routeWorkbenchServerMessage(
@@ -98,6 +117,80 @@ export function routeWorkbenchServerMessage(
       context.setIntegrationSnapshot(message.params.snapshot);
       return;
   }
+}
+
+export function createWorkbenchMessageDispatcher(context: WorkbenchEventContext): {
+  dispatch: (message: AppServerMessage) => void;
+  dispose: () => void;
+} {
+  const pendingDeltas = new Map<string, TimelineDeltaEntry>();
+  let frameId: number | ReturnType<typeof setTimeout> | null = null;
+  const target = typeof window !== "undefined" ? window : globalThis;
+
+  const cancelFrame =
+    typeof target.cancelAnimationFrame === "function"
+      ? (id: number | ReturnType<typeof setTimeout>) => target.cancelAnimationFrame(id as number)
+      : (id: number | ReturnType<typeof setTimeout>) =>
+          target.clearTimeout(id as ReturnType<typeof setTimeout>);
+  const requestFrame =
+    typeof target.requestAnimationFrame === "function"
+      ? (callback: () => void) => target.requestAnimationFrame(callback)
+      : (callback: () => void) => target.setTimeout(callback, 16);
+
+  const flush = () => {
+    if (pendingDeltas.size === 0) {
+      return;
+    }
+
+    const batch = [...pendingDeltas.values()];
+    pendingDeltas.clear();
+    context.appendDeltaBatch(batch);
+    context.onTimelineDeltaFlush?.(batch);
+  };
+
+  const scheduleFlush = () => {
+    if (frameId !== null) {
+      return;
+    }
+
+    frameId = requestFrame(() => {
+      frameId = null;
+      flush();
+    });
+  };
+
+  return {
+    dispatch(message) {
+      if (message.type === "server.notification" && message.method === "timeline.delta") {
+        const entry: TimelineDeltaEntry = {
+          threadId: message.params.threadId,
+          turnId: message.params.item.turnId,
+          itemId: message.params.item.id,
+          kind: message.params.item.kind,
+          delta: message.params.item.body,
+        };
+        const key = `${entry.threadId}:${entry.turnId}:${entry.itemId}:${entry.kind}`;
+        const existing = pendingDeltas.get(key);
+        if (existing) {
+          existing.delta = `${existing.delta}${entry.delta}`;
+        } else {
+          pendingDeltas.set(key, entry);
+        }
+        scheduleFlush();
+        return;
+      }
+
+      flush();
+      routeWorkbenchServerMessage(message, context);
+    },
+    dispose() {
+      if (frameId !== null) {
+        cancelFrame(frameId);
+        frameId = null;
+      }
+      flush();
+    },
+  };
 }
 
 function patchBootstrapAccountSummary(

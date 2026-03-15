@@ -166,6 +166,36 @@ describe("workbench store", () => {
     expect(timeline[0].body).toContain("Part A + Part B");
   });
 
+  it("applies batched streaming deltas in a single update", () => {
+    const store = useWorkbenchStore.getState();
+    store.hydrateThread({
+      ...makeThread(),
+      turnOrder: [],
+      turns: {},
+    });
+
+    store.appendDeltaBatch([
+      {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "item-2",
+        kind: "agentMessage",
+        delta: "Part A",
+      },
+      {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "item-2",
+        kind: "agentMessage",
+        delta: " + Part B",
+      },
+    ]);
+
+    const timeline = selectTimeline(useWorkbenchStore.getState().hydratedThreads["thread-1"]);
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].body).toBe("Part A + Part B");
+  });
+
   it("merges turn snapshots without discarding streamed items", () => {
     const store = useWorkbenchStore.getState();
     store.hydrateThread({

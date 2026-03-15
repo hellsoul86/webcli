@@ -121,6 +121,39 @@ test("renders markdown and media resources inside the timeline stream", async ({
   await expect(page.getByTestId("image-preview-full")).toHaveAttribute("src", /data:image\/png/i);
 });
 
+test("streams assistant replies incrementally without replacing the item", async ({ page }) => {
+  const consoleErrors: Array<string> = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await ensureWorkspace(page);
+  await ensureThread(page);
+
+  const prompt = `stream-${Date.now()}`;
+  const expectedReply = `READY ${prompt}`;
+  await page.getByTestId("composer-input").fill(prompt);
+  await page.getByTestId("send-button").click();
+
+  const timeline = page.getByTestId("timeline-list");
+  await expect.poll(async () => {
+    const texts = await timeline.locator("article").allTextContents();
+    return texts.some((text) => text.trim() === "RE");
+  }).toBe(true);
+
+  await expect.poll(async () => {
+    const texts = await timeline.locator("article").allTextContents();
+    return texts.some((text) => text.includes(expectedReply));
+  }).toBe(true);
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("opens local code links in a syntax-highlighted preview modal", async ({ page }) => {
   await page.goto("/");
 
