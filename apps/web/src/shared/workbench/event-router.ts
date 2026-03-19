@@ -3,6 +3,7 @@ import type {
   AccountSummary,
   AppServerMessage,
   BootstrapResponse,
+  RuntimeStatus,
   ThreadSummary,
   TimelineEntry as WorkbenchTimelineEntry,
 } from "@webcli/contracts";
@@ -55,9 +56,23 @@ export function routeWorkbenchServerMessage(
   }
 
   switch (message.method) {
-    case "runtime.statusChanged":
+    case "runtime.statusChanged": {
+      const previousConnection = useWorkbenchStore.getState().connection;
       context.setConnection(message.params.runtime);
+      patchBootstrapRuntimeStatus(context.queryClient, message.params.runtime);
+      const currentBootstrap = context.queryClient.getQueryData<BootstrapResponse>(["bootstrap"]);
+      const shouldRefreshBootstrap =
+        message.params.runtime.connected &&
+        currentBootstrap !== undefined &&
+        (!previousConnection.connected ||
+          previousConnection.restartCount !== message.params.runtime.restartCount ||
+          currentBootstrap.activeThreads.length === 0);
+
+      if (shouldRefreshBootstrap) {
+        void context.queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      }
       return;
+    }
     case "account.updated":
       patchBootstrapAccountSummary(context.queryClient, message.params.account);
       return;
@@ -202,6 +217,20 @@ function patchBootstrapAccountSummary(
       ? {
           ...current,
           account,
+        }
+      : current,
+  );
+}
+
+function patchBootstrapRuntimeStatus(
+  queryClient: QueryClient,
+  runtime: RuntimeStatus,
+): void {
+  queryClient.setQueryData<BootstrapResponse | undefined>(["bootstrap"], (current) =>
+    current
+      ? {
+          ...current,
+          runtime,
         }
       : current,
   );

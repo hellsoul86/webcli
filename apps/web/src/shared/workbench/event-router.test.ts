@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppServerMessage } from "@webcli/contracts";
+import type { AppServerMessage, BootstrapResponse } from "@webcli/contracts";
+import { resetWorkbenchPersistStorage, useWorkbenchStore } from "../../store/workbench-store";
 import {
   createWorkbenchMessageDispatcher,
   routeWorkbenchServerMessage,
@@ -19,6 +20,47 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  useWorkbenchStore.setState({
+    connection: {
+      connected: false,
+      childPid: null,
+      authenticated: false,
+      requiresOpenaiAuth: true,
+      restartCount: 0,
+      lastError: null,
+    },
+    activeWorkspaceId: "all",
+    activeThreadId: null,
+    inspectorTab: "diff",
+    threadLifecycle: {
+      archivedMode: "active",
+    },
+    threadSummaries: {},
+    hydratedThreads: {},
+    hydratedOrder: [],
+    gitSnapshotsByWorkspaceId: {},
+    selectedGitFileByWorkspaceId: {},
+    pendingApprovals: [],
+    commandSessions: {},
+    commandOrder: [],
+    integrations: {
+      settingsOpen: false,
+      settingsTab: "general",
+      authStatus: null,
+      config: null,
+      mcpServers: [],
+      skills: [],
+      apps: [],
+      plugins: [],
+      fuzzySearch: {
+        sessionId: null,
+        query: "",
+        status: "idle",
+        results: [],
+      },
+    },
+  });
+  resetWorkbenchPersistStorage();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -195,5 +237,84 @@ describe("routeWorkbenchServerMessage", () => {
     ]);
 
     dispatcher.dispose();
+  });
+
+  it("refreshes bootstrap when runtime reconnects into an empty cached thread list", () => {
+    const queryClient = new QueryClient();
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+    const bootstrap: BootstrapResponse = {
+      runtime: {
+        connected: true,
+        childPid: 11,
+        authenticated: true,
+        requiresOpenaiAuth: false,
+        restartCount: 1,
+        lastError: null,
+      },
+      account: {
+        authenticated: true,
+        requiresOpenaiAuth: false,
+        accountType: "chatgpt",
+        email: "user@example.com",
+        planType: "pro",
+        usageWindows: [],
+      },
+      models: [],
+      workspaces: [],
+      activeThreads: [],
+      archivedThreadCount: 0,
+      settings: {
+        config: null,
+      },
+    };
+    queryClient.setQueryData(["bootstrap"], bootstrap);
+    useWorkbenchStore.setState({
+      connection: {
+        connected: true,
+        childPid: 11,
+        authenticated: true,
+        requiresOpenaiAuth: false,
+        restartCount: 1,
+        lastError: null,
+      },
+    });
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "runtime.statusChanged",
+        params: {
+          runtime: {
+            connected: true,
+            childPid: 22,
+            authenticated: true,
+            requiresOpenaiAuth: false,
+            restartCount: 1,
+            lastError: null,
+          },
+        },
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrationSnapshot: vi.fn(),
+        setWorkspaceGitSnapshot: vi.fn(),
+      },
+    );
+
+    expect(queryClient.getQueryData<BootstrapResponse>(["bootstrap"])?.runtime.childPid).toBe(22);
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["bootstrap"] });
   });
 });

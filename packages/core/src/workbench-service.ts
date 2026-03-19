@@ -19,6 +19,7 @@ import type {
   IntegrationSnapshot,
   PendingApproval,
   RequestId,
+  RuntimeStatus,
   ThreadSummary,
   ThreadSummaryPageResponse,
   WorkbenchThread,
@@ -50,6 +51,8 @@ type ConnectionRecord = {
 
 const MAX_RETAINED_THREAD_VIEWS = 5;
 const DEFAULT_THREAD_PAGE_SIZE = 50;
+const THREAD_SUMMARY_WARMUP_RETRY_MS = 1000;
+const MAX_THREAD_SUMMARY_WARMUP_ATTEMPTS = 5;
 
 export class WorkbenchService {
   private readonly homePath: string;
@@ -64,6 +67,9 @@ export class WorkbenchService {
   private readonly workspaceGitSnapshots = new Map<string, GitWorkingTreeSnapshot>();
   private summaryCacheInitialized = false;
   private cachedWorkspaceCatalog: Array<WorkspaceRecord> | null = null;
+  private runtimeStatus: RuntimeStatus;
+  private threadSummaryWarmupTimer: ReturnType<typeof setTimeout> | null = null;
+  private threadSummaryWarmupAttempt = 0;
 
   constructor(
     private readonly runtime: SessionRuntime,
@@ -71,6 +77,7 @@ export class WorkbenchService {
     homePath = resolveHomeDirectory(),
   ) {
     this.homePath = homePath;
+    this.runtimeStatus = runtime.getStatus();
     this.runtime.subscribe((event) => {
       void this.handleRuntimeEvent(event);
     });
@@ -81,6 +88,7 @@ export class WorkbenchService {
   }
 
   async stop(): Promise<void> {
+    this.clearThreadSummaryWarmupTimer();
     await this.runtime.stop();
     this.workspaceRepo.close();
   }
@@ -756,6 +764,18 @@ export class WorkbenchService {
   private async handleRuntimeEvent(event: SessionRuntimeEvent): Promise<void> {
     switch (event.type) {
       case "status.changed":
+        {
+          const previousStatus = this.runtimeStatus;
+          this.runtimeStatus = event.status;
+          const shouldWarmup =
+            event.status.connected &&
+            (!previousStatus.connected || previousStatus.restartCount !== event.status.restartCount);
+
+          if (shouldWarmup) {
+            this.resetThreadSummaryCache();
+            this.scheduleThreadSummaryWarmup();
+          }
+        }
         this.broadcast("runtime.statusChanged", { runtime: event.status });
         return;
       case "account.updated":
@@ -1093,6 +1113,48 @@ export class WorkbenchService {
 
   private invalidateWorkspaceCatalog(): void {
     this.cachedWorkspaceCatalog = null;
+  }
+
+  private resetThreadSummaryCache(): void {
+    this.summaryCacheInitialized = false;
+    this.invalidateWorkspaceCatalog();
+  }
+
+  private clearThreadSummaryWarmupTimer(): void {
+    if (this.threadSummaryWarmupTimer !== null) {
+      clearTimeout(this.threadSummaryWarmupTimer);
+      this.threadSummaryWarmupTimer = null;
+    }
+  }
+
+  private scheduleThreadSummaryWarmup(): void {
+    this.clearThreadSummaryWarmupTimer();
+    this.threadSummaryWarmupAttempt = 0;
+    void this.runThreadSummaryWarmup();
+  }
+
+  private async runThreadSummaryWarmup(): Promise<void> {
+    if (!this.runtime.getStatus().connected) {
+      return;
+    }
+
+    this.threadSummaryWarmupAttempt += 1;
+    await this.refreshThreadSummaryCache();
+
+    if (this.threadSummaries.size > 0) {
+      this.broadcast("runtime.statusChanged", { runtime: this.runtime.getStatus() });
+      return;
+    }
+
+    if (this.threadSummaryWarmupAttempt >= MAX_THREAD_SUMMARY_WARMUP_ATTEMPTS) {
+      return;
+    }
+
+    this.summaryCacheInitialized = false;
+    this.threadSummaryWarmupTimer = setTimeout(() => {
+      this.threadSummaryWarmupTimer = null;
+      void this.runThreadSummaryWarmup();
+    }, THREAD_SUMMARY_WARMUP_RETRY_MS);
   }
 
   private reprojectThreadSummaries(workspaces: Array<WorkspaceRecord>): void {
