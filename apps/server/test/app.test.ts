@@ -952,6 +952,79 @@ describe("createApp", () => {
       rmSync(threadRoot, { recursive: true, force: true });
     }
   });
+
+  it("refreshes cached thread summaries after the runtime reconnects", async () => {
+    const workspacePath = join(tempDir, "workspace");
+    mkdirSync(workspacePath, { recursive: true });
+
+    const env: AppEnv = {
+      host: "127.0.0.1",
+      port: 0,
+      codexCommand: "codex",
+      dataDir: tempDir,
+      dbPath: join(tempDir, "app.sqlite"),
+      webDistDir: join(tempDir, "missing-web"),
+    };
+
+    const runtime = new FakeRuntime();
+    const { app } = await createApp(env, {
+      runtime,
+      workspaceRepo: new WorkspaceRepo(env.dbPath),
+    });
+
+    try {
+      await app.listen({ host: env.host, port: 0 });
+      const port = getBoundPort(app);
+
+      const initialBootstrap = await fetch(`http://${env.host}:${port}/api/bootstrap`).then(
+        (response) => response.json(),
+      );
+      expect(initialBootstrap.activeThreads).toHaveLength(0);
+      expect(initialBootstrap.archivedThreadCount).toBe(0);
+
+      setTimeout(() => {
+        runtime.activeThreads = [
+          makeRuntimeThread(workspacePath, {
+            id: "thread-recovered",
+            name: "Recovered",
+            createdAt: 10,
+            updatedAt: 11,
+          }),
+        ];
+        runtime.archivedThreads = [
+          makeRuntimeThread(workspacePath, {
+            id: "thread-archived-recovered",
+            name: "Recovered archived",
+            archived: true,
+            createdAt: 8,
+            updatedAt: 9,
+          }),
+        ];
+      }, 50);
+
+      runtime.status = {
+        ...runtime.status,
+        restartCount: runtime.status.restartCount + 1,
+      };
+      runtime.emit({
+        type: "status.changed",
+        status: runtime.status,
+      });
+
+      await waitForAsync(async () => {
+        const recoveredBootstrap = await fetch(`http://${env.host}:${port}/api/bootstrap`).then(
+          (response) => response.json(),
+        );
+        return (
+          recoveredBootstrap.activeThreads.length === 1 &&
+          recoveredBootstrap.activeThreads[0].id === "thread-recovered" &&
+          recoveredBootstrap.archivedThreadCount === 1
+        );
+      }, 3000);
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 function makeRuntimeThread(
@@ -1078,6 +1151,16 @@ async function delay(ms: number): Promise<void> {
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
   const startedAt = Date.now();
   while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Timed out waiting for condition");
+    }
+    await delay(10);
+  }
+}
+
+async function waitForAsync(predicate: () => Promise<boolean>, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (!(await predicate())) {
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error("Timed out waiting for condition");
     }
