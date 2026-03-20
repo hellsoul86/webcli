@@ -41,6 +41,11 @@ const WAVE1_NOTIFICATIONS_NOT_MISSING = [
   "configWarning",
   "rawResponseItem/completed",
   "item/commandExecution/terminalInteraction",
+  "thread/realtime/started",
+  "thread/realtime/itemAdded",
+  "thread/realtime/outputAudio/delta",
+  "thread/realtime/error",
+  "thread/realtime/closed",
 ];
 const WAVE2_REQUESTS_DEFERRED = [
   "experimentalFeature/list",
@@ -48,11 +53,6 @@ const WAVE2_REQUESTS_DEFERRED = [
   "windowsSandbox/setupStart",
 ];
 const WAVE2_NOTIFICATIONS_DEFERRED = [
-  "thread/realtime/started",
-  "thread/realtime/itemAdded",
-  "thread/realtime/outputAudio/delta",
-  "thread/realtime/error",
-  "thread/realtime/closed",
   "windows/worldWritableWarning",
   "windowsSandbox/setupCompleted",
 ];

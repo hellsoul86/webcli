@@ -237,6 +237,13 @@ export type ConversationSummarySnapshot = {
   gitInfo: ConversationSummaryGitInfo | null;
 };
 
+export type RealtimeAudioChunk = {
+  data: string;
+  sampleRate: number;
+  numChannels: number;
+  samplesPerChannel: number | null;
+};
+
 export type ThreadMetadataGitInfoUpdate = {
   sha?: string | null;
   branch?: string | null;

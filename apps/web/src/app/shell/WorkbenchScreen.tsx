@@ -253,6 +253,7 @@ export function App() {
     (state) => state.selectedGitFileByWorkspaceId,
   );
   const pendingApprovals = useWorkbenchStore((state) => state.pendingApprovals);
+  const realtimeSessionsByThreadId = useWorkbenchStore((state) => state.realtimeSessionsByThreadId);
   const commandSessions = useWorkbenchStore((state) => state.commandSessions);
   const commandOrder = useWorkbenchStore((state) => state.commandOrder);
   const integrations = useWorkbenchStore((state) => state.integrations);
@@ -277,6 +278,11 @@ export function App() {
   const setLatestPlan = useWorkbenchStore((state) => state.setLatestPlan);
   const setReview = useWorkbenchStore((state) => state.setReview);
   const setTurnTokenUsage = useWorkbenchStore((state) => state.setTurnTokenUsage);
+  const startRealtimeSession = useWorkbenchStore((state) => state.startRealtimeSession);
+  const appendRealtimeItem = useWorkbenchStore((state) => state.appendRealtimeItem);
+  const appendRealtimeAudio = useWorkbenchStore((state) => state.appendRealtimeAudio);
+  const failRealtimeSession = useWorkbenchStore((state) => state.failRealtimeSession);
+  const closeRealtimeSession = useWorkbenchStore((state) => state.closeRealtimeSession);
   const queueApproval = useWorkbenchStore((state) => state.queueApproval);
   const resolveApprovalInStore = useWorkbenchStore((state) => state.resolveApproval);
   const setCommandSession = useWorkbenchStore((state) => state.setCommandSession);
@@ -586,6 +592,9 @@ export function App() {
   const latestCommandSession =
     commandOrder.length > 0 ? commandSessions[commandOrder[0]] ?? null : null;
   const activeTurn = activeThreadView ? findActiveTurn(activeThreadView) : null;
+  const activeRealtimeSession = activeThreadId
+    ? realtimeSessionsByThreadId[activeThreadId] ?? null
+    : null;
   const activeThreadArchived = activeThreadView?.archived ?? activeThreadEntry?.archived ?? false;
   const activePlan =
     activeTurn &&
@@ -1068,6 +1077,11 @@ export function App() {
       setLatestPlan,
       setReview,
       setTurnTokenUsage,
+      startRealtimeSession,
+      appendRealtimeItem,
+      appendRealtimeAudio,
+      failRealtimeSession,
+      closeRealtimeSession,
       setWorkspaceGitSnapshot,
       queueApproval,
       resolveApproval: resolveApprovalInStore,
@@ -1154,8 +1168,12 @@ export function App() {
     appendCommandOutput,
     appendDelta,
     appendDeltaBatch,
+    appendRealtimeAudio,
+    appendRealtimeItem,
     applyTimelineItem,
     applyTurn,
+    closeRealtimeSession,
+    failRealtimeSession,
     markThreadClosed,
     markStreamingItems,
     queryClient,
@@ -1174,6 +1192,7 @@ export function App() {
     setReview,
     setTurnTokenUsage,
     setWorkspaceGitSnapshot,
+    startRealtimeSession,
     t,
     upsertThread,
   ]);
@@ -2961,6 +2980,7 @@ export function App() {
             timelineEntryCount={timelineEntryCount}
             cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
             streamingPlainItems={streamingPlainItems}
+            realtimeSession={activeRealtimeSession}
             composerPane={
               <ComposerPane
                 composer={composer}

@@ -200,6 +200,22 @@ const enUS = {
     },
     fileCount: "{{count}} files",
   },
+  realtime: {
+    title: "Realtime session",
+    transcript: "Transcript",
+    audio: "Audio",
+    empty: "Waiting for realtime items...",
+    audioWaiting: "Waiting for audio chunks...",
+    audioChunks: "{{count}} chunks",
+    audioRate: "{{rate}} Hz",
+    audioError: "Audio decode failed: {{error}}",
+    closedReason: "Closed: {{reason}}",
+    status: {
+      live: "Live",
+      closed: "Closed",
+      error: "Error",
+    },
+  },
   settings: {
     titleEyebrow: "Settings",
     title: "Desktop workbench configuration",

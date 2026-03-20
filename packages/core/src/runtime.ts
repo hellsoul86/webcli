@@ -32,6 +32,8 @@ import type {
   PendingServerRequest,
   PluginMarketplaceSnapshot,
   ProductSurface,
+  JsonValue,
+  RealtimeAudioChunk,
   ReasoningEffort,
   RemoteSkillExportResult,
   RemoteSkillSummary,
@@ -113,6 +115,31 @@ export type SessionRuntimeEvent =
       threadId: string;
       turnId: string;
       tokenUsage: ThreadTokenUsage;
+    }
+  | {
+      type: "thread.realtime.started";
+      threadId: string;
+      sessionId: string | null;
+    }
+  | {
+      type: "thread.realtime.itemAdded";
+      threadId: string;
+      item: JsonValue;
+    }
+  | {
+      type: "thread.realtime.outputAudio.delta";
+      threadId: string;
+      audio: RealtimeAudioChunk;
+    }
+  | {
+      type: "thread.realtime.error";
+      threadId: string;
+      message: string;
+    }
+  | {
+      type: "thread.realtime.closed";
+      threadId: string;
+      reason: string | null;
     }
   | {
       type: "turn.updated";

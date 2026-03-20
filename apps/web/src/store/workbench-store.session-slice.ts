@@ -1,4 +1,6 @@
 import type { StateCreator } from "zustand";
+import type { JsonValue, RealtimeAudioChunk } from "@webcli/contracts";
+import { buildRealtimeWavBlob, decodeRealtimeAudioChunk } from "../shared/workbench/realtime-audio";
 import {
   buildPlaceholderItem,
   cloneThreadView,
@@ -11,9 +13,19 @@ import {
   touchOrderedIds,
   upsertThreadSummary,
 } from "./workbench-store.helpers";
-import type { SessionSlice, TimelineEntry, WorkbenchState } from "./workbench-store.types";
+import type {
+  RealtimeAudioState,
+  RealtimeSessionState,
+  RealtimeTranscriptEntry,
+  SessionSlice,
+  TimelineEntry,
+  WorkbenchState,
+} from "./workbench-store.types";
 
 const MAX_HYDRATED_THREADS = 2;
+const REALTIME_AUDIO_REBUILD_DEBOUNCE_MS = 500;
+const realtimeAudioUrlTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let realtimeTranscriptSequence = 0;
 
 function applyDeltaEntries(
   threadViewState: WorkbenchState,
@@ -84,13 +96,196 @@ function applyDeltaEntries(
   };
 }
 
-export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSlice> = (set) => ({
+function createEmptyRealtimeAudioState(): RealtimeAudioState {
+  return {
+    sampleRate: null,
+    numChannels: null,
+    chunkCount: 0,
+    pcmChunks: [],
+    objectUrl: null,
+    decodeError: null,
+  };
+}
+
+function createRealtimeSessionState(
+  threadId: string,
+  sessionId: string | null,
+): RealtimeSessionState {
+  const now = Date.now();
+  return {
+    threadId,
+    sessionId,
+    status: "live",
+    startedAt: now,
+    updatedAt: now,
+    closedAt: null,
+    errorMessage: null,
+    closeReason: null,
+    items: [],
+    audio: createEmptyRealtimeAudioState(),
+  };
+}
+
+function revokeObjectUrl(objectUrl: string | null): void {
+  if (!objectUrl || typeof URL?.revokeObjectURL !== "function") {
+    return;
+  }
+  URL.revokeObjectURL(objectUrl);
+}
+
+function cancelRealtimeAudioUrlTimer(threadId: string): void {
+  const timer = realtimeAudioUrlTimers.get(threadId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    realtimeAudioUrlTimers.delete(threadId);
+  }
+}
+
+function extractRealtimeTextPreview(value: JsonValue): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const candidate = value as Record<string, JsonValue>;
+  for (const key of ["text", "content", "transcript"]) {
+    const entry = candidate[key];
+    if (typeof entry === "string" && entry.trim()) {
+      return entry;
+    }
+  }
+
+  if (Array.isArray(candidate.content)) {
+    const joined = candidate.content
+      .map((entry) => {
+        if (typeof entry === "string") {
+          return entry;
+        }
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          const nested = entry as Record<string, JsonValue>;
+          return typeof nested.text === "string" ? nested.text : null;
+        }
+        return null;
+      })
+      .filter((entry): entry is string => Boolean(entry?.trim()))
+      .join("\n");
+    return joined || null;
+  }
+
+  return null;
+}
+
+function getRealtimeKindLabel(value: JsonValue): string {
+  if (typeof value === "string") {
+    return "text";
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "item";
+  }
+
+  const candidate = value as Record<string, JsonValue>;
+  if (typeof candidate.type === "string" && candidate.type.trim()) {
+    return candidate.type;
+  }
+  if (typeof candidate.kind === "string" && candidate.kind.trim()) {
+    return candidate.kind;
+  }
+  return "item";
+}
+
+function createRealtimeTranscriptEntry(raw: JsonValue): RealtimeTranscriptEntry {
+  const candidateId =
+    raw && typeof raw === "object" && !Array.isArray(raw) && typeof raw.id === "string"
+      ? raw.id
+      : null;
+  const id = candidateId ?? `realtime-item-${Date.now()}-${realtimeTranscriptSequence++}`;
+  return {
+    id,
+    receivedAt: Date.now(),
+    raw,
+    kindLabel: getRealtimeKindLabel(raw),
+    textPreview: extractRealtimeTextPreview(raw),
+    jsonPreview: JSON.stringify(raw, null, 2) ?? String(raw),
+  };
+}
+
+function scheduleRealtimeAudioObjectUrlRebuild(
+  set: Parameters<StateCreator<WorkbenchState, [], [], SessionSlice>>[0],
+  get: Parameters<StateCreator<WorkbenchState, [], [], SessionSlice>>[1],
+  threadId: string,
+  immediate = false,
+): void {
+  cancelRealtimeAudioUrlTimer(threadId);
+
+  const rebuild = () => {
+    realtimeAudioUrlTimers.delete(threadId);
+    set((state) => {
+      const session = state.realtimeSessionsByThreadId[threadId];
+      if (
+        !session ||
+        session.audio.decodeError ||
+        session.audio.sampleRate === null ||
+        session.audio.numChannels === null ||
+        session.audio.pcmChunks.length === 0
+      ) {
+        return state;
+      }
+
+      const blob = buildRealtimeWavBlob(
+        session.audio.pcmChunks,
+        session.audio.sampleRate,
+        session.audio.numChannels,
+      );
+      const nextObjectUrl =
+        typeof URL?.createObjectURL === "function" ? URL.createObjectURL(blob) : null;
+
+      if (session.audio.objectUrl && session.audio.objectUrl !== nextObjectUrl) {
+        revokeObjectUrl(session.audio.objectUrl);
+      }
+
+      return {
+        realtimeSessionsByThreadId: {
+          ...state.realtimeSessionsByThreadId,
+          [threadId]: {
+            ...session,
+            audio: {
+              ...session.audio,
+              objectUrl: nextObjectUrl,
+            },
+          },
+        },
+      };
+    });
+  };
+
+  if (immediate) {
+    rebuild();
+    return;
+  }
+
+  const timer = setTimeout(rebuild, REALTIME_AUDIO_REBUILD_DEBOUNCE_MS);
+  realtimeAudioUrlTimers.set(threadId, timer);
+}
+
+function cleanupRealtimeSession(session: RealtimeSessionState | undefined): void {
+  if (!session) {
+    return;
+  }
+  cancelRealtimeAudioUrlTimer(session.threadId);
+  revokeObjectUrl(session.audio.objectUrl);
+}
+
+export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSlice> = (set, get) => ({
   threadSummaries: {},
   hydratedThreads: {},
   hydratedOrder: [],
   gitSnapshotsByWorkspaceId: {},
   selectedGitFileByWorkspaceId: {},
   pendingApprovals: [],
+  realtimeSessionsByThreadId: {},
   syncBootstrapActiveThreads: (threads) =>
     set((state) => {
       const activeIds = new Set(threads.map((thread) => thread.id));
@@ -422,6 +617,138 @@ export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSli
         hydratedOrder: touchOrderedIds(state.hydratedOrder, threadId),
       };
     }),
+  startRealtimeSession: (threadId, sessionId) =>
+    set((state) => {
+      cleanupRealtimeSession(state.realtimeSessionsByThreadId[threadId]);
+      return {
+        realtimeSessionsByThreadId: {
+          ...state.realtimeSessionsByThreadId,
+          [threadId]: createRealtimeSessionState(threadId, sessionId),
+        },
+      };
+    }),
+  appendRealtimeItem: (threadId, item) =>
+    set((state) => {
+      const session =
+        state.realtimeSessionsByThreadId[threadId] ?? createRealtimeSessionState(threadId, null);
+      return {
+        realtimeSessionsByThreadId: {
+          ...state.realtimeSessionsByThreadId,
+          [threadId]: {
+            ...session,
+            updatedAt: Date.now(),
+            items: [...session.items, createRealtimeTranscriptEntry(item)],
+          },
+        },
+      };
+    }),
+  appendRealtimeAudio: (threadId, chunk) => {
+    set((state) => {
+      const session =
+        state.realtimeSessionsByThreadId[threadId] ?? createRealtimeSessionState(threadId, null);
+      const audio = session.audio;
+
+      if (audio.decodeError) {
+        return {
+          realtimeSessionsByThreadId: {
+            ...state.realtimeSessionsByThreadId,
+            [threadId]: {
+              ...session,
+              updatedAt: Date.now(),
+              audio: {
+                ...audio,
+                chunkCount: audio.chunkCount + 1,
+              },
+            },
+          },
+        };
+      }
+
+      try {
+        const decoded = decodeRealtimeAudioChunk(chunk, {
+          sampleRate: audio.sampleRate ?? chunk.sampleRate,
+          numChannels: audio.numChannels ?? chunk.numChannels,
+        });
+
+        const nextSession: RealtimeSessionState = {
+          ...session,
+          updatedAt: Date.now(),
+          audio: {
+            ...audio,
+            sampleRate: decoded.sampleRate,
+            numChannels: decoded.numChannels,
+            chunkCount: audio.chunkCount + 1,
+            pcmChunks: [...audio.pcmChunks, decoded.pcmBytes],
+          },
+        };
+
+        return {
+          realtimeSessionsByThreadId: {
+            ...state.realtimeSessionsByThreadId,
+            [threadId]: nextSession,
+          },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const nextSession: RealtimeSessionState = {
+          ...session,
+          updatedAt: Date.now(),
+          audio: {
+            ...audio,
+            chunkCount: audio.chunkCount + 1,
+            decodeError: message,
+          },
+        };
+        if (audio.objectUrl) {
+          revokeObjectUrl(audio.objectUrl);
+          nextSession.audio.objectUrl = null;
+        }
+        cancelRealtimeAudioUrlTimer(threadId);
+        return {
+          realtimeSessionsByThreadId: {
+            ...state.realtimeSessionsByThreadId,
+            [threadId]: nextSession,
+          },
+        };
+      }
+    });
+    scheduleRealtimeAudioObjectUrlRebuild(set, get, threadId);
+  },
+  failRealtimeSession: (threadId, message) =>
+    set((state) => {
+      const session =
+        state.realtimeSessionsByThreadId[threadId] ?? createRealtimeSessionState(threadId, null);
+      return {
+        realtimeSessionsByThreadId: {
+          ...state.realtimeSessionsByThreadId,
+          [threadId]: {
+            ...session,
+            status: "error",
+            updatedAt: Date.now(),
+            errorMessage: message,
+          },
+        },
+      };
+    }),
+  closeRealtimeSession: (threadId, reason) => {
+    set((state) => {
+      const session =
+        state.realtimeSessionsByThreadId[threadId] ?? createRealtimeSessionState(threadId, null);
+      return {
+        realtimeSessionsByThreadId: {
+          ...state.realtimeSessionsByThreadId,
+          [threadId]: {
+            ...session,
+            status: session.status === "error" ? "error" : "closed",
+            updatedAt: Date.now(),
+            closedAt: Date.now(),
+            closeReason: reason,
+          },
+        },
+      };
+    });
+    scheduleRealtimeAudioObjectUrlRebuild(set, get, threadId, true);
+  },
   queueApproval: (approval) =>
     set((state) => ({
       pendingApprovals: state.pendingApprovals.some((candidate) => candidate.id === approval.id)
@@ -480,9 +807,13 @@ export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSli
     set((state) => {
       const nextHydratedThreads = { ...state.hydratedThreads };
       delete nextHydratedThreads[threadId];
+      const nextRealtimeSessions = { ...state.realtimeSessionsByThreadId };
+      cleanupRealtimeSession(nextRealtimeSessions[threadId]);
+      delete nextRealtimeSessions[threadId];
       return {
         hydratedThreads: nextHydratedThreads,
         hydratedOrder: state.hydratedOrder.filter((candidate) => candidate !== threadId),
+        realtimeSessionsByThreadId: nextRealtimeSessions,
       };
     }),
 });

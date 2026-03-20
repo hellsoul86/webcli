@@ -38,6 +38,7 @@ import type {
   PendingServerRequest,
   PluginMarketplaceSnapshot,
   ProductSurface,
+  RealtimeAudioChunk,
   RemoteSkillExportResult,
   RemoteSkillSummary,
   RuntimeStatus,
@@ -104,6 +105,11 @@ import type { ThreadItem } from "./generated/v2/ThreadItem";
 import type { ThreadForkResponse } from "./generated/v2/ThreadForkResponse";
 import type { ThreadMetadataUpdateResponse } from "./generated/v2/ThreadMetadataUpdateResponse";
 import type { ThreadReadResponse } from "./generated/v2/ThreadReadResponse";
+import type { ThreadRealtimeClosedNotification } from "./generated/v2/ThreadRealtimeClosedNotification";
+import type { ThreadRealtimeErrorNotification } from "./generated/v2/ThreadRealtimeErrorNotification";
+import type { ThreadRealtimeItemAddedNotification } from "./generated/v2/ThreadRealtimeItemAddedNotification";
+import type { ThreadRealtimeOutputAudioDeltaNotification } from "./generated/v2/ThreadRealtimeOutputAudioDeltaNotification";
+import type { ThreadRealtimeStartedNotification } from "./generated/v2/ThreadRealtimeStartedNotification";
 import type { ToolRequestUserInputResponse } from "./generated/v2/ToolRequestUserInputResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
 import type { ThreadRollbackResponse } from "./generated/v2/ThreadRollbackResponse";
@@ -125,6 +131,13 @@ import {
   readGitWorkingTreeSnapshot,
   switchGitBranch,
 } from "./git-working-tree.js";
+import {
+  mapThreadRealtimeClosed,
+  mapThreadRealtimeError,
+  mapThreadRealtimeItemAdded,
+  mapThreadRealtimeOutputAudioDelta,
+  mapThreadRealtimeStarted,
+} from "./realtime-notification-mappers.js";
 import {
   mapRawResponseItemCompleted,
   mapTerminalInteractionTimelineEntry,
@@ -1392,6 +1405,35 @@ export class CodexRuntime implements SessionRuntime {
           },
         },
       });
+      return;
+    }
+
+    if (method === "thread/realtime/started") {
+      this.emit(mapThreadRealtimeStarted(params as ThreadRealtimeStartedNotification));
+      return;
+    }
+
+    if (method === "thread/realtime/itemAdded") {
+      this.emit(mapThreadRealtimeItemAdded(params as ThreadRealtimeItemAddedNotification));
+      return;
+    }
+
+    if (method === "thread/realtime/outputAudio/delta") {
+      this.emit(
+        mapThreadRealtimeOutputAudioDelta(
+          params as ThreadRealtimeOutputAudioDeltaNotification,
+        ),
+      );
+      return;
+    }
+
+    if (method === "thread/realtime/error") {
+      this.emit(mapThreadRealtimeError(params as ThreadRealtimeErrorNotification));
+      return;
+    }
+
+    if (method === "thread/realtime/closed") {
+      this.emit(mapThreadRealtimeClosed(params as ThreadRealtimeClosedNotification));
       return;
     }
 

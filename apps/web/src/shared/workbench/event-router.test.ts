@@ -41,6 +41,7 @@ afterEach(() => {
     gitSnapshotsByWorkspaceId: {},
     selectedGitFileByWorkspaceId: {},
     pendingApprovals: [],
+    realtimeSessionsByThreadId: {},
     commandSessions: {},
     commandOrder: [],
     integrations: {
@@ -645,6 +646,119 @@ describe("routeWorkbenchServerMessage", () => {
       plugins: [],
     });
     expect(onAccountLoginCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes realtime session notifications into the dedicated store actions", () => {
+    const queryClient = new QueryClient();
+    const startRealtimeSession = vi.fn();
+    const appendRealtimeItem = vi.fn();
+    const appendRealtimeAudio = vi.fn();
+    const failRealtimeSession = vi.fn();
+    const closeRealtimeSession = vi.fn();
+    const context = {
+      queryClient,
+      setConnection: vi.fn(),
+      upsertThread: vi.fn(),
+      markThreadClosed: vi.fn(),
+      applyTurn: vi.fn(),
+      applyTimelineItem: vi.fn(),
+      appendDelta: vi.fn(),
+      appendDeltaBatch: vi.fn(),
+      setLatestDiff: vi.fn(),
+      setLatestPlan: vi.fn(),
+      setReview: vi.fn(),
+      setTurnTokenUsage: vi.fn(),
+      startRealtimeSession,
+      appendRealtimeItem,
+      appendRealtimeAudio,
+      failRealtimeSession,
+      closeRealtimeSession,
+      queueApproval: vi.fn(),
+      resolveApproval: vi.fn(),
+      setCommandSession: vi.fn(),
+      appendCommandOutput: vi.fn(),
+      setIntegrations: vi.fn(),
+      setIntegrationSnapshot: vi.fn(),
+      setWorkspaceGitSnapshot: vi.fn(),
+    };
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.realtimeStarted",
+        params: {
+          threadId: "thread-1",
+          sessionId: "session-1",
+        },
+      },
+      context,
+    );
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.realtimeItemAdded",
+        params: {
+          threadId: "thread-1",
+          item: {
+            type: "transcript",
+            text: "Hello",
+          },
+        },
+      },
+      context,
+    );
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.realtimeOutputAudioDelta",
+        params: {
+          threadId: "thread-1",
+          audio: {
+            data: "AQID",
+            sampleRate: 16000,
+            numChannels: 1,
+            samplesPerChannel: 2,
+          },
+        },
+      },
+      context,
+    );
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.realtimeError",
+        params: {
+          threadId: "thread-1",
+          message: "microphone disconnected",
+        },
+      },
+      context,
+    );
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.realtimeClosed",
+        params: {
+          threadId: "thread-1",
+          reason: "session-finished",
+        },
+      },
+      context,
+    );
+
+    expect(startRealtimeSession).toHaveBeenCalledWith("thread-1", "session-1");
+    expect(appendRealtimeItem).toHaveBeenCalledWith("thread-1", {
+      type: "transcript",
+      text: "Hello",
+    });
+    expect(appendRealtimeAudio).toHaveBeenCalledWith("thread-1", {
+      data: "AQID",
+      sampleRate: 16000,
+      numChannels: 1,
+      samplesPerChannel: 2,
+    });
+    expect(failRealtimeSession).toHaveBeenCalledWith("thread-1", "microphone disconnected");
+    expect(closeRealtimeSession).toHaveBeenCalledWith("thread-1", "session-finished");
   });
 
   it("stores account rate limits updates in the query cache", () => {

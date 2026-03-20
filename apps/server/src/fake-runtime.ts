@@ -31,6 +31,7 @@ import type {
   PluginMarketplaceSnapshot,
   ProductSurface,
   ReasoningEffort,
+  RealtimeAudioChunk,
   RemoteSkillExportResult,
   RemoteSkillSummary,
   RuntimeStatus,
@@ -587,6 +588,71 @@ export class FakeRuntime implements SessionRuntime {
           }),
         });
       }, 55);
+    }
+
+    if (prompt.startsWith("realtime-smoke:")) {
+      this.schedule(() => {
+        this.emit({
+          type: "thread.realtime.started",
+          threadId,
+          sessionId: `realtime-session-${turnId}`,
+        });
+      }, 35);
+
+      this.schedule(() => {
+        this.emit({
+          type: "thread.realtime.itemAdded",
+          threadId,
+          item: {
+            id: `rt-item-${turnId}-1`,
+            type: "transcript",
+            text: "Realtime hello",
+          },
+        });
+      }, 60);
+
+      this.schedule(() => {
+        this.emit({
+          type: "thread.realtime.outputAudio.delta",
+          threadId,
+          audio: makeRealtimeAudioChunk([0, 2048, -2048, 1024]),
+        });
+      }, 100);
+
+      this.schedule(() => {
+        this.emit({
+          type: "thread.realtime.itemAdded",
+          threadId,
+          item: {
+            id: `rt-item-${turnId}-2`,
+            kind: "assistant.transcript",
+            transcript: "Second realtime line",
+          },
+        });
+      }, 140);
+
+      this.schedule(() => {
+        this.emit({
+          type: "thread.realtime.outputAudio.delta",
+          threadId,
+          audio: makeRealtimeAudioChunk([512, -512, 1536, -1536]),
+        });
+      }, 180);
+
+      this.schedule(() => {
+        this.emit({
+          type: "thread.realtime.closed",
+          threadId,
+          reason: "session-finished",
+        });
+        this.emit({
+          type: "thread.status.changed",
+          threadId,
+          status: { type: "idle" },
+        });
+      }, 230);
+
+      return cloneTurn(turn);
     }
 
     const replyChunks = prompt.startsWith("stream-")
@@ -1485,4 +1551,18 @@ function summarizeResolution(resolution: ServerRequestResolveInput): string {
     case "chatgptAuthTokensRefresh":
       return `refreshed ${resolution.resolution.chatgptAccountId}`;
   }
+}
+
+function makeRealtimeAudioChunk(samples: Array<number>): RealtimeAudioChunk {
+  const buffer = Buffer.alloc(samples.length * 2);
+  samples.forEach((sample, index) => {
+    buffer.writeInt16LE(sample, index * 2);
+  });
+
+  return {
+    data: buffer.toString("base64"),
+    sampleRate: 16_000,
+    numChannels: 1,
+    samplesPerChannel: samples.length,
+  };
 }
