@@ -247,6 +247,7 @@ export function App() {
   const syncBootstrapActiveThreads = useWorkbenchStore((state) => state.syncBootstrapActiveThreads);
   const hydrateThread = useWorkbenchStore((state) => state.hydrateThread);
   const upsertThread = useWorkbenchStore((state) => state.upsertThread);
+  const markThreadClosed = useWorkbenchStore((state) => state.markThreadClosed);
   const setWorkspaceGitSnapshot = useWorkbenchStore((state) => state.setWorkspaceGitSnapshot);
   const selectWorkspaceGitFile = useWorkbenchStore((state) => state.selectWorkspaceGitFile);
   const renameThreadInStore = useWorkbenchStore((state) => state.renameThread);
@@ -256,6 +257,7 @@ export function App() {
   const setLatestDiff = useWorkbenchStore((state) => state.setLatestDiff);
   const setLatestPlan = useWorkbenchStore((state) => state.setLatestPlan);
   const setReview = useWorkbenchStore((state) => state.setReview);
+  const setTurnTokenUsage = useWorkbenchStore((state) => state.setTurnTokenUsage);
   const queueApproval = useWorkbenchStore((state) => state.queueApproval);
   const resolveApprovalInStore = useWorkbenchStore((state) => state.resolveApproval);
   const setCommandSession = useWorkbenchStore((state) => state.setCommandSession);
@@ -347,18 +349,31 @@ export function App() {
     refetchOnReconnect: false,
   });
 
+  const activeThreadsQuery = useQuery({
+    queryKey: ["thread-list", "active"],
+    queryFn: () =>
+      codexClient.call("thread.list", {
+        archived: false,
+        limit: 500,
+      }),
+    enabled: connection.connected,
+    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
   const archivedThreadsQuery = useInfiniteQuery({
-    queryKey: ["archived-thread-summaries", activeWorkspaceId],
+    queryKey: ["thread-list", "archived", activeWorkspaceId],
     queryFn: ({ pageParam }) =>
-      api.threadSummaries({
+      codexClient.call("thread.list", {
         archived: true,
         cursor: pageParam ?? null,
         limit: 50,
-        workspaceId: activeWorkspaceId === "all" ? undefined : activeWorkspaceId,
+        workspaceId: activeWorkspaceId,
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: integrations.settingsOpen && integrations.settingsTab === "history",
+    enabled: connection.connected && integrations.settingsOpen && integrations.settingsTab === "history",
     staleTime: 60_000,
   });
 
@@ -930,6 +945,7 @@ export function App() {
       queryClient,
       setConnection,
       upsertThread,
+      markThreadClosed,
       applyTurn,
       applyTimelineItem,
       appendDelta,
@@ -937,6 +953,7 @@ export function App() {
       setLatestDiff,
       setLatestPlan,
       setReview,
+      setTurnTokenUsage,
       setWorkspaceGitSnapshot,
       queueApproval,
       resolveApproval: resolveApprovalInStore,
@@ -968,6 +985,7 @@ export function App() {
     appendDeltaBatch,
     applyTimelineItem,
     applyTurn,
+    markThreadClosed,
     markStreamingItems,
     queryClient,
     queueApproval,
@@ -978,6 +996,7 @@ export function App() {
     setLatestDiff,
     setLatestPlan,
     setReview,
+    setTurnTokenUsage,
     setWorkspaceGitSnapshot,
     upsertThread,
   ]);
@@ -1188,6 +1207,15 @@ export function App() {
   }, [bootstrap, setConnection, syncBootstrapActiveThreads]);
 
   useEffect(() => {
+    const activeThreadPage = activeThreadsQuery.data;
+    if (!activeThreadPage) {
+      return;
+    }
+
+    syncBootstrapActiveThreads(activeThreadPage.items);
+  }, [activeThreadsQuery.data, syncBootstrapActiveThreads]);
+
+  useEffect(() => {
     if (!bootstrap) {
       return;
     }
@@ -1289,7 +1317,7 @@ export function App() {
 
     setBusyMessage(t("composer.busy.resumingThread"));
     void runAction(async () => {
-      const response = await codexClient.call("thread.resume", {
+      const response = await codexClient.call("thread.read", {
         threadId: activeThreadId,
       });
       hydrateThread(response.thread);
@@ -1684,16 +1712,29 @@ export function App() {
 
     setBusyMessage(t("composer.busy.resumingThread"));
     await runAction(async () => {
-      const response = await codexClient.call("thread.resume", {
+      const response = await codexClient.call("thread.read", {
         threadId,
       });
       hydrateThread(response.thread);
     });
   }
 
+  async function ensureLoadedThread(threadId: string): Promise<string> {
+    const summary = threadSummaries[threadId] ?? hydratedThreads[threadId]?.thread ?? null;
+    if (summary?.status.type !== "notLoaded") {
+      return threadId;
+    }
+
+    const response = await codexClient.call("thread.resume", {
+      threadId,
+    });
+    hydrateThread(response.thread);
+    return response.thread.thread.id;
+  }
+
   async function ensureThreadForPrompt(): Promise<string | null> {
     if (activeThreadId) {
-      return activeThreadId;
+      return ensureLoadedThread(activeThreadId);
     }
 
     const workspaceId = selectedWorkspaceForContext?.id ?? null;
@@ -1803,6 +1844,7 @@ export function App() {
 
     setBusyMessage(t("composer.reviewStart"));
     await runAction(async () => {
+      await ensureLoadedThread(reviewThreadId);
       const response = await codexClient.call("review.start", {
         threadId: reviewThreadId,
       });

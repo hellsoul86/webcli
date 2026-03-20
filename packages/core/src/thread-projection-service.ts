@@ -45,6 +45,7 @@ export class ThreadProjectionService {
         id: turn.id,
         status: turn.status,
         errorMessage: turn.errorMessage,
+        tokenUsage: turn.tokenUsage,
       },
       itemOrder: turn.items.map((item) => item.id),
       items: Object.fromEntries(turn.items.map((item) => [item.id, item])),

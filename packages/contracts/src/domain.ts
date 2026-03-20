@@ -181,6 +181,26 @@ export type ThreadSummary = {
   workspaceName: string | null;
 };
 
+export type ThreadMetadataGitInfoUpdate = {
+  sha?: string | null;
+  branch?: string | null;
+  originUrl?: string | null;
+};
+
+export type TokenUsageBreakdown = {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+};
+
+export type ThreadTokenUsage = {
+  total: TokenUsageBreakdown;
+  last: TokenUsageBreakdown;
+  modelContextWindow: number | null;
+};
+
 export type TimelineEntry = {
   id: string;
   turnId: string;
@@ -194,6 +214,7 @@ export type TurnRecord = {
   id: string;
   status: string;
   errorMessage: string | null;
+  tokenUsage?: ThreadTokenUsage | null;
 };
 
 export type WorkbenchTurn = {

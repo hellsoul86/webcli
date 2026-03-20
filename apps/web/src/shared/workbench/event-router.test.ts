@@ -91,6 +91,7 @@ describe("routeWorkbenchServerMessage", () => {
       queryClient,
       setConnection: vi.fn(),
       upsertThread: vi.fn(),
+      markThreadClosed: vi.fn(),
       applyTurn: vi.fn(),
       applyTimelineItem,
       appendDelta,
@@ -98,6 +99,7 @@ describe("routeWorkbenchServerMessage", () => {
       setLatestDiff: vi.fn(),
       setLatestPlan: vi.fn(),
       setReview: vi.fn(),
+      setTurnTokenUsage: vi.fn(),
       queueApproval: vi.fn(),
       resolveApproval: vi.fn(),
       setCommandSession: vi.fn(),
@@ -142,6 +144,7 @@ describe("routeWorkbenchServerMessage", () => {
       queryClient,
       setConnection: vi.fn(),
       upsertThread: vi.fn(),
+      markThreadClosed: vi.fn(),
       applyTurn: vi.fn(),
       applyTimelineItem,
       appendDelta,
@@ -149,6 +152,7 @@ describe("routeWorkbenchServerMessage", () => {
       setLatestDiff: vi.fn(),
       setLatestPlan: vi.fn(),
       setReview: vi.fn(),
+      setTurnTokenUsage: vi.fn(),
       queueApproval: vi.fn(),
       resolveApproval: vi.fn(),
       setCommandSession: vi.fn(),
@@ -174,6 +178,7 @@ describe("routeWorkbenchServerMessage", () => {
       queryClient,
       setConnection: vi.fn(),
       upsertThread: vi.fn(),
+      markThreadClosed: vi.fn(),
       applyTurn: vi.fn(),
       applyTimelineItem: vi.fn(),
       appendDelta: vi.fn(),
@@ -181,6 +186,7 @@ describe("routeWorkbenchServerMessage", () => {
       setLatestDiff: vi.fn(),
       setLatestPlan: vi.fn(),
       setReview: vi.fn(),
+      setTurnTokenUsage: vi.fn(),
       queueApproval: vi.fn(),
       resolveApproval: vi.fn(),
       setCommandSession: vi.fn(),
@@ -298,6 +304,7 @@ describe("routeWorkbenchServerMessage", () => {
         queryClient,
         setConnection: vi.fn(),
         upsertThread: vi.fn(),
+        markThreadClosed: vi.fn(),
         applyTurn: vi.fn(),
         applyTimelineItem: vi.fn(),
         appendDelta: vi.fn(),
@@ -305,6 +312,7 @@ describe("routeWorkbenchServerMessage", () => {
         setLatestDiff: vi.fn(),
         setLatestPlan: vi.fn(),
         setReview: vi.fn(),
+        setTurnTokenUsage: vi.fn(),
         queueApproval: vi.fn(),
         resolveApproval: vi.fn(),
         setCommandSession: vi.fn(),
@@ -316,5 +324,113 @@ describe("routeWorkbenchServerMessage", () => {
 
     expect(queryClient.getQueryData<BootstrapResponse>(["bootstrap"])?.runtime.childPid).toBe(22);
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["bootstrap"] });
+  });
+
+  it("marks threads as closed when the runtime emits thread.closed", () => {
+    const queryClient = new QueryClient();
+    const markThreadClosed = vi.fn();
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.closed",
+        params: {
+          threadId: "thread-1",
+        },
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        markThreadClosed,
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        setTurnTokenUsage: vi.fn(),
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrationSnapshot: vi.fn(),
+        setWorkspaceGitSnapshot: vi.fn(),
+      },
+    );
+
+    expect(markThreadClosed).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("applies turn token usage updates from runtime notifications", () => {
+    const queryClient = new QueryClient();
+    const setTurnTokenUsage = vi.fn();
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "thread.tokenUsageUpdated",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          tokenUsage: {
+            total: {
+              totalTokens: 42,
+              inputTokens: 20,
+              cachedInputTokens: 4,
+              outputTokens: 18,
+              reasoningOutputTokens: 6,
+            },
+            last: {
+              totalTokens: 10,
+              inputTokens: 4,
+              cachedInputTokens: 1,
+              outputTokens: 5,
+              reasoningOutputTokens: 2,
+            },
+            modelContextWindow: 128000,
+          },
+        },
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        markThreadClosed: vi.fn(),
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        setTurnTokenUsage,
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrationSnapshot: vi.fn(),
+        setWorkspaceGitSnapshot: vi.fn(),
+      },
+    );
+
+    expect(setTurnTokenUsage).toHaveBeenCalledWith("thread-1", "turn-1", {
+      total: {
+        totalTokens: 42,
+        inputTokens: 20,
+        cachedInputTokens: 4,
+        outputTokens: 18,
+        reasoningOutputTokens: 6,
+      },
+      last: {
+        totalTokens: 10,
+        inputTokens: 4,
+        cachedInputTokens: 1,
+        outputTokens: 5,
+        reasoningOutputTokens: 2,
+      },
+      modelContextWindow: 128000,
+    });
   });
 });

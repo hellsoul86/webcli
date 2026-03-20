@@ -22,6 +22,8 @@ import type {
   PendingServerRequest,
   RuntimeStatus,
   SandboxMode,
+  ThreadMetadataGitInfoUpdate,
+  ThreadTokenUsage,
   TimelineEntry,
 } from "@webcli/contracts";
 import type {
@@ -59,9 +61,12 @@ import type { ThreadLoadedListResponse } from "./generated/v2/ThreadLoadedListRe
 import type { ThreadListResponse } from "./generated/v2/ThreadListResponse";
 import type { ThreadItem } from "./generated/v2/ThreadItem";
 import type { ThreadForkResponse } from "./generated/v2/ThreadForkResponse";
+import type { ThreadMetadataUpdateResponse } from "./generated/v2/ThreadMetadataUpdateResponse";
+import type { ThreadReadResponse } from "./generated/v2/ThreadReadResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
 import type { ThreadRollbackResponse } from "./generated/v2/ThreadRollbackResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
+import type { ThreadUnsubscribeResponse } from "./generated/v2/ThreadUnsubscribeResponse";
 import type { ThreadUnarchiveResponse } from "./generated/v2/ThreadUnarchiveResponse";
 import type { Turn } from "./generated/v2/Turn";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
@@ -306,6 +311,14 @@ export class CodexRuntime implements SessionRuntime {
     return threads.map((thread) => mapRuntimeThread(thread, archived));
   }
 
+  async readThread(threadId: string): Promise<RuntimeThreadRecord> {
+    const response = await this.call<ThreadReadResponse, "thread/read">("thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    return mapRuntimeThread(response.thread, false);
+  }
+
   async listLoadedThreadIds(): Promise<Array<string>> {
     return this.collectPages<ThreadLoadedListResponse, "thread/loaded/list">(
       "thread/loaded/list",
@@ -352,6 +365,30 @@ export class CodexRuntime implements SessionRuntime {
       );
       return mapRuntimeThread(response.thread, false);
     }
+  }
+
+  async updateThreadMetadata(
+    threadId: string,
+    input: { gitInfo?: ThreadMetadataGitInfoUpdate | null },
+  ): Promise<RuntimeThreadRecord> {
+    const response = await this.call<ThreadMetadataUpdateResponse, "thread/metadata/update">(
+      "thread/metadata/update",
+      {
+        threadId,
+        gitInfo: input.gitInfo ?? undefined,
+      },
+    );
+    return mapRuntimeThread(response.thread, false);
+  }
+
+  async unsubscribeThread(
+    threadId: string,
+  ): Promise<"notLoaded" | "notSubscribed" | "unsubscribed"> {
+    const response = await this.call<ThreadUnsubscribeResponse, "thread/unsubscribe">(
+      "thread/unsubscribe",
+      { threadId },
+    );
+    return response.status;
   }
 
   async renameThread(threadId: string, name: string): Promise<void> {
@@ -959,6 +996,30 @@ export class CodexRuntime implements SessionRuntime {
       return;
     }
 
+    if (method === "thread/closed") {
+      const payload = params as { threadId: string };
+      this.emit({
+        type: "thread.closed",
+        threadId: payload.threadId,
+      });
+      return;
+    }
+
+    if (method === "thread/tokenUsage/updated") {
+      const payload = params as {
+        threadId: string;
+        turnId: string;
+        tokenUsage: ThreadTokenUsage;
+      };
+      this.emit({
+        type: "thread.tokenUsage.updated",
+        threadId: payload.threadId,
+        turnId: payload.turnId,
+        tokenUsage: payload.tokenUsage,
+      });
+      return;
+    }
+
     if (method === "turn/started" || method === "turn/completed") {
       const payload = params as { threadId: string; turn: Turn };
       this.emit({
@@ -1497,6 +1558,7 @@ function mapRuntimeTurn(turn: Turn): RuntimeTurnRecord {
     id: turn.id,
     status: turn.status,
     errorMessage: turn.error?.message ?? null,
+    tokenUsage: null,
     items: turn.items.map((item) => normalizeItem(item, turn.id)),
   };
 }

@@ -238,6 +238,39 @@ export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSli
           : state.hydratedThreads,
       };
     }),
+  markThreadClosed: (threadId) =>
+    set((state) => {
+      const summary = state.threadSummaries[threadId];
+      const hydrated = state.hydratedThreads[threadId];
+      if (!summary && !hydrated) {
+        return state;
+      }
+
+      const nextSummary = summary
+        ? {
+            ...summary,
+            status: { type: "notLoaded" } as const,
+          }
+        : null;
+
+      return {
+        threadSummaries: nextSummary
+          ? {
+              ...state.threadSummaries,
+              [threadId]: nextSummary,
+            }
+          : state.threadSummaries,
+        hydratedThreads: hydrated
+          ? {
+              ...state.hydratedThreads,
+              [threadId]: {
+                ...hydrated,
+                thread: nextSummary ?? hydrated.thread,
+              },
+            }
+          : state.hydratedThreads,
+      };
+    }),
   applyTurn: (threadId, turn) =>
     set((state) => {
       const summary = state.threadSummaries[threadId];
@@ -356,6 +389,34 @@ export const createSessionSlice: StateCreator<WorkbenchState, [], [], SessionSli
           [threadId]: {
             ...threadView,
             review,
+          },
+        },
+        hydratedOrder: touchOrderedIds(state.hydratedOrder, threadId),
+      };
+    }),
+  setTurnTokenUsage: (threadId, turnId, tokenUsage) =>
+    set((state) => {
+      const threadView = state.hydratedThreads[threadId];
+      const turn = threadView?.turns[turnId];
+      if (!threadView || !turn) {
+        return state;
+      }
+
+      return {
+        hydratedThreads: {
+          ...state.hydratedThreads,
+          [threadId]: {
+            ...threadView,
+            turns: {
+              ...threadView.turns,
+              [turnId]: {
+                ...turn,
+                turn: {
+                  ...turn.turn,
+                  tokenUsage,
+                },
+              },
+            },
           },
         },
         hydratedOrder: touchOrderedIds(state.hydratedOrder, threadId),
