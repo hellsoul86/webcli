@@ -40,6 +40,7 @@ import type {
   RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
+  ServerRequestResolveInput,
   ThreadMetadataGitInfoUpdate,
   ThreadTokenUsage,
   SkillGroupSnapshot,
@@ -72,7 +73,11 @@ import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { GetAccountRateLimitsResponse } from "./generated/v2/GetAccountRateLimitsResponse";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { CancelLoginAccountResponse } from "./generated/v2/CancelLoginAccountResponse";
+import type { ChatgptAuthTokensRefreshResponse } from "./generated/v2/ChatgptAuthTokensRefreshResponse";
+import type { CommandExecutionRequestApprovalResponse } from "./generated/v2/CommandExecutionRequestApprovalResponse";
+import type { DynamicToolCallResponse } from "./generated/v2/DynamicToolCallResponse";
 import type { ListMcpServerStatusResponse } from "./generated/v2/ListMcpServerStatusResponse";
+import type { McpServerElicitationRequestResponse } from "./generated/v2/McpServerElicitationRequestResponse";
 import type { McpServerOauthLoginResponse } from "./generated/v2/McpServerOauthLoginResponse";
 import type { ModelListResponse } from "./generated/v2/ModelListResponse";
 import type { ModelReroutedNotification } from "./generated/v2/ModelReroutedNotification";
@@ -92,6 +97,7 @@ import type { ThreadItem } from "./generated/v2/ThreadItem";
 import type { ThreadForkResponse } from "./generated/v2/ThreadForkResponse";
 import type { ThreadMetadataUpdateResponse } from "./generated/v2/ThreadMetadataUpdateResponse";
 import type { ThreadReadResponse } from "./generated/v2/ThreadReadResponse";
+import type { ToolRequestUserInputResponse } from "./generated/v2/ToolRequestUserInputResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
 import type { ThreadRollbackResponse } from "./generated/v2/ThreadRollbackResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
@@ -889,20 +895,20 @@ export class CodexRuntime implements SessionRuntime {
     return readGitFileReviewDetail(cwd, file);
   }
 
-  async resolveApproval(
-    approval: PendingServerRequest,
-    decision: "accept" | "decline",
+  async resolveServerRequest(
+    request: PendingServerRequest,
+    resolution: ServerRequestResolveInput,
   ): Promise<void> {
-    const pending = this.pendingServerRequests.get(approval.id);
+    const pending = this.pendingServerRequests.get(request.id);
     if (!pending) {
       throw new Error("Approval no longer pending");
     }
 
-    this.pendingServerRequests.delete(approval.id);
-    const result = mapApprovalDecision(pending.method, pending.params, decision);
+    this.pendingServerRequests.delete(request.id);
+    const result = mapServerRequestResolution(request, pending.method, pending.params, resolution);
     this.writeMessage({
       jsonrpc: "2.0",
-      id: approval.id,
+      id: request.id,
       result,
     });
   }
@@ -2068,61 +2074,86 @@ function mapPendingServerRequest(
   }
 }
 
-function mapApprovalDecision(
+function mapServerRequestResolution(
+  request: PendingServerRequest,
   method: ServerRequestMethod,
-  params: ServerRequestParams<ServerRequestMethod>,
-  decision: "accept" | "decline",
+  _params: ServerRequestParams<ServerRequestMethod>,
+  resolution: ServerRequestResolveInput,
 ): ServerRequestResult<ServerRequestMethod> {
-  if (method === "item/commandExecution/requestApproval") {
-    return {
-      decision: decision === "accept" ? "accept" : "decline",
-    } as ServerRequestResultMap["item/commandExecution/requestApproval"];
+  if (request.id !== resolution.requestId || request.kind !== resolution.kind) {
+    throw new Error("Server request resolution does not match the pending request.");
   }
 
-  if (method === "item/fileChange/requestApproval") {
-    return {
-      decision: decision === "accept" ? "accept" : "decline",
-    } as ServerRequestResultMap["item/fileChange/requestApproval"];
+  switch (resolution.kind) {
+    case "commandExecutionApproval":
+      if (method !== "item/commandExecution/requestApproval") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        decision: resolution.resolution.decision,
+      } as CommandExecutionRequestApprovalResponse;
+    case "fileChangeApproval":
+      if (method !== "item/fileChange/requestApproval") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        decision: resolution.resolution.decision,
+      } as ServerRequestResultMap["item/fileChange/requestApproval"];
+    case "requestUserInput":
+      if (method !== "item/tool/requestUserInput") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        answers: resolution.resolution.answers,
+      } as ToolRequestUserInputResponse;
+    case "mcpServerElicitation":
+      if (method !== "mcpServer/elicitation/request") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        action: resolution.resolution.action,
+        content: resolution.resolution.content,
+        _meta: resolution.resolution._meta,
+      } as McpServerElicitationRequestResponse;
+    case "applyPatchApproval":
+      if (method !== "applyPatchApproval") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        decision: resolution.resolution.decision,
+      } as ApplyPatchApprovalResponse;
+    case "execCommandApproval":
+      if (method !== "execCommandApproval") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        decision: resolution.resolution.decision,
+      } as ExecCommandApprovalResponse;
+    case "permissionsApproval":
+      if (method !== "item/permissions/requestApproval") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        permissions: resolution.resolution.permissions,
+      } as PermissionsRequestApprovalResponse;
+    case "dynamicToolCall":
+      if (method !== "item/tool/call") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        success: resolution.resolution.success,
+        contentItems: resolution.resolution.contentItems,
+      } as DynamicToolCallResponse;
+    case "chatgptAuthTokensRefresh":
+      if (method !== "account/chatgptAuthTokens/refresh") {
+        throw new Error(`Unexpected server request method for ${resolution.kind}: ${method}`);
+      }
+      return {
+        accessToken: resolution.resolution.accessToken,
+        chatgptAccountId: resolution.resolution.chatgptAccountId,
+        chatgptPlanType: resolution.resolution.chatgptPlanType,
+      } as ChatgptAuthTokensRefreshResponse;
   }
-
-  if (method === "item/tool/requestUserInput") {
-    const questions =
-      (params as { questions?: Array<{ id: string; options?: Array<{ label: string }> }> })
-        .questions ?? [];
-    return {
-      answers:
-        decision === "accept"
-          ? Object.fromEntries(
-              questions.map((question) => [
-                question.id,
-                {
-                  answers: [question.options?.[0]?.label ?? ""],
-                },
-              ]),
-            )
-          : {},
-    } as ServerRequestResultMap["item/tool/requestUserInput"];
-  }
-
-  if (method === "applyPatchApproval") {
-    return {
-      decision: decision === "accept" ? "approved" : "rejected",
-    } as ApplyPatchApprovalResponse;
-  }
-
-  if (method === "execCommandApproval") {
-    return {
-      decision: decision === "accept" ? "approved" : "rejected",
-    } as ExecCommandApprovalResponse;
-  }
-
-  if (method === "item/permissions/requestApproval") {
-    return {
-      permissions: {},
-    } as PermissionsRequestApprovalResponse;
-  }
-
-  throw new Error(`Unsupported approval method: ${method}`);
 }
 
 function normalizeDeltaTitle(kind: TimelineEntry["kind"]): string {

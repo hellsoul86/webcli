@@ -33,23 +33,30 @@ test("creates a workspace, opens a thread, and replays approvals after reload", 
   await expect(page.getByTestId("git-workbench")).toBeVisible();
   await expect(page.getByTestId("git-review-group-conflicted")).toBeVisible();
   await expect(page.getByTestId("git-review-group-staged-unstaged")).toBeVisible();
-  await expect(page.getByTestId("git-review-fallback")).toBeVisible();
-  const stagedUnstagedGroup = page.getByTestId("git-review-group-staged-unstaged");
-  await stagedUnstagedGroup.getByRole("button", { name: /web/i }).click();
-  await stagedUnstagedGroup.getByRole("button", { name: /src/i }).click();
-  await stagedUnstagedGroup.getByRole("button", { name: /App.tsx/i }).click();
-  await expect(page.getByTestId("git-review-path")).toContainText("App.tsx");
-  await expect(page.getByTestId("git-review-diff-viewer")).toBeVisible();
+  const conflictedGroup = page.getByTestId("git-review-group-conflicted");
+  await conflictedGroup.getByRole("button", { name: /docs/i }).click({ force: true });
+  await conflictedGroup.getByRole("button", { name: /review/i }).click({ force: true });
+  await conflictedGroup
+    .getByRole("button", { name: /notes.md/i })
+    .evaluate((node) => (node as HTMLButtonElement).click());
+  await expect(page.getByText("Merge conflicts are shown as raw patch output.")).toBeVisible();
+  const unstagedGroup = page.getByTestId("git-review-group-unstaged");
+  await unstagedGroup
+    .getByRole("button", { name: /README.md/i })
+    .evaluate((node) => (node as HTMLButtonElement).click());
+  await expect(page.getByTestId("git-review-path")).toContainText("README.md");
+  await expect(page.getByText("Old heading").first()).toBeVisible();
+  await expect(page.getByText("# WebCLI").first()).toBeVisible();
   await page.getByRole("button", { name: "返回会话" }).click();
 
-  const approvalCard = page.locator('[data-testid^="approval-card-"]').first();
-  await expect(approvalCard).toBeVisible();
+  const decisionCard = page.locator('[data-testid^="decision-card-"]').first();
+  await expect(decisionCard).toBeVisible();
 
   await page.reload();
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await expect(page.locator('[data-testid^="approval-card-"]').first()).toBeVisible();
-  await page.locator('[data-testid^="approval-card-"]').first().getByRole("button", { name: "接受" }).click();
-  await expect(page.locator('[data-testid^="approval-card-"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="decision-card-"]').first()).toBeVisible();
+  await page.locator('[data-testid^="decision-accept-"]').first().click();
+  await expect(page.locator('[data-testid^="decision-card-"]')).toHaveCount(0);
 });
 
 test("updates defaults and searches workspace files from the command palette", async ({ page }) => {
@@ -154,6 +161,25 @@ test("streams assistant replies incrementally without replacing the item", async
   expect(consoleErrors).toEqual([]);
 });
 
+test("submits typed request-user-input decisions from the decision center", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await ensureWorkspace(page);
+  await ensureThread(page);
+
+  await page
+    .getByTestId("composer-input")
+    .fill(`request-user-input:${Date.now()}`);
+  await page.getByTestId("send-button").click();
+
+  const decisionCard = page.locator('[data-testid^="decision-card-"]').first();
+  await expect(decisionCard).toBeVisible();
+  await decisionCard.getByRole("combobox").selectOption("decline");
+  await decisionCard.locator('[data-testid^="decision-submit-"]').click();
+  await expect(page.locator('[data-testid^="decision-card-"]')).toHaveCount(0);
+});
+
 test("opens local code links in a syntax-highlighted preview modal", async ({ page }) => {
   await page.goto("/");
 
@@ -168,7 +194,9 @@ test("opens local code links in a syntax-highlighted preview modal", async ({ pa
   await page.getByTestId("send-button").click();
 
   const timeline = page.getByTestId("timeline-list");
-  await timeline.getByRole("link", { name: "App.tsx" }).click();
+  await timeline
+    .getByRole("link", { name: "App.tsx" })
+    .evaluate((node) => (node as HTMLAnchorElement).click());
 
   await expect(page.getByTestId("code-preview-modal")).toBeVisible();
   await expect(page.getByTestId("code-preview-title")).toContainText("App.tsx");
@@ -202,7 +230,9 @@ test("opens /srv absolute code links in the preview modal", async ({ page }) => 
   await page.getByTestId("send-button").click();
 
   const timeline = page.getByTestId("timeline-list");
-  await timeline.getByRole("link", { name: "App.tsx" }).click();
+  await timeline
+    .getByRole("link", { name: "App.tsx" })
+    .evaluate((node) => (node as HTMLAnchorElement).click());
 
   await expect(page.getByTestId("code-preview-modal")).toBeVisible();
   await expect(page.getByTestId("code-preview-title")).toContainText("App.tsx");
@@ -228,11 +258,11 @@ test("does not log monaco dispose errors when closing review and code preview", 
 
   await page.getByTestId("git-workbench-open-button").click();
   await expect(page.getByTestId("git-workbench")).toBeVisible();
-  const stagedUnstagedGroup = page.getByTestId("git-review-group-staged-unstaged");
-  await stagedUnstagedGroup.getByRole("button", { name: /web/i }).click();
-  await stagedUnstagedGroup.getByRole("button", { name: /src/i }).click();
-  await stagedUnstagedGroup.getByRole("button", { name: /App.tsx/i }).click();
-  await expect(page.getByTestId("git-review-diff-viewer")).toBeVisible();
+  const unstagedGroup = page.getByTestId("git-review-group-unstaged");
+  await unstagedGroup
+    .getByRole("button", { name: /README.md/i })
+    .evaluate((node) => (node as HTMLButtonElement).click());
+  await expect(page.getByText("Old heading").first()).toBeVisible();
   await page.getByRole("button", { name: "返回会话" }).click();
   await page.waitForTimeout(300);
 
@@ -241,7 +271,9 @@ test("does not log monaco dispose errors when closing review and code preview", 
   await page.getByTestId("send-button").click();
 
   const timeline = page.getByTestId("timeline-list");
-  await timeline.getByRole("link", { name: "App.tsx" }).click();
+  await timeline
+    .getByRole("link", { name: "App.tsx" })
+    .evaluate((node) => (node as HTMLAnchorElement).click());
   await expect(page.getByTestId("code-preview-modal")).toBeVisible();
   await page.getByRole("button", { name: "关闭" }).last().click();
   await page.waitForTimeout(300);

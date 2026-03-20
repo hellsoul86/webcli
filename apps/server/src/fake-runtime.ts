@@ -33,6 +33,7 @@ import type {
   RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
+  ServerRequestResolveInput,
   ThreadMetadataGitInfoUpdate,
   SkillGroupSnapshot,
   TimelineEntry,
@@ -442,18 +443,7 @@ export class FakeRuntime implements SessionRuntime {
     thread.updatedAt = Math.floor(Date.now() / 1000);
 
     const replyItemId = randomUUID();
-    const approvalId = `approval-${randomUUID()}`;
-    const approval: PendingApproval = {
-      id: approvalId,
-      kind: "commandExecutionApproval",
-      method: "item/commandExecution/requestApproval",
-      threadId,
-      turnId,
-      itemId: replyItemId,
-      params: {
-        command: "npm test",
-      },
-    };
+    const approval = buildFakePendingApproval(threadId, turnId, replyItemId, prompt);
     this.pendingApprovals.set(String(approval.id), approval);
 
     this.emit({
@@ -953,14 +943,16 @@ export class FakeRuntime implements SessionRuntime {
     };
   }
 
-  async resolveApproval(
+  async resolveServerRequest(
     approval: PendingApproval,
-    decision: "accept" | "decline",
+    resolution: ServerRequestResolveInput,
   ): Promise<void> {
     this.pendingApprovals.delete(String(approval.id));
     if (!approval.threadId || !approval.turnId) {
       return;
     }
+
+    const decision = summarizeResolution(resolution);
 
     this.emit({
       type: "timeline.delta",
@@ -970,9 +962,9 @@ export class FakeRuntime implements SessionRuntime {
         turnId: approval.turnId,
         kind: "agentMessage",
         title: "Codex",
-        body: `\nApproval ${decision === "accept" ? "accepted" : "declined"}.`,
+        body: `\nDecision resolved: ${decision}.`,
         raw: {
-          decision,
+          decision: resolution,
         },
       }),
     });
@@ -1293,4 +1285,72 @@ function inferFakeGitLanguage(path: string): string | null {
     return "markdown";
   }
   return "plaintext";
+}
+
+function buildFakePendingApproval(
+  threadId: string,
+  turnId: string,
+  itemId: string,
+  prompt: string,
+): PendingApproval {
+  if (prompt.startsWith("request-user-input:")) {
+    return {
+      id: randomUUID(),
+      kind: "requestUserInput",
+      method: "item/tool/requestUserInput",
+      threadId,
+      turnId,
+      itemId,
+      params: {
+        questions: [
+          {
+            id: "approval_mode",
+            header: "Approval mode",
+            question: "Choose how to proceed",
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: "accept", description: "Continue with the request" },
+              { label: "decline", description: "Reject the request" },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  return {
+    id: randomUUID(),
+    kind: "commandExecutionApproval",
+    method: "item/commandExecution/requestApproval",
+    threadId,
+    turnId,
+    itemId,
+    params: {
+      command: "npm test",
+      cwd: threadId.startsWith("thread-external") ? "/srv/webcli-staging/repo" : "/workspace",
+      reason: "Fake runtime queued a command approval.",
+      availableDecisions: ["accept", "acceptForSession", "decline"],
+    },
+  };
+}
+
+function summarizeResolution(resolution: ServerRequestResolveInput): string {
+  switch (resolution.kind) {
+    case "commandExecutionApproval":
+    case "fileChangeApproval":
+    case "applyPatchApproval":
+    case "execCommandApproval":
+      return String(resolution.resolution.decision);
+    case "requestUserInput":
+      return `answered ${Object.keys(resolution.resolution.answers).length} question(s)`;
+    case "mcpServerElicitation":
+      return resolution.resolution.action;
+    case "permissionsApproval":
+      return "permissions updated";
+    case "dynamicToolCall":
+      return resolution.resolution.success ? "tool succeeded" : "tool failed";
+    case "chatgptAuthTokensRefresh":
+      return `refreshed ${resolution.resolution.chatgptAccountId}`;
+  }
 }

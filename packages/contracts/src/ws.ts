@@ -19,6 +19,7 @@ import type {
   GitWorkingTreeSnapshot,
   GitBranchReference,
   IntegrationSnapshot,
+  LegacyServerRequestResolveInput,
   LivePlan,
   ModelRerouteEvent,
   PendingApproval,
@@ -27,6 +28,7 @@ import type {
   RequestId,
   ReviewOutput,
   RuntimeStatus,
+  ServerRequestResolveInput,
   ServiceTier,
   ThreadMetadataGitInfoUpdate,
   ThreadSummary,
@@ -109,10 +111,10 @@ export type AppRequestMap = {
     requestId: RequestId;
     decision: "accept" | "decline";
   }, { ok: true }>;
-  "serverRequest.resolve": RpcDefinition<{
-    requestId: RequestId;
-    decision: "accept" | "decline";
-  }, { ok: true }>;
+  "serverRequest.resolve": RpcDefinition<
+    ServerRequestResolveInput | LegacyServerRequestResolveInput,
+    { ok: true }
+  >;
   "integrations.refresh": RpcDefinition<{
     workspaceId?: string | "all";
     threadId?: string | null;

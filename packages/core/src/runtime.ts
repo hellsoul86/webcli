@@ -35,6 +35,7 @@ import type {
   RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
+  ServerRequestResolveInput,
   ThreadMetadataGitInfoUpdate,
   ThreadTokenUsage,
   SkillGroupSnapshot,
@@ -264,5 +265,8 @@ export interface SessionRuntime {
   }): Promise<{ appsNeedingAuth: Array<AppInstallHint> }>;
   uninstallPlugin(pluginId: string): Promise<void>;
   searchFiles(input: { query: string; roots: Array<string> }): Promise<FuzzySearchSnapshot>;
-  resolveApproval(approval: PendingServerRequest, decision: "accept" | "decline"): Promise<void>;
+  resolveServerRequest(
+    request: PendingServerRequest,
+    resolution: ServerRequestResolveInput,
+  ): Promise<void>;
 }

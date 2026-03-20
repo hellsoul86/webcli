@@ -38,10 +38,12 @@ import type {
   RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
+  ServerRequestResolveInput,
   ThreadMetadataGitInfoUpdate,
   SkillGroupSnapshot,
   ThreadSummary,
 } from "@webcli/contracts";
+import { buildDefaultServerRequestResolveInput } from "@webcli/contracts";
 import {
   WorkspaceRepo,
   type RuntimeThreadConfig,
@@ -58,7 +60,7 @@ class FakeRuntime implements SessionRuntime {
   readonly listeners = new Set<SessionRuntimeListener>();
   readonly approvalResolutions: Array<{
     approval: PendingApproval;
-    decision: "accept" | "decline";
+    resolution: ServerRequestResolveInput;
   }> = [];
 
   status: RuntimeStatus = {
@@ -659,11 +661,11 @@ class FakeRuntime implements SessionRuntime {
     };
   }
 
-  async resolveApproval(
+  async resolveServerRequest(
     approval: PendingApproval,
-    decision: "accept" | "decline",
+    resolution: ServerRequestResolveInput,
   ): Promise<void> {
-    this.approvalResolutions.push({ approval, decision });
+    this.approvalResolutions.push({ approval, resolution });
   }
 }
 
@@ -943,7 +945,79 @@ describe("createApp", () => {
     await waitFor(() => runtime.approvalResolutions.length === 1);
     expect(runtime.approvalResolutions[0]).toEqual({
       approval,
-      decision: "accept",
+      resolution: buildDefaultServerRequestResolveInput(approval, "accept"),
+    });
+
+    const inputRequest: PendingApproval = {
+      id: "approval-2",
+      kind: "requestUserInput",
+      method: "item/tool/requestUserInput",
+      threadId: openedThreadId ?? null,
+      turnId: null,
+      itemId: null,
+      params: {
+        questions: [
+          {
+            id: "approval_mode",
+            header: "Approval mode",
+            question: "Choose how to proceed",
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: "accept", description: "Continue" },
+              { label: "decline", description: "Reject" },
+            ],
+          },
+        ],
+      },
+    };
+    runtime.emit({
+      type: "approval.requested",
+      approval: inputRequest,
+    });
+
+    await waitFor(() =>
+      sessionAMessages.some(
+        (message) =>
+          message.type === "server.notification" &&
+          message.method === "serverRequest.requested" &&
+          message.params.request.id === inputRequest.id,
+      ),
+    );
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "server-request-resolve-1",
+        method: "serverRequest.resolve",
+        params: {
+          requestId: inputRequest.id,
+          kind: "requestUserInput",
+          resolution: {
+            answers: {
+              approval_mode: {
+                answers: ["accept"],
+              },
+            },
+          },
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => runtime.approvalResolutions.length === 2);
+    expect(runtime.approvalResolutions[1]).toEqual({
+      approval: inputRequest,
+      resolution: {
+        requestId: inputRequest.id,
+        kind: "requestUserInput",
+        resolution: {
+          answers: {
+            approval_mode: {
+              answers: ["accept"],
+            },
+          },
+        },
+      },
     });
 
     runtime.emit({

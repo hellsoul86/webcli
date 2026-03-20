@@ -403,6 +403,354 @@ export type PendingServerRequest =
 // Compatibility alias while the UI migrates from approval-focused naming.
 export type PendingApproval = PendingServerRequest;
 
+export type CommandExecutionApprovalDecision =
+  | "accept"
+  | "acceptForSession"
+  | {
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: JsonValue;
+      };
+    }
+  | {
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: JsonValue;
+      };
+    }
+  | "decline"
+  | "cancel";
+
+export type FileChangeApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
+
+export type ReviewDecision =
+  | "approved"
+  | {
+      approved_execpolicy_amendment: {
+        proposed_execpolicy_amendment: JsonValue;
+      };
+    }
+  | "approved_for_session"
+  | {
+      network_policy_amendment: {
+        network_policy_amendment: JsonValue;
+      };
+    }
+  | "denied"
+  | "abort";
+
+export type GrantedPermissionProfile = {
+  network?: {
+    enabled?: boolean | null;
+  } | null;
+  fileSystem?: {
+    read?: Array<string> | null;
+    write?: Array<string> | null;
+  } | null;
+  macos?: JsonValue | null;
+};
+
+export type ToolRequestUserInputAnswer = {
+  answers: Array<string>;
+};
+
+export type DynamicToolCallOutputContentItem =
+  | {
+      type: "inputText";
+      text: string;
+    }
+  | {
+      type: "inputImage";
+      imageUrl: string;
+    };
+
+export type McpServerElicitationAction = "accept" | "decline" | "cancel";
+
+export type ServerRequestResolveInput =
+  | {
+      requestId: RequestId;
+      kind: "commandExecutionApproval";
+      resolution: {
+        decision: CommandExecutionApprovalDecision;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "fileChangeApproval";
+      resolution: {
+        decision: FileChangeApprovalDecision;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "requestUserInput";
+      resolution: {
+        answers: Record<string, ToolRequestUserInputAnswer>;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "mcpServerElicitation";
+      resolution: {
+        action: McpServerElicitationAction;
+        content: JsonValue | null;
+        _meta: JsonValue | null;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "permissionsApproval";
+      resolution: {
+        permissions: GrantedPermissionProfile;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "dynamicToolCall";
+      resolution: {
+        contentItems: Array<DynamicToolCallOutputContentItem>;
+        success: boolean;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "chatgptAuthTokensRefresh";
+      resolution: {
+        accessToken: string;
+        chatgptAccountId: string;
+        chatgptPlanType: string | null;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "applyPatchApproval";
+      resolution: {
+        decision: ReviewDecision;
+      };
+    }
+  | {
+      requestId: RequestId;
+      kind: "execCommandApproval";
+      resolution: {
+        decision: ReviewDecision;
+      };
+    };
+
+export type LegacyServerRequestResolveInput = {
+  requestId: RequestId;
+  decision: "accept" | "decline";
+};
+
+export function isLegacyServerRequestResolveInput(
+  input: ServerRequestResolveInput | LegacyServerRequestResolveInput,
+): input is LegacyServerRequestResolveInput {
+  return "decision" in input && !("kind" in input);
+}
+
+export function buildDefaultServerRequestResolveInput(
+  request: PendingServerRequest,
+  decision: "accept" | "decline",
+): ServerRequestResolveInput {
+  switch (request.kind) {
+    case "commandExecutionApproval":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          decision: decision === "accept" ? "accept" : "decline",
+        },
+      };
+    case "fileChangeApproval":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          decision: decision === "accept" ? "accept" : "decline",
+        },
+      };
+    case "requestUserInput": {
+      const questions = Array.isArray(readRecord(request.params).questions)
+        ? (readRecord(request.params).questions as Array<unknown>)
+        : [];
+      const answers = Object.fromEntries(
+        questions
+          .map((question) => {
+            const item = readRecord(question);
+            const id = typeof item.id === "string" ? item.id : null;
+            if (!id) {
+              return null;
+            }
+            const options = Array.isArray(item.options) ? item.options : [];
+            const firstOption = readRecord(options[0]);
+            const firstLabel =
+              typeof firstOption.label === "string" ? firstOption.label.trim() : "";
+            return [
+              id,
+              {
+                answers:
+                  decision === "accept" ? (firstLabel ? [firstLabel] : []) : [],
+              },
+            ] satisfies [string, ToolRequestUserInputAnswer];
+          })
+          .filter((entry): entry is [string, ToolRequestUserInputAnswer] => entry !== null),
+      );
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          answers,
+        },
+      };
+    }
+    case "mcpServerElicitation":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          action: decision === "accept" ? "accept" : "decline",
+          content: decision === "accept" ? buildDefaultMcpElicitationContent(request.params) : null,
+          _meta: (readRecord(request.params)._meta as JsonValue | null | undefined) ?? null,
+        },
+      };
+    case "permissionsApproval":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          permissions: decision === "accept" ? toGrantedPermissionProfile(request.params) : {},
+        },
+      };
+    case "dynamicToolCall":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          success: decision === "accept",
+          contentItems: [],
+        },
+      };
+    case "chatgptAuthTokensRefresh":
+      throw new Error("Explicit ChatGPT auth tokens are required to resolve this request.");
+    case "applyPatchApproval":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          decision: decision === "accept" ? "approved" : "denied",
+        },
+      };
+    case "execCommandApproval":
+      return {
+        requestId: request.id,
+        kind: request.kind,
+        resolution: {
+          decision: decision === "accept" ? "approved" : "denied",
+        },
+      };
+  }
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function buildDefaultMcpElicitationContent(params: Record<string, unknown>): JsonValue | null {
+  if (params.mode !== "form") {
+    return null;
+  }
+
+  const requestedSchema = readRecord(params.requestedSchema);
+  const properties = readRecord(requestedSchema.properties);
+  const required = Array.isArray(requestedSchema.required)
+    ? new Set(
+        requestedSchema.required.filter((entry): entry is string => typeof entry === "string"),
+      )
+    : new Set<string>();
+  const content: Record<string, JsonValue> = {};
+
+  for (const [key, schemaValue] of Object.entries(properties)) {
+    const schema = readRecord(schemaValue);
+    const defaultValue = (schema.default as JsonValue | undefined) ?? inferDefaultSchemaValue(schema);
+    if (defaultValue !== undefined) {
+      content[key] = defaultValue;
+      continue;
+    }
+
+    if (required.has(key)) {
+      content[key] = "";
+    }
+  }
+
+  return Object.keys(content).length > 0 ? content : null;
+}
+
+function inferDefaultSchemaValue(schema: Record<string, unknown>): JsonValue | undefined {
+  if (Array.isArray(schema.enum) && typeof schema.enum[0] === "string") {
+    return schema.enum[0];
+  }
+
+  if (Array.isArray(schema.oneOf)) {
+    const first = readRecord(schema.oneOf[0]);
+    if (typeof first.const === "string") {
+      return first.const;
+    }
+  }
+
+  if (schema.type === "boolean") {
+    return false;
+  }
+
+  if (schema.type === "number" || schema.type === "integer") {
+    return 0;
+  }
+
+  if (schema.type === "array") {
+    return [];
+  }
+
+  if (schema.type === "string") {
+    return "";
+  }
+
+  return undefined;
+}
+
+function toGrantedPermissionProfile(params: Record<string, unknown>): GrantedPermissionProfile {
+  const permissions = readRecord(params.permissions);
+  const network = readRecord(permissions.network);
+  const fileSystem = readRecord(permissions.fileSystem);
+
+  return {
+    ...(Object.keys(network).length > 0
+      ? {
+          network: {
+            enabled:
+              typeof network.enabled === "boolean" || network.enabled === null
+                ? (network.enabled as boolean | null)
+                : null,
+          },
+        }
+      : {}),
+    ...(Object.keys(fileSystem).length > 0
+      ? {
+          fileSystem: {
+            read: Array.isArray(fileSystem.read)
+              ? fileSystem.read.filter((entry): entry is string => typeof entry === "string")
+              : null,
+            write: Array.isArray(fileSystem.write)
+              ? fileSystem.write.filter((entry): entry is string => typeof entry === "string")
+              : null,
+          },
+        }
+      : {}),
+    ...(permissions.macos && typeof permissions.macos === "object"
+      ? { macos: permissions.macos as JsonValue }
+      : {}),
+  };
+}
+
 export type CommandSessionSnapshot = {
   processId: string;
   command: string;
