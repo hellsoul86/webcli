@@ -1,6 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AccountUsageWindow, ThreadSummary } from "@webcli/contracts";
+import type {
+  AccountUsageWindow,
+  ConversationSummarySnapshot,
+  ThreadSummary,
+} from "@webcli/contracts";
 import { setAppLocale } from "../../i18n/init";
 import { WorkbenchHeader } from "./workbench-header";
 
@@ -33,6 +37,23 @@ const usageWindows: Array<AccountUsageWindow> = [
   },
 ];
 
+const conversationSummary: ConversationSummarySnapshot = {
+  conversationId: "thread-1",
+  path: "/srv/webcli-staging/repo/.codex/threads/thread-1.json",
+  preview: "Inspect repo health and explain pending changes",
+  timestamp: "2026-03-21T01:00:00.000Z",
+  updatedAt: "2026-03-21T01:05:00.000Z",
+  modelProvider: "openai",
+  cwd: "/srv/webcli-staging/repo",
+  cliVersion: "0.114.0",
+  source: "cli",
+  gitInfo: {
+    sha: "abc1234",
+    branch: "main",
+    originUrl: "https://github.com/hellsoul86/webcli.git",
+  },
+};
+
 describe("WorkbenchHeader", () => {
   beforeEach(async () => {
     await setAppLocale("zh-CN");
@@ -47,6 +68,7 @@ describe("WorkbenchHeader", () => {
         headerWorkspaceLabel="repo"
         threadTitle="Inspect repo"
         activeThreadEntry={activeThread}
+        conversationSummary={null}
         threadTitleEditing={false}
         threadTitleDraft="Inspect repo"
         toolbarUsageWindows={usageWindows}
@@ -85,6 +107,7 @@ describe("WorkbenchHeader", () => {
         headerWorkspaceLabel="repo"
         threadTitle="Inspect repo"
         activeThreadEntry={activeThread}
+        conversationSummary={null}
         threadTitleEditing
         threadTitleDraft="Inspect repo"
         toolbarUsageWindows={usageWindows}
@@ -112,5 +135,36 @@ describe("WorkbenchHeader", () => {
     expect(onThreadTitleDraftChange).toHaveBeenCalledWith("New title");
     expect(onCommitThreadTitle).toHaveBeenCalledTimes(1);
     expect(onCancelThreadTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the active conversation summary under the thread title", () => {
+    render(
+      <WorkbenchHeader
+        headerWorkspaceLabel="repo"
+        threadTitle="Inspect repo"
+        activeThreadEntry={activeThread}
+        conversationSummary={conversationSummary}
+        threadTitleEditing={false}
+        threadTitleDraft="Inspect repo"
+        toolbarUsageWindows={usageWindows}
+        composerSpeedMode="standard"
+        locale="zh-CN"
+        toolbarLocaleOptions={[
+          { value: "zh-CN", label: "中文", testIdSuffix: "zh-cn" },
+          { value: "en-US", label: "English", testIdSuffix: "en-us" },
+        ]}
+        onThreadTitleDraftChange={() => {}}
+        onCommitThreadTitle={() => {}}
+        onCancelThreadTitle={() => {}}
+        onStartThreadTitleEdit={() => {}}
+        onToggleSpeed={() => {}}
+        onLocaleChange={() => {}}
+        onOpenSettings={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("thread-summary-display")).toHaveTextContent(
+      "Inspect repo health and explain pending changes · main",
+    );
   });
 });

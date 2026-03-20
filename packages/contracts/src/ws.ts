@@ -12,12 +12,14 @@ import type {
   ConfigBatchWriteResult,
   ConfigRequirementsSnapshot,
   ConfigWarningNotice,
+  ConversationSummarySnapshot,
   DeprecationNotice,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitWorkingTreeSnapshot,
   GitBranchReference,
+  GitRemoteDiffSnapshot,
   IntegrationSnapshot,
   LegacyServerRequestResolveInput,
   LivePlan,
@@ -205,6 +207,10 @@ export type AppRequestMap = {
   "externalAgentConfig.import": RpcDefinition<{
     migrationItems: Array<ExternalAgentConfigMigrationItem>;
   }, { ok: true }>;
+  "conversation.summary.read": RpcDefinition<
+    { conversationId: string } | { rolloutPath: string },
+    { summary: ConversationSummarySnapshot }
+  >;
   "workspace.git.read": RpcDefinition<{
     workspaceId: string;
   }, { snapshot: GitWorkingTreeSnapshot }>;
@@ -219,6 +225,9 @@ export type AppRequestMap = {
     workspaceId: string;
     path: string;
   }, { detail: import("./domain.js").GitFileReviewDetail }>;
+  "git.diffToRemote": RpcDefinition<{
+    cwd: string;
+  }, { diff: GitRemoteDiffSnapshot }>;
   "workspace.searchFiles": RpcDefinition<{
     workspaceId: string;
     query: string;

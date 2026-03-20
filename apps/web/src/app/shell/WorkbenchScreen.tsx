@@ -30,6 +30,7 @@ import type {
   ExternalAgentConfigMigrationItem,
   ForcedLoginMethod,
   GitBranchReference,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   HazelnutScope,
@@ -552,6 +553,21 @@ export function App() {
     (activeThreadId
       ? threadSummaries[activeThreadId] ?? hydratedThreads[activeThreadId]?.thread ?? null
       : null) ?? null;
+  const conversationSummaryQuery = useQuery({
+    queryKey: [
+      "conversation-summary",
+      activeThreadEntry?.id ?? null,
+      activeThreadEntry?.path ?? null,
+      activeThreadEntry?.updatedAt ?? null,
+    ],
+    queryFn: () =>
+      activeThreadEntry?.path
+        ? codexClient.call("conversation.summary.read", { rolloutPath: activeThreadEntry.path })
+        : codexClient.call("conversation.summary.read", { conversationId: activeThreadEntry!.id }),
+    enabled: connection.connected && Boolean(activeThreadEntry),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
   const activeThreadView = activeThreadId ? hydratedThreads[activeThreadId] ?? null : null;
   const selectedWorkspaceForContext =
     selectedWorkspace ??
@@ -2075,6 +2091,17 @@ export function App() {
     return response.detail;
   }
 
+  async function handleReadGitDiffToRemote(): Promise<GitRemoteDiffSnapshot> {
+    if (!currentGitWorkspace) {
+      throw new Error(t("git.noCurrentProjectDetail"));
+    }
+
+    const response = await codexClient.call("git.diffToRemote", {
+      cwd: currentGitWorkspace.absPath,
+    });
+    return response.diff;
+  }
+
   async function handleForkThread(thread: ThreadSummary): Promise<void> {
     setBusyMessage(t("composer.busy.forkingThread"));
     await runAction(async () => {
@@ -2850,6 +2877,7 @@ export function App() {
           headerWorkspaceLabel={headerWorkspaceLabel}
           threadTitle={threadTitle}
           activeThreadEntry={activeThreadEntry}
+          conversationSummary={conversationSummaryQuery.data?.summary ?? null}
           threadTitleEditing={threadTitleEditing}
           threadTitleDraft={threadTitleDraft}
           toolbarUsageWindows={toolbarUsageWindows}
@@ -2916,6 +2944,7 @@ export function App() {
                   }}
                   onRefresh={() => void handleRefreshWorkspaceGit()}
                   onReadFileDetail={handleReadGitFileDetail}
+                  onReadRemoteDiff={handleReadGitDiffToRemote}
                   onResizeStart={handleInspectorResizeStart}
                   onResizeKeyDown={handleInspectorResizeKeyDown}
                 />

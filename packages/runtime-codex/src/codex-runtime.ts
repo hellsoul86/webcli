@@ -19,6 +19,7 @@ import type {
   ConfigRequirementsSnapshot,
   ConfigWarningNotice,
   ConfigSnapshot,
+  ConversationSummarySnapshot,
   DeprecationNotice,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
@@ -26,6 +27,7 @@ import type {
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   HazelnutScope,
@@ -56,6 +58,9 @@ import type {
 } from "@webcli/core";
 import type { FuzzyFileSearchResponse } from "./generated/FuzzyFileSearchResponse";
 import type { GetAuthStatusResponse } from "./generated/GetAuthStatusResponse";
+import type { GetConversationSummaryResponse } from "./generated/GetConversationSummaryResponse";
+import type { ConversationSummary } from "./generated/ConversationSummary";
+import type { GitDiffToRemoteResponse } from "./generated/GitDiffToRemoteResponse";
 import type { ReviewOutputEvent } from "./generated/ReviewOutputEvent";
 import type { ApplyPatchApprovalResponse } from "./generated/ApplyPatchApprovalResponse";
 import type { ExecCommandApprovalResponse } from "./generated/ExecCommandApprovalResponse";
@@ -252,6 +257,16 @@ export class CodexRuntime implements SessionRuntime {
       undefined,
     );
     return mapAccountRateLimits(response);
+  }
+
+  async readConversationSummary(
+    input: { conversationId: string } | { rolloutPath: string },
+  ): Promise<ConversationSummarySnapshot> {
+    const response = await this.call<GetConversationSummaryResponse, "getConversationSummary">(
+      "getConversationSummary",
+      input,
+    );
+    return mapConversationSummary(response.summary);
   }
 
   async loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse> {
@@ -899,6 +914,18 @@ export class CodexRuntime implements SessionRuntime {
     file: GitWorkingTreeFile,
   ): Promise<GitFileReviewDetail> {
     return readGitFileReviewDetail(cwd, file);
+  }
+
+  async readGitDiffToRemote(cwd: string): Promise<GitRemoteDiffSnapshot> {
+    const response = await this.call<GitDiffToRemoteResponse, "gitDiffToRemote">(
+      "gitDiffToRemote",
+      { cwd },
+    );
+    return {
+      cwd,
+      sha: response.sha,
+      diff: response.diff,
+    };
   }
 
   async resolveServerRequest(
@@ -2330,6 +2357,27 @@ function mapConfigRequirements(requirements: {
         )
       : null,
     enforceResidency: requirements.enforceResidency ?? null,
+  };
+}
+
+function mapConversationSummary(summary: ConversationSummary): ConversationSummarySnapshot {
+  return {
+    conversationId: summary.conversationId,
+    path: summary.path,
+    preview: summary.preview,
+    timestamp: summary.timestamp,
+    updatedAt: summary.updatedAt,
+    modelProvider: summary.modelProvider,
+    cwd: summary.cwd,
+    cliVersion: summary.cliVersion,
+    source: summary.source,
+    gitInfo: summary.gitInfo
+      ? {
+          sha: summary.gitInfo.sha ?? null,
+          branch: summary.gitInfo.branch ?? null,
+          originUrl: summary.gitInfo.origin_url ?? null,
+        }
+      : null,
   };
 }
 

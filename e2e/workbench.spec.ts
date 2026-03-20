@@ -12,6 +12,7 @@ test("creates a workspace, opens a thread, and replays approvals after reload", 
 
   await ensureWorkspace(page);
   await ensureThread(page);
+  await expect(page.getByTestId("thread-summary-display")).toBeVisible();
 
   const prompt = `Reply with READY ${Date.now()}`;
   await page.getByTestId("composer-input").fill(prompt);
@@ -44,6 +45,9 @@ test("creates a workspace, opens a thread, and replays approvals after reload", 
   await expect(page.getByTestId("git-review-path")).toContainText("README.md");
   await expect(page.getByText("Old heading").first()).toBeVisible();
   await expect(page.getByText("# WebCLI").first()).toBeVisible();
+  await page.getByTestId("git-remote-diff-button").click();
+  await expect(page.getByTestId("git-review-path")).toContainText("远端与工作树差异");
+  await expect(page.getByTestId("git-remote-diff-view")).toContainText("Remote diff coverage");
   await page.getByRole("button", { name: "返回会话" }).click();
 
   const decisionCard = page.locator('[data-testid^="decision-card-"]').first();
