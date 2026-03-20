@@ -25,6 +25,27 @@ const generatedNotificationsPath = path.join(
 );
 
 const VALID_STATUSES = ["supported", "partial", "missing", "deferred-wave2"];
+const WAVE1_REQUESTS_NOT_MISSING = [
+  "account/rateLimits/read",
+  "configRequirements/read",
+  "externalAgentConfig/detect",
+  "externalAgentConfig/import",
+  "config/batchWrite",
+];
+const WAVE1_NOTIFICATIONS_NOT_MISSING = [
+  "account/rateLimits/updated",
+  "model/rerouted",
+  "deprecationNotice",
+  "configWarning",
+];
+const WAVE2_REQUESTS_DEFERRED = ["experimentalFeature/list", "feedback/upload"];
+const WAVE2_NOTIFICATIONS_DEFERRED = [
+  "thread/realtime/started",
+  "thread/realtime/itemAdded",
+  "thread/realtime/outputAudio/delta",
+  "thread/realtime/error",
+  "thread/realtime/closed",
+];
 
 test("desktop parity matrix covers every generated request and notification exactly once", () => {
   const matrix = JSON.parse(readFileSync(matrixPath, "utf8"));
@@ -41,6 +62,15 @@ test("desktop parity matrix covers every generated request and notification exac
   for (const key of Object.keys(matrix.notes ?? {})) {
     assert.ok(knownMethods.has(key), `Unexpected note key: ${key}`);
   }
+});
+
+test("desktop parity matrix keeps implemented wave1 capability families out of missing", () => {
+  const matrix = JSON.parse(readFileSync(matrixPath, "utf8"));
+
+  assertNotMissing(matrix.requests, WAVE1_REQUESTS_NOT_MISSING, "requests");
+  assertNotMissing(matrix.notifications, WAVE1_NOTIFICATIONS_NOT_MISSING, "notifications");
+  assertDeferred(matrix.requests, WAVE2_REQUESTS_DEFERRED, "requests");
+  assertDeferred(matrix.notifications, WAVE2_NOTIFICATIONS_DEFERRED, "notifications");
 });
 
 function assertStatusPartition(statusMap, expectedMethods, label) {
@@ -63,6 +93,28 @@ function assertStatusPartition(statusMap, expectedMethods, label) {
   const expected = [...expectedMethods].sort();
   const actual = [...seen.keys()].sort();
   assert.deepEqual(actual, expected, `${label} matrix does not match generated methods`);
+}
+
+function assertNotMissing(statusMap, methods, label) {
+  for (const method of methods) {
+    assert.ok(
+      !statusMap.missing.includes(method),
+      `${label} method ${method} should not be marked missing`,
+    );
+    assert.ok(
+      statusMap.supported.includes(method) || statusMap.partial.includes(method),
+      `${label} method ${method} should be either supported or partial`,
+    );
+  }
+}
+
+function assertDeferred(statusMap, methods, label) {
+  for (const method of methods) {
+    assert.ok(
+      statusMap["deferred-wave2"].includes(method),
+      `${label} method ${method} should stay in deferred-wave2`,
+    );
+  }
 }
 
 function extractMethods(source) {
