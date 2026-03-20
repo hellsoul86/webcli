@@ -306,14 +306,54 @@ export type WorkbenchThread = {
   review: ReviewOutput | null;
 };
 
-export type PendingApproval = {
+export type PendingServerRequestMethod =
+  | "item/commandExecution/requestApproval"
+  | "item/fileChange/requestApproval"
+  | "item/tool/requestUserInput"
+  | "mcpServer/elicitation/request"
+  | "item/permissions/requestApproval"
+  | "item/tool/call"
+  | "account/chatgptAuthTokens/refresh"
+  | "applyPatchApproval"
+  | "execCommandApproval";
+
+export type PendingServerRequestKind =
+  | "commandExecutionApproval"
+  | "fileChangeApproval"
+  | "requestUserInput"
+  | "mcpServerElicitation"
+  | "permissionsApproval"
+  | "dynamicToolCall"
+  | "chatgptAuthTokensRefresh"
+  | "applyPatchApproval"
+  | "execCommandApproval";
+
+type PendingServerRequestBase<
+  TKind extends PendingServerRequestKind,
+  TMethod extends PendingServerRequestMethod,
+> = {
   id: RequestId;
-  method: string;
+  kind: TKind;
+  method: TMethod;
   threadId: string | null;
   turnId: string | null;
   itemId: string | null;
-  params: unknown;
+  params: Record<string, unknown>;
 };
+
+export type PendingServerRequest =
+  | PendingServerRequestBase<"commandExecutionApproval", "item/commandExecution/requestApproval">
+  | PendingServerRequestBase<"fileChangeApproval", "item/fileChange/requestApproval">
+  | PendingServerRequestBase<"requestUserInput", "item/tool/requestUserInput">
+  | PendingServerRequestBase<"mcpServerElicitation", "mcpServer/elicitation/request">
+  | PendingServerRequestBase<"permissionsApproval", "item/permissions/requestApproval">
+  | PendingServerRequestBase<"dynamicToolCall", "item/tool/call">
+  | PendingServerRequestBase<"chatgptAuthTokensRefresh", "account/chatgptAuthTokens/refresh">
+  | PendingServerRequestBase<"applyPatchApproval", "applyPatchApproval">
+  | PendingServerRequestBase<"execCommandApproval", "execCommandApproval">;
+
+// Compatibility alias while the UI migrates from approval-focused naming.
+export type PendingApproval = PendingServerRequest;
 
 export type CommandSessionSnapshot = {
   processId: string;
