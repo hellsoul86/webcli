@@ -27,11 +27,14 @@ import type {
   GitBranchReference,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
+  HazelnutScope,
   IntegrationSnapshot,
   InspectorTab,
   ModelOption,
   PendingApproval,
+  ProductSurface,
   ReasoningEffort,
+  RemoteSkillSummary,
   SandboxMode,
   ServiceTier,
   SettingsTab,
@@ -264,6 +267,7 @@ export function App() {
   const appendCommandOutput = useWorkbenchStore((state) => state.appendCommandOutput);
   const appendDelta = useWorkbenchStore((state) => state.appendDelta);
   const appendDeltaBatch = useWorkbenchStore((state) => state.appendDeltaBatch);
+  const setIntegrations = useWorkbenchStore((state) => state.setIntegrations);
   const setIntegrationSnapshot = useWorkbenchStore((state) => state.setIntegrationSnapshot);
   const setFuzzySearch = useWorkbenchStore((state) => state.setFuzzySearch);
   const clearFuzzySearch = useWorkbenchStore((state) => state.clearFuzzySearch);
@@ -331,6 +335,19 @@ export function App() {
   const previousThreadStatusesRef = useRef<Record<string, ThreadSummary["status"]>>({});
   const queuedDispatchingThreadsRef = useRef(new Set<string>());
   const restoredThreadIdRef = useRef<string | null>(null);
+  const remoteSkillsFilters = useMemo(
+    () =>
+      ({
+        hazelnutScope: "personal",
+        productSurface: "codex",
+        enabled: true,
+      }) satisfies {
+        hazelnutScope: HazelnutScope;
+        productSurface: ProductSurface;
+        enabled: boolean;
+      },
+    [],
+  );
   const promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
   const settingsTabs = useMemo(() => buildSettingsTabs(t), [t]);
   const reasoningEffortLabels = useMemo(() => getReasoningEffortLabels(t), [t]);
@@ -385,6 +402,13 @@ export function App() {
         threadId: activeThreadId,
       }),
     enabled: integrations.settingsOpen,
+  });
+
+  const remoteSkillsQuery = useQuery({
+    queryKey: ["remote-skills", remoteSkillsFilters],
+    queryFn: () => codexClient.call("skills.remote.list", remoteSkillsFilters),
+    enabled: integrations.settingsOpen && integrations.settingsTab === "extensions",
+    staleTime: 60_000,
   });
 
   const codePreviewQuery = useQuery({
@@ -959,6 +983,7 @@ export function App() {
       resolveApproval: resolveApprovalInStore,
       setCommandSession,
       appendCommandOutput,
+      setIntegrations,
       setIntegrationSnapshot,
       onTimelineDeltaFlush: (entries) => {
         markStreamingItems(entries);
@@ -992,6 +1017,7 @@ export function App() {
     resolveApprovalInStore,
     setCommandSession,
     setConnection,
+    setIntegrations,
     setIntegrationSnapshot,
     setLatestDiff,
     setLatestPlan,
@@ -2298,15 +2324,124 @@ export function App() {
     });
   }
 
+  async function handleRefreshMcpServers(): Promise<void> {
+    setBusyMessage(t("composer.busy.refreshingMcpServers"));
+    await runAction(async () => {
+      const response = await codexClient.call("mcpServerStatus.list", {});
+      setIntegrations({ mcpServers: response.servers });
+      setSettingsNotice(t("settings.notices.mcpServersRefreshed"));
+    });
+  }
+
+  async function handleRefreshSkills(): Promise<void> {
+    setBusyMessage(t("composer.busy.refreshingSkills"));
+    await runAction(async () => {
+      const response = await codexClient.call("skills.list", {
+        workspaceId: activeWorkspaceId,
+      });
+      setIntegrations({ skills: response.skills });
+      setSettingsNotice(t("settings.notices.skillsRefreshed"));
+    });
+  }
+
+  async function handleRemoteSkillsRefresh(): Promise<void> {
+    setBusyMessage(t("composer.busy.refreshingSkills"));
+    await runAction(async () => {
+      await remoteSkillsQuery.refetch();
+      setSettingsNotice(t("settings.notices.remoteSkillsRefreshed"));
+    });
+  }
+
+  async function handleRemoteSkillExport(hazelnutId: string): Promise<void> {
+    setBusyMessage(t("composer.busy.exportingSkill"));
+    await runAction(async () => {
+      const response = await codexClient.call("skills.remote.export", {
+        hazelnutId,
+        workspaceId: activeWorkspaceId,
+      });
+      setIntegrations({ skills: response.skills });
+      await remoteSkillsQuery.refetch();
+      setSettingsNotice(t("settings.notices.remoteSkillExported", { path: response.skill.path }));
+    });
+  }
+
+  async function handleSkillConfigWrite(path: string, enabled: boolean): Promise<void> {
+    setBusyMessage(t("composer.busy.updatingSkill"));
+    await runAction(async () => {
+      const response = await codexClient.call("skills.config.write", {
+        path,
+        enabled,
+        workspaceId: activeWorkspaceId,
+      });
+      setIntegrations({ skills: response.skills });
+      setSettingsNotice(
+        t(
+          response.effectiveEnabled
+            ? "settings.notices.skillEnabled"
+            : "settings.notices.skillDisabled",
+        ),
+      );
+    });
+  }
+
+  async function handleRefreshApps(): Promise<void> {
+    setBusyMessage(t("composer.busy.refreshingApps"));
+    await runAction(async () => {
+      const response = await codexClient.call("app.list", {
+        threadId: activeThreadId,
+        forceRefetch: true,
+      });
+      setIntegrations({ apps: response.apps });
+      setSettingsNotice(t("settings.notices.appsRefreshed"));
+    });
+  }
+
+  async function handleRefreshPlugins(): Promise<void> {
+    setBusyMessage(t("composer.busy.refreshingPlugins"));
+    await runAction(async () => {
+      const response = await codexClient.call("plugin.list", {
+        workspaceId: activeWorkspaceId,
+      });
+      setIntegrations({ plugins: response.marketplaces });
+      setSettingsNotice(t("settings.notices.pluginsRefreshed"));
+    });
+  }
+
+  async function handlePluginInstall(marketplacePath: string, pluginName: string): Promise<void> {
+    setBusyMessage(t("composer.busy.installingPlugin"));
+    await runAction(async () => {
+      const response = await codexClient.call("plugin.install", {
+        marketplacePath,
+        pluginName,
+        workspaceId: activeWorkspaceId,
+        threadId: activeThreadId,
+      });
+      setIntegrations({
+        plugins: response.marketplaces,
+        apps: response.apps,
+      });
+      setSettingsNotice(
+        response.appsNeedingAuth.length > 0
+          ? t("settings.notices.pluginInstalledAuthRequired", {
+              apps: response.appsNeedingAuth.map((app) => app.name).join(", "),
+            })
+          : t("settings.notices.pluginInstalled"),
+      );
+    });
+  }
+
   async function handlePluginUninstall(pluginId: string): Promise<void> {
     setBusyMessage(t("composer.busy.uninstallingPlugin"));
     await runAction(async () => {
-      const response = await codexClient.call("integrations.plugin.uninstall", {
+      const response = await codexClient.call("plugin.uninstall", {
         pluginId,
         workspaceId: activeWorkspaceId,
         threadId: activeThreadId,
       });
-      setIntegrationSnapshot(response.snapshot);
+      setIntegrations({
+        plugins: response.marketplaces,
+        apps: response.apps,
+      });
       setSettingsNotice(t("settings.notices.pluginUninstalled"));
     });
   }
@@ -2908,6 +3043,8 @@ export function App() {
           models={models}
           mcpServers={integrations.mcpServers}
           skills={integrations.skills}
+          remoteSkills={remoteSkillsQuery.data?.skills ?? []}
+          remoteSkillsLoading={remoteSkillsQuery.isLoading || remoteSkillsQuery.isFetching}
           apps={integrations.apps}
           plugins={integrations.plugins}
           archivedThreads={archivedThreadEntries}
@@ -2927,7 +3064,16 @@ export function App() {
           onCancelChatgptLogin={() => void handleCancelChatgptLogin()}
           onAccountLogout={() => void handleAccountLogout()}
           onMcpLogin={(name) => void handleMcpLogin(name)}
+          onMcpStatusRefresh={() => void handleRefreshMcpServers()}
           onMcpReload={() => void handleMcpReload()}
+          onSkillsRefresh={() => void handleRefreshSkills()}
+          onRemoteSkillsRefresh={() => void handleRemoteSkillsRefresh()}
+          onRemoteSkillExport={(hazelnutId) => void handleRemoteSkillExport(hazelnutId)}
+          onSkillConfigWrite={(path, enabled) => void handleSkillConfigWrite(path, enabled)}
+          onAppsRefresh={() => void handleRefreshApps()}
+          onPluginsRefresh={() => void handleRefreshPlugins()}
+          onPluginInstall={(marketplacePath, pluginName) =>
+            void handlePluginInstall(marketplacePath, pluginName)}
           onOpenArchivedThread={(threadId) => {
             setSettingsOpen(false);
             setArchivedMode("archived");
@@ -3883,6 +4029,8 @@ function SettingsOverlay(props: {
   models: Array<ModelOption>;
   mcpServers: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["mcpServers"];
   skills: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["skills"];
+  remoteSkills: Array<RemoteSkillSummary>;
+  remoteSkillsLoading: boolean;
   apps: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["apps"];
   plugins: ReturnType<typeof useWorkbenchStore.getState>["integrations"]["plugins"];
   archivedThreads: Array<ThreadSummary>;
@@ -3906,7 +4054,15 @@ function SettingsOverlay(props: {
   onCancelChatgptLogin: () => void;
   onAccountLogout: () => void;
   onMcpLogin: (name: string) => void;
+  onMcpStatusRefresh: () => void;
   onMcpReload: () => void;
+  onSkillsRefresh: () => void;
+  onRemoteSkillsRefresh: () => void;
+  onRemoteSkillExport: (hazelnutId: string) => void;
+  onSkillConfigWrite: (path: string, enabled: boolean) => void;
+  onAppsRefresh: () => void;
+  onPluginsRefresh: () => void;
+  onPluginInstall: (marketplacePath: string, pluginName: string) => void;
   onOpenArchivedThread: (threadId: string) => void;
   onUnarchiveThread: (thread: ThreadSummary) => void;
   onPluginUninstall: (pluginId: string) => void;
@@ -4418,6 +4574,9 @@ function SettingsOverlay(props: {
                     <button className="ghost-button" onClick={props.onRefresh}>
                       {t("settings.refreshIntegrations")}
                     </button>
+                    <button className="ghost-button" onClick={props.onMcpStatusRefresh}>
+                      {t("settings.refreshMcpServers")}
+                    </button>
                     <button className="ghost-button" onClick={props.onMcpReload}>
                       {t("settings.integrationsReload")}
                     </button>
@@ -4462,6 +4621,14 @@ function SettingsOverlay(props: {
               <div className="settings-card">
                 <div className="inspector-section__header">
                   <strong>{t("settings.extensions.skills")}</strong>
+                  <div className="approval-actions">
+                    <button className="ghost-button" onClick={props.onSkillsRefresh}>
+                      {t("settings.refreshSkills")}
+                    </button>
+                    <button className="ghost-button" onClick={props.onRemoteSkillsRefresh}>
+                      {t("settings.refreshRemoteSkills")}
+                    </button>
+                  </div>
                 </div>
                 {props.skills.length > 0 ? (
                   props.skills.map((group) => (
@@ -4470,11 +4637,23 @@ function SettingsOverlay(props: {
                         <strong>{compactPath(group.cwd, 4)}</strong>
                         <span>{t("settings.skillsCount", { count: group.skills.length })}</span>
                       </div>
-                      <div className="tag-cloud">
+                      <div className="plugin-list">
                         {group.skills.map((skill) => (
-                          <span key={skill.name} className="tag-chip">
-                            {skill.name}
-                          </span>
+                          <div key={skill.path} className="plugin-row">
+                            <div>
+                              <strong>{skill.name}</strong>
+                              <p className="muted">
+                                {skill.shortDescription ?? skill.description} ·{" "}
+                                {skill.enabled ? t("common.enabled") : t("common.disabled")}
+                              </p>
+                            </div>
+                            <button
+                              className="ghost-button"
+                              onClick={() => props.onSkillConfigWrite(skill.path, !skill.enabled)}
+                            >
+                              {skill.enabled ? t("settings.skillDisable") : t("settings.skillEnable")}
+                            </button>
+                          </div>
                         ))}
                       </div>
                       {group.errors.length > 0 ? (
@@ -4491,8 +4670,42 @@ function SettingsOverlay(props: {
 
               <div className="settings-card">
                 <div className="inspector-section__header">
+                  <strong>{t("settings.remoteSkillsTitle")}</strong>
+                  <span>{formatNumber(props.remoteSkills.length)}</span>
+                </div>
+                {props.remoteSkillsLoading ? (
+                  <p className="muted">{t("settings.remoteSkillsLoading")}</p>
+                ) : props.remoteSkills.length > 0 ? (
+                  <div className="plugin-list">
+                    {props.remoteSkills.map((skill) => (
+                      <div key={skill.id} className="plugin-row">
+                        <div>
+                          <strong>{skill.name}</strong>
+                          <p className="muted">{skill.description}</p>
+                        </div>
+                        <button
+                          className="ghost-button"
+                          onClick={() => props.onRemoteSkillExport(skill.id)}
+                        >
+                          {t("settings.remoteSkillExport")}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted">{t("settings.remoteSkillsEmpty")}</p>
+                )}
+              </div>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
                   <strong>{t("settings.extensions.apps")}</strong>
-                  <span>{formatNumber(props.apps.length)}</span>
+                  <div className="approval-actions">
+                    <span>{formatNumber(props.apps.length)}</span>
+                    <button className="ghost-button" onClick={props.onAppsRefresh}>
+                      {t("settings.refreshApps")}
+                    </button>
+                  </div>
                 </div>
                 {props.apps.length > 0 ? (
                   <div className="plugin-list">
@@ -4500,10 +4713,32 @@ function SettingsOverlay(props: {
                       <div key={app.id} className="plugin-row">
                         <div>
                           <strong>{app.name}</strong>
-                          <p className="muted">{app.description ?? t("common.noDescription")}</p>
+                          <p className="muted">
+                            {app.description ?? t("common.noDescription")} ·{" "}
+                            {app.isAccessible ? t("common.available") : t("common.blocked")} ·{" "}
+                            {app.isEnabled ? t("common.enabled") : t("common.disabled")}
+                          </p>
+                          {app.pluginDisplayNames.length > 0 ? (
+                            <p className="muted">
+                              {t("settings.appPlugins", {
+                                plugins: app.pluginDisplayNames.join(", "),
+                              })}
+                            </p>
+                          ) : null}
                         </div>
                         <div className="mcp-card__actions">
-                          <span>{app.isAccessible ? t("common.available") : t("common.blocked")}</span>
+                          {app.installUrl ? (
+                            <a
+                              className="ghost-button"
+                              href={app.installUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {t("settings.appInstall")}
+                            </a>
+                          ) : (
+                            <span>{app.isAccessible ? t("common.available") : t("common.blocked")}</span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -4516,6 +4751,9 @@ function SettingsOverlay(props: {
               <div className="settings-card">
                 <div className="inspector-section__header">
                   <strong>{t("settings.extensions.plugins")}</strong>
+                  <button className="ghost-button" onClick={props.onPluginsRefresh}>
+                    {t("settings.refreshPlugins")}
+                  </button>
                 </div>
                 {props.plugins.length > 0 ? (
                   props.plugins.map((marketplace) => (
@@ -4541,7 +4779,14 @@ function SettingsOverlay(props: {
                               >
                                 {t("settings.pluginUninstall")}
                               </button>
-                            ) : null}
+                            ) : (
+                              <button
+                                className="ghost-button"
+                                onClick={() => props.onPluginInstall(marketplace.path, plugin.name)}
+                              >
+                                {t("settings.pluginInstall")}
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>

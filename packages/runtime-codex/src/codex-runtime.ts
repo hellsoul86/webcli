@@ -9,6 +9,8 @@ import type {
   AccountLoginStartResponse,
   AccountStateSnapshot,
   AccountSummary,
+  AppInstallHint,
+  AppSnapshot,
   ApprovalPolicy,
   ConfigSnapshot,
   ForcedLoginMethod,
@@ -17,13 +19,20 @@ import type {
   GitFileReviewDetail,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
+  HazelnutScope,
   IntegrationSnapshot,
   ModelOption,
+  McpServerSnapshot,
   PendingServerRequest,
+  PluginMarketplaceSnapshot,
+  ProductSurface,
+  RemoteSkillExportResult,
+  RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
   ThreadMetadataGitInfoUpdate,
   ThreadTokenUsage,
+  SkillGroupSnapshot,
   TimelineEntry,
 } from "@webcli/contracts";
 import type {
@@ -52,10 +61,14 @@ import type { ListMcpServerStatusResponse } from "./generated/v2/ListMcpServerSt
 import type { McpServerOauthLoginResponse } from "./generated/v2/McpServerOauthLoginResponse";
 import type { ModelListResponse } from "./generated/v2/ModelListResponse";
 import type { PermissionsRequestApprovalResponse } from "./generated/v2/PermissionsRequestApprovalResponse";
+import type { PluginInstallResponse } from "./generated/v2/PluginInstallResponse";
 import type { PluginListResponse } from "./generated/v2/PluginListResponse";
 import type { ReviewStartResponse } from "./generated/v2/ReviewStartResponse";
 import type { SandboxMode as RuntimeSandboxMode } from "./generated/v2/SandboxMode";
+import type { SkillsConfigWriteResponse } from "./generated/v2/SkillsConfigWriteResponse";
 import type { SkillsListResponse } from "./generated/v2/SkillsListResponse";
+import type { SkillsRemoteReadResponse } from "./generated/v2/SkillsRemoteReadResponse";
+import type { SkillsRemoteWriteResponse } from "./generated/v2/SkillsRemoteWriteResponse";
 import type { Thread } from "./generated/v2/Thread";
 import type { ThreadLoadedListResponse } from "./generated/v2/ThreadLoadedListResponse";
 import type { ThreadListResponse } from "./generated/v2/ThreadListResponse";
@@ -578,9 +591,9 @@ export class CodexRuntime implements SessionRuntime {
         refreshToken: false,
       }),
       this.readConfigSnapshot(input.cwd),
-      this.listAllMcpServers(),
+      this.listMcpServerStatuses(),
       this.listSkills(input.cwd),
-      this.listApps(input.threadId ?? null),
+      this.listApps({ threadId: input.threadId ?? null }),
       this.listPlugins(input.cwd),
     ]);
 
@@ -590,35 +603,10 @@ export class CodexRuntime implements SessionRuntime {
         requiresOpenaiAuth: authStatus.requiresOpenaiAuth ?? false,
       },
       config,
-      mcpServers: mcpServers.map((server) => ({
-        name: server.name,
-        authStatus: server.authStatus,
-        toolsCount: Object.keys(server.tools ?? {}).length,
-        resourcesCount: server.resources.length,
-      })),
-      skills: skills.map((entry) => ({
-        cwd: entry.cwd,
-        skills: entry.skills.map((skill) => ({ name: skill.name })),
-        errors: entry.errors.map((error) => ({ message: error.message })),
-      })),
-      apps: apps.map((app) => ({
-        id: app.id,
-        name: app.name,
-        description: app.description,
-        isAccessible: app.isAccessible,
-        pluginDisplayNames: app.pluginDisplayNames,
-        installUrl: app.installUrl,
-      })),
-      plugins: plugins.map((entry) => ({
-        path: entry.path,
-        name: entry.name,
-        plugins: entry.plugins.map((plugin) => ({
-          id: plugin.id,
-          name: plugin.name,
-          installed: plugin.installed,
-          enabled: plugin.enabled,
-        })),
-      })),
+      mcpServers,
+      skills,
+      apps,
+      plugins,
     };
   }
 
@@ -662,6 +650,101 @@ export class CodexRuntime implements SessionRuntime {
 
   async reloadMcp(): Promise<void> {
     await this.call("config/mcpServer/reload", undefined);
+  }
+
+  async listMcpServerStatuses(): Promise<Array<McpServerSnapshot>> {
+    return this.mapMcpServers(await this.listAllMcpServers());
+  }
+
+  async listSkills(cwd?: string | null): Promise<Array<SkillGroupSnapshot>> {
+    const response: SkillsListResponse = await this.call<SkillsListResponse, "skills/list">(
+      "skills/list",
+      {
+        cwds: cwd ? [cwd] : undefined,
+        forceReload: false,
+      },
+    );
+    return this.mapSkills(response.data);
+  }
+
+  async listRemoteSkills(input: {
+    hazelnutScope: HazelnutScope;
+    productSurface: ProductSurface;
+    enabled: boolean;
+  }): Promise<Array<RemoteSkillSummary>> {
+    const response: SkillsRemoteReadResponse = await this.call<
+      SkillsRemoteReadResponse,
+      "skills/remote/list"
+    >("skills/remote/list", input);
+    return response.data.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+    }));
+  }
+
+  async exportRemoteSkill(hazelnutId: string): Promise<RemoteSkillExportResult> {
+    const response: SkillsRemoteWriteResponse = await this.call<
+      SkillsRemoteWriteResponse,
+      "skills/remote/export"
+    >("skills/remote/export", {
+      hazelnutId,
+    });
+    return {
+      id: response.id,
+      path: response.path,
+    };
+  }
+
+  async writeSkillConfig(path: string, enabled: boolean): Promise<{ effectiveEnabled: boolean }> {
+    const response: SkillsConfigWriteResponse = await this.call<
+      SkillsConfigWriteResponse,
+      "skills/config/write"
+    >("skills/config/write", {
+      path,
+      enabled,
+    });
+    return {
+      effectiveEnabled: response.effectiveEnabled,
+    };
+  }
+
+  async listApps(input: {
+    threadId?: string | null;
+    forceRefetch?: boolean;
+  }): Promise<Array<AppSnapshot>> {
+    return this.mapApps(await this.listAppsInternal(input.threadId ?? null, input.forceRefetch ?? false));
+  }
+
+  async listPlugins(cwd?: string | null): Promise<Array<PluginMarketplaceSnapshot>> {
+    const response: PluginListResponse = await this.call<PluginListResponse, "plugin/list">(
+      "plugin/list",
+      {
+        cwds: cwd ? [cwd] : undefined,
+      },
+    );
+    return this.mapPlugins(response.marketplaces);
+  }
+
+  async installPlugin(input: {
+    marketplacePath: string;
+    pluginName: string;
+  }): Promise<{ appsNeedingAuth: Array<AppInstallHint> }> {
+    const response: PluginInstallResponse = await this.call<
+      PluginInstallResponse,
+      "plugin/install"
+    >("plugin/install", {
+      marketplacePath: input.marketplacePath,
+      pluginName: input.pluginName,
+    });
+    return {
+      appsNeedingAuth: response.appsNeedingAuth.map((app) => ({
+        id: app.id,
+        name: app.name,
+        description: app.description,
+        installUrl: app.installUrl,
+      })),
+    };
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
@@ -1099,6 +1182,20 @@ export class CodexRuntime implements SessionRuntime {
       return;
     }
 
+    if (method === "skills/changed") {
+      this.emit({ type: "skills.changed" });
+      return;
+    }
+
+    if (method === "app/list/updated") {
+      const payload = params as { data: Array<AppInfo> };
+      this.emit({
+        type: "app.list.updated",
+        apps: this.mapApps(payload.data),
+      });
+      return;
+    }
+
     if (method === "command/exec/outputDelta") {
       const payload = params as {
         processId: string;
@@ -1320,18 +1417,7 @@ export class CodexRuntime implements SessionRuntime {
     return data;
   }
 
-  private async listSkills(cwd?: string | null) {
-    const response: SkillsListResponse = await this.call<SkillsListResponse, "skills/list">(
-      "skills/list",
-      {
-      cwds: cwd ? [cwd] : undefined,
-      forceReload: false,
-      },
-    );
-    return response.data;
-  }
-
-  private async listApps(threadId: string | null) {
+  private async listAppsInternal(threadId: string | null, forceRefetch: boolean) {
     const data = [] as Array<AppInfo>;
     let cursor: string | null = null;
 
@@ -1342,7 +1428,7 @@ export class CodexRuntime implements SessionRuntime {
           cursor,
           limit: 100,
           threadId,
-          forceRefetch: false,
+          forceRefetch,
         },
       );
       data.push(...response.data);
@@ -1352,14 +1438,58 @@ export class CodexRuntime implements SessionRuntime {
     return data;
   }
 
-  private async listPlugins(cwd?: string | null) {
-    const response: PluginListResponse = await this.call<PluginListResponse, "plugin/list">(
-      "plugin/list",
-      {
-      cwds: cwd ? [cwd] : undefined,
-      },
-    );
-    return response.marketplaces;
+  private mapMcpServers(
+    servers: Awaited<ReturnType<CodexRuntime["listAllMcpServers"]>>,
+  ): Array<McpServerSnapshot> {
+    return servers.map((server) => ({
+      name: server.name,
+      authStatus: server.authStatus,
+      toolsCount: Object.keys(server.tools ?? {}).length,
+      resourcesCount: server.resources.length,
+    }));
+  }
+
+  private mapSkills(
+    skills: SkillsListResponse["data"],
+  ): Array<SkillGroupSnapshot> {
+    return skills.map((entry) => ({
+      cwd: entry.cwd,
+      skills: entry.skills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        shortDescription: skill.shortDescription ?? null,
+        path: skill.path,
+        enabled: skill.enabled,
+      })),
+      errors: entry.errors.map((error) => ({ message: error.message })),
+    }));
+  }
+
+  private mapApps(apps: Array<AppInfo>): Array<AppSnapshot> {
+    return apps.map((app) => ({
+      id: app.id,
+      name: app.name,
+      description: app.description,
+      isAccessible: app.isAccessible,
+      isEnabled: app.isEnabled,
+      pluginDisplayNames: app.pluginDisplayNames,
+      installUrl: app.installUrl,
+    }));
+  }
+
+  private mapPlugins(
+    marketplaces: PluginListResponse["marketplaces"],
+  ): Array<PluginMarketplaceSnapshot> {
+    return marketplaces.map((entry) => ({
+      path: entry.path,
+      name: entry.name,
+      plugins: entry.plugins.map((plugin) => ({
+        id: plugin.id,
+        name: plugin.name,
+        installed: plugin.installed,
+        enabled: plugin.enabled,
+      })),
+    }));
   }
 
   private async collectPages<

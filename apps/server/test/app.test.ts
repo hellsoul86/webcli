@@ -9,6 +9,8 @@ import type {
   AccountLoginStartResponse,
   AccountStateSnapshot,
   AccountSummary,
+  AppInstallHint,
+  AppSnapshot,
   AppClientMessage,
   AppServerMessage,
   ApprovalPolicy,
@@ -18,13 +20,20 @@ import type {
   GitFileReviewDetail,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
+  HazelnutScope,
   IntegrationSnapshot,
   ModelOption,
+  McpServerSnapshot,
   PendingApproval,
+  PluginMarketplaceSnapshot,
+  ProductSurface,
   ReasoningEffort,
+  RemoteSkillExportResult,
+  RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
   ThreadMetadataGitInfoUpdate,
+  SkillGroupSnapshot,
 } from "@webcli/contracts";
 import {
   WorkspaceRepo,
@@ -109,6 +118,61 @@ class FakeRuntime implements SessionRuntime {
   nextThreadId = 1;
   gitCurrentBranch = "main";
   gitBranches = ["main", "feature/demo"];
+  mcpServers: Array<McpServerSnapshot> = [
+    {
+      name: "filesystem",
+      authStatus: "connected",
+      toolsCount: 2,
+      resourcesCount: 1,
+    },
+  ];
+  skills: Array<SkillGroupSnapshot> = [
+    {
+      cwd: "/workspace",
+      skills: [
+        {
+          name: "lint",
+          description: "Run lint checks",
+          shortDescription: "Lint",
+          path: "/workspace/.codex/skills/lint",
+          enabled: true,
+        },
+      ],
+      errors: [],
+    },
+  ];
+  remoteSkills: Array<RemoteSkillSummary> = [
+    {
+      id: "remote-lint",
+      name: "Remote lint",
+      description: "Shared lint skill",
+    },
+  ];
+  apps: Array<AppSnapshot> = [
+    {
+      id: "github",
+      name: "GitHub",
+      description: "Connector",
+      isAccessible: true,
+      isEnabled: true,
+      pluginDisplayNames: ["github-plugin"],
+      installUrl: "https://example.com/install",
+    },
+  ];
+  plugins: Array<PluginMarketplaceSnapshot> = [
+    {
+      path: "/plugins/official",
+      name: "Official",
+      plugins: [
+        {
+          id: "github-plugin",
+          name: "github-plugin",
+          installed: false,
+          enabled: false,
+        },
+      ],
+    },
+  ];
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -381,10 +445,17 @@ class FakeRuntime implements SessionRuntime {
         requiresOpenaiAuth: this.account.requiresOpenaiAuth,
       },
       config: { ...this.config },
-      mcpServers: [],
-      skills: [],
-      apps: [],
-      plugins: [],
+      mcpServers: this.mcpServers.map((server) => ({ ...server })),
+      skills: this.skills.map((group) => ({
+        ...group,
+        skills: group.skills.map((skill) => ({ ...skill })),
+        errors: group.errors.map((error) => ({ ...error })),
+      })),
+      apps: this.apps.map((app) => ({ ...app, pluginDisplayNames: [...app.pluginDisplayNames] })),
+      plugins: this.plugins.map((marketplace) => ({
+        ...marketplace,
+        plugins: marketplace.plugins.map((plugin) => ({ ...plugin })),
+      })),
     };
   }
 
@@ -432,7 +503,109 @@ class FakeRuntime implements SessionRuntime {
   }
 
   async reloadMcp(): Promise<void> {}
-  async uninstallPlugin(): Promise<void> {}
+  async listMcpServerStatuses(): Promise<Array<McpServerSnapshot>> {
+    return this.mcpServers.map((server) => ({ ...server }));
+  }
+
+  async listSkills(): Promise<Array<SkillGroupSnapshot>> {
+    return this.skills.map((group) => ({
+      ...group,
+      skills: group.skills.map((skill) => ({ ...skill })),
+      errors: group.errors.map((error) => ({ ...error })),
+    }));
+  }
+
+  async listRemoteSkills(_input: {
+    hazelnutScope: HazelnutScope;
+    productSurface: ProductSurface;
+    enabled: boolean;
+  }): Promise<Array<RemoteSkillSummary>> {
+    return this.remoteSkills.map((skill) => ({ ...skill }));
+  }
+
+  async exportRemoteSkill(hazelnutId: string): Promise<RemoteSkillExportResult> {
+    const exported = this.remoteSkills.find((skill) => skill.id === hazelnutId);
+    const path = `/workspace/.codex/skills/${hazelnutId}`;
+    if (exported) {
+      this.skills = this.skills.map((group, index) =>
+        index === 0
+          ? {
+              ...group,
+              skills: [
+                ...group.skills,
+                {
+                  name: exported.name,
+                  description: exported.description,
+                  shortDescription: exported.name,
+                  path,
+                  enabled: true,
+                },
+              ],
+            }
+          : group,
+      );
+    }
+    return { id: hazelnutId, path };
+  }
+
+  async writeSkillConfig(
+    path: string,
+    enabled: boolean,
+  ): Promise<{ effectiveEnabled: boolean }> {
+    this.skills = this.skills.map((group) => ({
+      ...group,
+      skills: group.skills.map((skill) =>
+        skill.path === path ? { ...skill, enabled } : skill,
+      ),
+    }));
+    return { effectiveEnabled: enabled };
+  }
+
+  async listApps(): Promise<Array<AppSnapshot>> {
+    return this.apps.map((app) => ({ ...app, pluginDisplayNames: [...app.pluginDisplayNames] }));
+  }
+
+  async listPlugins(): Promise<Array<PluginMarketplaceSnapshot>> {
+    return this.plugins.map((marketplace) => ({
+      ...marketplace,
+      plugins: marketplace.plugins.map((plugin) => ({ ...plugin })),
+    }));
+  }
+
+  async installPlugin(input: {
+    marketplacePath: string;
+    pluginName: string;
+  }): Promise<{ appsNeedingAuth: Array<AppInstallHint> }> {
+    this.plugins = this.plugins.map((marketplace) =>
+      marketplace.path === input.marketplacePath
+        ? {
+            ...marketplace,
+            plugins: marketplace.plugins.map((plugin) =>
+              plugin.name === input.pluginName
+                ? { ...plugin, installed: true, enabled: true }
+                : plugin,
+            ),
+          }
+        : marketplace,
+    );
+    return {
+      appsNeedingAuth: this.apps.map((app) => ({
+        id: app.id,
+        name: app.name,
+        description: app.description,
+        installUrl: app.installUrl,
+      })),
+    };
+  }
+
+  async uninstallPlugin(pluginId: string): Promise<void> {
+    this.plugins = this.plugins.map((marketplace) => ({
+      ...marketplace,
+      plugins: marketplace.plugins.map((plugin) =>
+        plugin.id === pluginId ? { ...plugin, installed: false, enabled: false } : plugin,
+      ),
+    }));
+  }
 
   async searchFiles(): Promise<FuzzySearchSnapshot> {
     return {
@@ -1006,6 +1179,163 @@ describe("createApp", () => {
         ? logoutResponse.result.state.account.authenticated
         : true,
     ).toBe(false);
+
+    ws.close();
+    await app.close();
+  });
+
+  it("handles extensions and capability websocket rpc flows", async () => {
+    const env: AppEnv = {
+      host: "127.0.0.1",
+      port: 0,
+      codexCommand: "codex",
+      dataDir: tempDir,
+      dbPath: join(tempDir, "app.sqlite"),
+      webDistDir: join(tempDir, "missing-web"),
+    };
+
+    const runtime = new FakeRuntime();
+    const { app } = await createApp(env, {
+      runtime,
+      workspaceRepo: new WorkspaceRepo(env.dbPath),
+    });
+    await app.listen({ host: env.host, port: 0 });
+    const port = getBoundPort(app);
+
+    const messages: Array<AppServerMessage> = [];
+    const ws = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=extensions-session`);
+    ws.on("message", (payload: WebSocket.RawData) => {
+      messages.push(JSON.parse(payload.toString()) as AppServerMessage);
+    });
+
+    await waitForOpen(ws);
+    await waitFor(() => hasNotification(messages, "runtime.statusChanged"));
+
+    const send = <TMethod extends AppClientMessage["method"]>(
+      id: string,
+      method: TMethod,
+      params: Extract<AppClientMessage, { method: TMethod }>["params"],
+    ) => {
+      ws.send(
+        JSON.stringify({
+          type: "client.call",
+          id,
+          method,
+          params,
+        } as AppClientMessage),
+      );
+    };
+
+    send("mcp-list", "mcpServerStatus.list", {});
+    await waitFor(() => hasResponse(messages, "mcp-list"));
+    const mcpListResult = getResponse(messages, "mcp-list")?.result as
+      | { servers: Array<{ name: string }> }
+      | undefined;
+    expect(mcpListResult?.servers[0]?.name).toBe("filesystem");
+
+    send("skills-list", "skills.list", {});
+    await waitFor(() => hasResponse(messages, "skills-list"));
+    const skillsListResult = getResponse(messages, "skills-list")?.result as
+      | { skills: Array<{ skills: Array<{ name: string }> }> }
+      | undefined;
+    expect(skillsListResult?.skills[0]?.skills[0]?.name).toBe("lint");
+
+    send("skills-remote-list", "skills.remote.list", {
+      hazelnutScope: "personal",
+      productSurface: "codex",
+      enabled: true,
+    });
+    await waitFor(() => hasResponse(messages, "skills-remote-list"));
+    const remoteSkillsResult = getResponse(messages, "skills-remote-list")?.result as
+      | { skills: Array<{ id: string }> }
+      | undefined;
+    expect(remoteSkillsResult?.skills[0]?.id).toBe("remote-lint");
+
+    send("skills-remote-export", "skills.remote.export", {
+      hazelnutId: "remote-lint",
+    });
+    await waitFor(() => hasResponse(messages, "skills-remote-export"));
+    const exportResult = getResponse(messages, "skills-remote-export")?.result as
+      | { skill: { path: string } }
+      | undefined;
+    expect(exportResult?.skill.path).toContain("remote-lint");
+
+    send("skills-config-write", "skills.config.write", {
+      path: "/workspace/.codex/skills/remote-lint",
+      enabled: false,
+    });
+    await waitFor(() => hasResponse(messages, "skills-config-write"));
+    const configWriteResult = getResponse(messages, "skills-config-write")?.result as
+      | { effectiveEnabled: boolean }
+      | undefined;
+    expect(configWriteResult?.effectiveEnabled).toBe(false);
+
+    send("plugin-list", "plugin.list", {});
+    await waitFor(() => hasResponse(messages, "plugin-list"));
+    const pluginListResult = getResponse(messages, "plugin-list")?.result as
+      | { marketplaces: Array<{ plugins: Array<{ installed: boolean }> }> }
+      | undefined;
+    expect(pluginListResult?.marketplaces[0]?.plugins[0]?.installed).toBe(false);
+
+    send("plugin-install", "plugin.install", {
+      marketplacePath: "/plugins/official",
+      pluginName: "github-plugin",
+    });
+    await waitFor(() => hasResponse(messages, "plugin-install"));
+    const pluginInstallResult = getResponse(messages, "plugin-install")?.result as
+      | { appsNeedingAuth: Array<{ id: string }> }
+      | undefined;
+    expect(pluginInstallResult?.appsNeedingAuth[0]?.id).toBe("github");
+
+    send("plugin-uninstall", "plugin.uninstall", {
+      pluginId: "github-plugin",
+    });
+    await waitFor(() => hasResponse(messages, "plugin-uninstall"));
+    const pluginUninstallResult = getResponse(messages, "plugin-uninstall")?.result as
+      | { marketplaces: Array<{ plugins: Array<{ installed: boolean }> }> }
+      | undefined;
+    expect(pluginUninstallResult?.marketplaces[0]?.plugins[0]?.installed).toBe(false);
+
+    send("app-list", "app.list", {
+      threadId: null,
+      forceRefetch: true,
+    });
+    await waitFor(() => hasResponse(messages, "app-list"));
+    const appListResult = getResponse(messages, "app-list")?.result as
+      | { apps: Array<{ id: string }> }
+      | undefined;
+    expect(appListResult?.apps[0]?.id).toBe("github");
+
+    runtime.emit({ type: "skills.changed" });
+    runtime.emit({
+      type: "app.list.updated",
+      apps: [
+        {
+          id: "slack",
+          name: "Slack",
+          description: "Notifier",
+          isAccessible: true,
+          isEnabled: true,
+          pluginDisplayNames: ["slack-plugin"],
+          installUrl: "https://example.com/slack",
+        },
+      ],
+    });
+
+    await waitFor(() => hasNotification(messages, "skills.changed"));
+    await waitFor(() => hasNotification(messages, "app.listUpdated"));
+
+    const appListUpdated = messages.find(
+      (message) =>
+        message.type === "server.notification" && message.method === "app.listUpdated",
+    );
+    expect(
+      appListUpdated &&
+        appListUpdated.type === "server.notification" &&
+        appListUpdated.method === "app.listUpdated"
+        ? appListUpdated.params.apps[0]?.id
+        : null,
+    ).toBe("slack");
 
     ws.close();
     await app.close();

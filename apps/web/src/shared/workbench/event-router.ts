@@ -29,6 +29,7 @@ export type WorkbenchEventContext = {
   resolveApproval: StoreState["resolveApproval"];
   setCommandSession: StoreState["setCommandSession"];
   appendCommandOutput: StoreState["appendCommandOutput"];
+  setIntegrations: StoreState["setIntegrations"];
   setIntegrationSnapshot: StoreState["setIntegrationSnapshot"];
   onTimelineDeltaFlush?: (
     entries: Array<{
@@ -151,6 +152,13 @@ export function routeWorkbenchServerMessage(
       return;
     case "integrations.updated":
       context.setIntegrationSnapshot(message.params.snapshot);
+      return;
+    case "skills.changed":
+      void context.queryClient.invalidateQueries({ queryKey: ["integrations"] });
+      return;
+    case "app.listUpdated":
+      context.setIntegrations({ apps: message.params.apps });
+      void context.queryClient.invalidateQueries({ queryKey: ["integrations"] });
       return;
   }
 }

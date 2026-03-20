@@ -4,6 +4,7 @@ import type {
   AccountLoginStartResponse,
   AccountStateSnapshot,
   AccountSummary,
+  AppInstallHint,
   ApprovalPolicy,
   CommandSessionSnapshot,
   ConfigSnapshot,
@@ -12,16 +13,24 @@ import type {
   GitFileReviewDetail,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
+  HazelnutScope,
   IntegrationSnapshot,
   ModelOption,
+  McpServerSnapshot,
   PendingServerRequest,
+  PluginMarketplaceSnapshot,
+  ProductSurface,
   ReasoningEffort,
+  RemoteSkillExportResult,
+  RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
   ThreadMetadataGitInfoUpdate,
   ThreadTokenUsage,
+  SkillGroupSnapshot,
   TimelineEntry,
   ThreadRuntimeStatus,
+  AppSnapshot,
 } from "@webcli/contracts";
 
 export type RuntimeTurnRecord = {
@@ -142,7 +151,9 @@ export type SessionRuntimeEvent =
         stdout: string;
         stderr: string;
       };
-    };
+    }
+  | { type: "skills.changed" }
+  | { type: "app.list.updated"; apps: Array<AppSnapshot> };
 
 export type SessionRuntimeListener = (event: SessionRuntimeEvent) => void;
 
@@ -211,6 +222,24 @@ export interface SessionRuntime {
   readWorkspaceGitFileDetail(cwd: string, file: GitWorkingTreeFile): Promise<GitFileReviewDetail>;
   loginMcp(name: string): Promise<string>;
   reloadMcp(): Promise<void>;
+  listMcpServerStatuses(): Promise<Array<McpServerSnapshot>>;
+  listSkills(cwd?: string | null): Promise<Array<SkillGroupSnapshot>>;
+  listRemoteSkills(input: {
+    hazelnutScope: HazelnutScope;
+    productSurface: ProductSurface;
+    enabled: boolean;
+  }): Promise<Array<RemoteSkillSummary>>;
+  exportRemoteSkill(hazelnutId: string): Promise<RemoteSkillExportResult>;
+  writeSkillConfig(path: string, enabled: boolean): Promise<{ effectiveEnabled: boolean }>;
+  listApps(input: {
+    threadId?: string | null;
+    forceRefetch?: boolean;
+  }): Promise<Array<AppSnapshot>>;
+  listPlugins(cwd?: string | null): Promise<Array<PluginMarketplaceSnapshot>>;
+  installPlugin(input: {
+    marketplacePath: string;
+    pluginName: string;
+  }): Promise<{ appsNeedingAuth: Array<AppInstallHint> }>;
   uninstallPlugin(pluginId: string): Promise<void>;
   searchFiles(input: { query: string; roots: Array<string> }): Promise<FuzzySearchSnapshot>;
   resolveApproval(approval: PendingServerRequest, decision: "accept" | "decline"): Promise<void>;
