@@ -84,12 +84,14 @@ import type { ModelReroutedNotification } from "./generated/v2/ModelReroutedNoti
 import type { PermissionsRequestApprovalResponse } from "./generated/v2/PermissionsRequestApprovalResponse";
 import type { PluginInstallResponse } from "./generated/v2/PluginInstallResponse";
 import type { PluginListResponse } from "./generated/v2/PluginListResponse";
+import type { RawResponseItemCompletedNotification } from "./generated/v2/RawResponseItemCompletedNotification";
 import type { ReviewStartResponse } from "./generated/v2/ReviewStartResponse";
 import type { SandboxMode as RuntimeSandboxMode } from "./generated/v2/SandboxMode";
 import type { SkillsConfigWriteResponse } from "./generated/v2/SkillsConfigWriteResponse";
 import type { SkillsListResponse } from "./generated/v2/SkillsListResponse";
 import type { SkillsRemoteReadResponse } from "./generated/v2/SkillsRemoteReadResponse";
 import type { SkillsRemoteWriteResponse } from "./generated/v2/SkillsRemoteWriteResponse";
+import type { TerminalInteractionNotification } from "./generated/v2/TerminalInteractionNotification";
 import type { Thread } from "./generated/v2/Thread";
 import type { ThreadLoadedListResponse } from "./generated/v2/ThreadLoadedListResponse";
 import type { ThreadListResponse } from "./generated/v2/ThreadListResponse";
@@ -118,6 +120,10 @@ import {
   readGitWorkingTreeSnapshot,
   switchGitBranch,
 } from "./git-working-tree.js";
+import {
+  mapRawResponseItemCompleted,
+  mapTerminalInteractionTimelineEntry,
+} from "./timeline-entry-mappers.js";
 import {
   type ClientRequestMethod,
   type ClientRequestParams,
@@ -1282,6 +1288,19 @@ export class CodexRuntime implements SessionRuntime {
       return;
     }
 
+    if (method === "rawResponseItem/completed") {
+      const payload = params as RawResponseItemCompletedNotification;
+      this.emitTimelineItem(
+        payload.threadId,
+        mapRawResponseItemCompleted({
+          id: this.makeInternalId("rawResponseItem"),
+          turnId: payload.turnId,
+          item: payload.item,
+        }),
+      );
+      return;
+    }
+
     if (method === "item/agentMessage/delta") {
       this.emitDelta(params as any, "agentMessage");
       return;
@@ -1303,6 +1322,19 @@ export class CodexRuntime implements SessionRuntime {
 
     if (method === "item/commandExecution/outputDelta") {
       this.emitDelta(params as any, "commandExecution");
+      return;
+    }
+
+    if (method === "item/commandExecution/terminalInteraction") {
+      const payload = params as TerminalInteractionNotification;
+      this.emitTimelineItem(
+        payload.threadId,
+        mapTerminalInteractionTimelineEntry({
+          id: this.makeInternalId("commandExecutionInteraction"),
+          turnId: payload.turnId,
+          params: payload,
+        }),
+      );
       return;
     }
 

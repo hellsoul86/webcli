@@ -164,6 +164,42 @@ test("streams assistant replies incrementally without replacing the item", async
   expect(consoleErrors).toEqual([]);
 });
 
+test("renders raw response items and terminal interactions as first-class timeline entries", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await ensureWorkspace(page);
+  await ensureThread(page);
+
+  const prompt = `timeline-parity:${Date.now()}`;
+  await page.getByTestId("composer-input").fill(prompt);
+  await page.getByTestId("send-button").click();
+
+  const timeline = page.getByTestId("timeline-list");
+  const rawResponseToggle = timeline.getByRole("button", { name: /原始响应消息/ }).first();
+  await expect(rawResponseToggle).toBeVisible();
+  await rawResponseToggle.click();
+  await expect(timeline.getByText("角色：")).toBeVisible();
+  await expect(timeline.getByText("Raw response hello")).toBeVisible();
+
+  const terminalInteraction = timeline
+    .locator("article")
+    .filter({ hasText: "终端输入" })
+    .filter({ hasText: "fake-process-1" })
+    .first();
+  await expect(terminalInteraction).toBeVisible();
+  await expect(terminalInteraction).toContainText("终端输入");
+  await expect(terminalInteraction).toContainText("y");
+  await expect(terminalInteraction).toContainText("进程：");
+  await expect(terminalInteraction).toContainText("fake-process-1");
+  const commandToggle = timeline.getByRole("button", { name: /已执行/ }).first();
+  await expect(commandToggle).toBeVisible();
+  await commandToggle.click();
+  await expect(timeline.getByText("1 passed")).toBeVisible();
+});
+
 test("submits typed request-user-input decisions from the decision center", async ({ page }) => {
   await page.goto("/");
 

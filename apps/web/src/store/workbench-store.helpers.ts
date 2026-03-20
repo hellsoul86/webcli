@@ -340,8 +340,16 @@ function normalizePlaceholderTitle(kind: TimelineEntry["kind"]): string {
     return "Command";
   }
 
+  if (kind === "commandExecutionInteraction") {
+    return "Terminal Input";
+  }
+
   if (kind === "fileChange") {
     return "File Change";
+  }
+
+  if (kind === "rawResponseItem") {
+    return "Raw Response";
   }
 
   if (kind === "mcpToolCall") {
