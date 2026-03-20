@@ -27,6 +27,7 @@ import type {
   ConfigRequirementsSnapshot,
   ConfigWarningNotice,
   DeprecationNotice,
+  ExperimentalFeatureSnapshot,
   ExternalAgentConfigMigrationItem,
   ForcedLoginMethod,
   GitBranchReference,
@@ -78,6 +79,7 @@ import { RightRail } from "./right-rail";
 import { type ComposerDropdownOption, type ComposerSpeedMode } from "./workbench-shell-controls";
 import { WorkbenchSidebar } from "./workbench-sidebar";
 import { WorkbenchOverlays } from "./workbench-overlays";
+import { ExperimentalFeaturesSection } from "./experimental-features-section";
 
 const LazyGitReviewPanel = lazy(() =>
   import("./git-review-panel").then((module) => ({
@@ -100,6 +102,7 @@ const TIMELINE_WINDOW_BATCH_SIZE = 80;
 const TIMELINE_WINDOW_SCROLL_THRESHOLD = 120;
 const ACCOUNT_RATE_LIMITS_QUERY_KEY = ["account-rate-limits"] as const;
 const CONFIG_REQUIREMENTS_QUERY_KEY = ["config-requirements"] as const;
+const EXPERIMENTAL_FEATURES_QUERY_KEY = ["experimental-features"] as const;
 const MAX_SETTINGS_SURFACE_ITEMS = 6;
 
 type WorkspaceFormInput = {
@@ -193,6 +196,26 @@ function buildSettingsReasoningEffortOptions(t: TFunction): Array<{ value: "" | 
       label,
     })),
   ];
+}
+
+async function listAllExperimentalFeatures(): Promise<Array<ExperimentalFeatureSnapshot>> {
+  const features: Array<ExperimentalFeatureSnapshot> = [];
+  let cursor: string | null = null;
+
+  while (true) {
+    const response: {
+      data: Array<ExperimentalFeatureSnapshot>;
+      nextCursor: string | null;
+    } = await codexClient.call("experimentalFeature.list", {
+      cursor,
+      limit: 100,
+    });
+    features.push(...response.data);
+    if (!response.nextCursor) {
+      return features;
+    }
+    cursor = response.nextCursor;
+  }
 }
 
 function splitPathSegments(value: string): Array<string> {
@@ -326,6 +349,9 @@ export function App() {
     Array<string>
   >([]);
   const [externalAgentConfigPending, setExternalAgentConfigPending] = useState(false);
+  const [experimentalFeaturePendingNames, setExperimentalFeaturePendingNames] = useState<
+    Array<string>
+  >([]);
   const [completedThreadMarks, setCompletedThreadMarks] = useState<Record<string, true>>({});
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [sidebarWidth, setSidebarWidth] = useState(() => readInitialSidebarWidth());
@@ -459,6 +485,13 @@ export function App() {
     staleTime: 60_000,
   });
 
+  const experimentalFeaturesQuery = useQuery({
+    queryKey: EXPERIMENTAL_FEATURES_QUERY_KEY,
+    queryFn: () => listAllExperimentalFeatures(),
+    enabled: integrations.settingsOpen && integrations.settingsTab === "general",
+    staleTime: 60_000,
+  });
+
   const codePreviewQuery = useQuery({
     queryKey: ["code-preview", codePreview?.path],
     queryFn: () => api.resourceText(codePreview!.path),
@@ -479,6 +512,7 @@ export function App() {
   const accountRateLimits =
     account?.authenticated ? accountRateLimitsQuery.data?.rateLimits ?? null : null;
   const configRequirements = configRequirementsQuery.data?.requirements ?? null;
+  const experimentalFeatures = experimentalFeaturesQuery.data ?? [];
   const models = bootstrap?.models ?? [];
   const workspaces = bootstrap?.workspaces ?? [];
   const archivedThreadCount = bootstrap?.archivedThreadCount ?? 0;
@@ -2470,6 +2504,44 @@ export function App() {
     });
   }
 
+  async function handleToggleExperimentalFeature(
+    feature: ExperimentalFeatureSnapshot,
+  ): Promise<void> {
+    setBusyMessage(t("composer.busy.savingSettings"));
+    setExperimentalFeaturePendingNames((current) =>
+      current.includes(feature.name) ? current : [...current, feature.name],
+    );
+    await runAction(async () => {
+      const write = await codexClient.call("config.batchWrite", {
+        edits: [
+          {
+            keyPath: `features.${feature.name}`,
+            value: !feature.enabled,
+            mergeStrategy: "upsert",
+          },
+        ],
+        reloadUserConfig: true,
+      });
+      const refresh = await codexClient.call("integrations.refresh", {
+        workspaceId: activeWorkspaceId,
+        threadId: activeThreadId,
+      });
+      setIntegrationSnapshot(refresh.snapshot);
+      await invalidateBootstrap();
+      await experimentalFeaturesQuery.refetch();
+      setSettingsNotice(
+        write.write.overriddenMessage ??
+          t("settings.notices.experimentalFeatureUpdated", {
+            name: feature.displayName?.trim() || feature.name,
+          }),
+      );
+    }).finally(() => {
+      setExperimentalFeaturePendingNames((current) =>
+        current.filter((name) => name !== feature.name),
+      );
+    });
+  }
+
   async function handleRefreshIntegrations(): Promise<void> {
     setBusyMessage(t("composer.busy.refreshingIntegrations"));
     await runAction(async () => {
@@ -3090,6 +3162,19 @@ export function App() {
               ? configRequirementsQuery.error.message
               : null
           }
+          experimentalFeatures={experimentalFeatures}
+          experimentalFeaturesLoading={
+            experimentalFeaturesQuery.isLoading || experimentalFeaturesQuery.isFetching
+          }
+          experimentalFeaturesError={
+            experimentalFeaturesQuery.error
+              ? localizeErrorWithFallback(
+                  experimentalFeaturesQuery.error,
+                  "errors.requestFailed",
+                )
+              : null
+          }
+          experimentalFeaturePendingNames={experimentalFeaturePendingNames}
           configWarnings={configWarnings}
           deprecationNotices={deprecationNotices}
           modelReroutes={modelReroutes}
@@ -3114,6 +3199,8 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
           onTabChange={(tab) => setSettingsTab(tab)}
           onConfigSave={(payload) => void handleConfigSave(payload)}
+          onToggleExperimentalFeature={(feature) =>
+            void handleToggleExperimentalFeature(feature)}
           onRefresh={() => void handleRefreshIntegrations()}
           onAccountRefresh={() => void handleAccountRefresh()}
           onChatgptLogin={() => void handleChatgptLogin()}
@@ -3186,6 +3273,10 @@ function SettingsOverlay(props: {
   configRequirements: ConfigRequirementsSnapshot | null;
   configRequirementsLoading: boolean;
   configRequirementsError: string | null;
+  experimentalFeatures: Array<ExperimentalFeatureSnapshot>;
+  experimentalFeaturesLoading: boolean;
+  experimentalFeaturesError: string | null;
+  experimentalFeaturePendingNames: Array<string>;
   configWarnings: Array<ConfigWarningNotice>;
   deprecationNotices: Array<DeprecationNotice>;
   modelReroutes: Array<ModelRerouteEvent>;
@@ -3210,6 +3301,7 @@ function SettingsOverlay(props: {
   onClose: () => void;
   onTabChange: (tab: SettingsTab) => void;
   onConfigSave: (payload: ConfigSnapshot) => void;
+  onToggleExperimentalFeature: (feature: ExperimentalFeatureSnapshot) => void;
   onRefresh: () => void;
   onAccountRefresh: () => void;
   onChatgptLogin: () => void;
@@ -3815,6 +3907,18 @@ function SettingsOverlay(props: {
                     <option value="en-US">{t("settings.languageOptions.enUS")}</option>
                   </select>
                 </label>
+              </div>
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.experimentalFeaturesTitle")}</strong>
+                </div>
+                <ExperimentalFeaturesSection
+                  features={props.experimentalFeatures}
+                  loading={props.experimentalFeaturesLoading}
+                  error={props.experimentalFeaturesError}
+                  pendingNames={props.experimentalFeaturePendingNames}
+                  onToggle={props.onToggleExperimentalFeature}
+                />
               </div>
             </div>
           ) : null}

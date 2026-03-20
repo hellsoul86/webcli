@@ -97,6 +97,33 @@ test("updates defaults and searches workspace files from the command palette", a
   await expect(page.getByTestId("workspace-search-result").first()).toContainText("package.json");
 });
 
+test("shows and toggles experimental features in general settings", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await page.getByTestId("settings-button").click();
+  await expect(page.getByTestId("settings-panel")).toBeVisible();
+  await page.getByRole("button", { name: /通用|General/ }).click();
+
+  await expect(page.getByTestId("settings-experimental-features")).toBeVisible();
+  await expect(
+    page.getByTestId("settings-experimental-feature-multi-agent"),
+  ).toContainText(/Multi-agent|多代理/i);
+
+  const toggle = page.getByTestId("settings-experimental-feature-toggle-prevent-idle-sleep");
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+
+  await page.reload();
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await page.getByTestId("settings-button").click();
+  await page.getByRole("button", { name: /通用|General/ }).click();
+  await expect(
+    page.getByTestId("settings-experimental-feature-toggle-prevent-idle-sleep"),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
 test("renders markdown and media resources inside the timeline stream", async ({ page }) => {
   await page.goto("/");
 

@@ -20,6 +20,7 @@ import type {
   ConfigRequirementsSnapshot,
   ConfigSnapshot,
   ConversationSummarySnapshot,
+  ExperimentalFeatureSnapshot,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
@@ -182,6 +183,26 @@ class FakeRuntime implements SessionRuntime {
           enabled: false,
         },
       ],
+    },
+  ];
+  experimentalFeatures: Array<ExperimentalFeatureSnapshot> = [
+    {
+      name: "multi_agent",
+      stage: "beta",
+      displayName: "Multi-agent",
+      description: "Run scoped sub-agents for bounded tasks.",
+      announcement: "Lets Codex delegate sidecar tasks without leaving the current workflow.",
+      enabled: true,
+      defaultEnabled: false,
+    },
+    {
+      name: "apps",
+      stage: "stable",
+      displayName: "Apps",
+      description: "Expose installed app connectors directly in the workbench.",
+      announcement: null,
+      enabled: true,
+      defaultEnabled: true,
     },
   ];
 
@@ -520,7 +541,29 @@ class FakeRuntime implements SessionRuntime {
     };
   }
 
-  async batchWriteConfig(_input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+  async batchWriteConfig(input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+    for (const edit of input.edits) {
+      if (!edit.keyPath.startsWith("features.")) {
+        continue;
+      }
+      const name = edit.keyPath.slice("features.".length);
+      const enabled = Boolean(edit.value);
+      const existing = this.experimentalFeatures.find((feature) => feature.name === name);
+      if (existing) {
+        existing.enabled = enabled;
+      } else {
+        this.experimentalFeatures.push({
+          name,
+          stage: "underDevelopment",
+          displayName: null,
+          description: null,
+          announcement: null,
+          enabled,
+          defaultEnabled: false,
+        });
+      }
+    }
+
     return {
       status: "ok",
       version: "test-runtime",
@@ -539,6 +582,22 @@ class FakeRuntime implements SessionRuntime {
 
   async saveSettings(input: ConfigSnapshot): Promise<void> {
     this.config = { ...input };
+  }
+
+  async listExperimentalFeatures(input?: {
+    cursor?: string | null;
+    limit?: number | null;
+  }): Promise<{ data: Array<ExperimentalFeatureSnapshot>; nextCursor: string | null }> {
+    const start = Math.max(0, Number.parseInt(input?.cursor ?? "0", 10) || 0);
+    const limit = input?.limit && input.limit > 0 ? input.limit : this.experimentalFeatures.length;
+    const data = this.experimentalFeatures
+      .slice(start, start + limit)
+      .map((feature) => ({ ...feature }));
+
+    return {
+      data,
+      nextCursor: start + limit < this.experimentalFeatures.length ? String(start + limit) : null,
+    };
   }
 
   async readWorkspaceGitSnapshot(
@@ -987,6 +1046,66 @@ describe("createApp", () => {
         "diff" in gitRemoteDiffResponse.result &&
         gitRemoteDiffResponse.result.diff.diff,
     ).toContain("Hello remote");
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "experimental-features-1",
+        method: "experimentalFeature.list",
+        params: {
+          limit: 100,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "experimental-features-1"));
+    const experimentalFeaturesResponse = getResponse(sessionAMessages, "experimental-features-1");
+    expect(
+      experimentalFeaturesResponse?.result &&
+        "data" in experimentalFeaturesResponse.result &&
+        experimentalFeaturesResponse.result.data.some((feature) => feature.name === "multi_agent"),
+    ).toBe(true);
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "config-batch-write-features-1",
+        method: "config.batchWrite",
+        params: {
+          edits: [
+            {
+              keyPath: "features.multi_agent",
+              value: false,
+              mergeStrategy: "upsert",
+            },
+          ],
+          reloadUserConfig: true,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "config-batch-write-features-1"));
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "experimental-features-2",
+        method: "experimentalFeature.list",
+        params: {
+          limit: 100,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "experimental-features-2"));
+    const experimentalFeaturesAfterWrite = getResponse(sessionAMessages, "experimental-features-2");
+    expect(
+      experimentalFeaturesAfterWrite?.result &&
+        "data" in experimentalFeaturesAfterWrite.result
+        ? experimentalFeaturesAfterWrite.result.data.find((feature) => feature.name === "multi_agent")
+            ?.enabled
+        : null,
+    ).toBe(false);
 
     const approval: PendingApproval = {
       id: "approval-1",
