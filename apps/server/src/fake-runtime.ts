@@ -501,6 +501,77 @@ export class FakeRuntime implements SessionRuntime {
       });
     }, 30);
 
+    if (prompt.startsWith("timeline-parity:")) {
+      this.schedule(() => {
+        this.emit({
+          type: "timeline.item",
+          threadId,
+          item: makeTimelineEntry({
+            id: randomUUID(),
+            turnId,
+            kind: "rawResponseItem",
+            title: "Response Message",
+            body: "Raw response hello",
+            raw: {
+              type: "rawResponseItem",
+              responseItemType: "message",
+              responseItem: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Raw response hello" }],
+              },
+            },
+          }),
+        });
+      }, 35);
+
+      this.schedule(() => {
+        this.emit({
+          type: "timeline.item",
+          threadId,
+          item: makeTimelineEntry({
+            id: randomUUID(),
+            turnId,
+            kind: "commandExecution",
+            title: "Command",
+            body: "npm test -- --runInBand",
+            raw: {
+              id: randomUUID(),
+              type: "commandExecution",
+              command: "npm test -- --runInBand",
+              cwd: thread.cwd,
+              processId: "fake-process-1",
+              status: "completed",
+              commandActions: [],
+              aggregatedOutput: "1 passed",
+              exitCode: 0,
+              durationMs: 240,
+            },
+          }),
+        });
+      }, 45);
+
+      this.schedule(() => {
+        this.emit({
+          type: "timeline.item",
+          threadId,
+          item: makeTimelineEntry({
+            id: randomUUID(),
+            turnId,
+            kind: "commandExecutionInteraction",
+            title: "Terminal Input",
+            body: "y\n",
+            raw: {
+              type: "commandExecutionInteraction",
+              itemId: "fake-command-item",
+              processId: "fake-process-1",
+              stdin: "y\n",
+            },
+          }),
+        });
+      }, 55);
+    }
+
     const replyChunks = prompt.startsWith("stream-")
       ? ["RE", "ADY ", prompt]
       : ["RE", "AD", "Y"];
