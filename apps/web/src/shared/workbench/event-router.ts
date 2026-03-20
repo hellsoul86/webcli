@@ -15,6 +15,7 @@ export type WorkbenchEventContext = {
   queryClient: QueryClient;
   setConnection: StoreState["setConnection"];
   upsertThread: StoreState["upsertThread"];
+  markThreadClosed: StoreState["markThreadClosed"];
   applyTurn: StoreState["applyTurn"];
   applyTimelineItem: StoreState["applyTimelineItem"];
   appendDelta: StoreState["appendDelta"];
@@ -22,6 +23,7 @@ export type WorkbenchEventContext = {
   setLatestDiff: StoreState["setLatestDiff"];
   setLatestPlan: StoreState["setLatestPlan"];
   setReview: StoreState["setReview"];
+  setTurnTokenUsage: StoreState["setTurnTokenUsage"];
   setWorkspaceGitSnapshot: StoreState["setWorkspaceGitSnapshot"];
   queueApproval: StoreState["queueApproval"];
   resolveApproval: StoreState["resolveApproval"];
@@ -71,6 +73,9 @@ export function routeWorkbenchServerMessage(
       if (shouldRefreshBootstrap) {
         void context.queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
       }
+      if (shouldRefreshBootstrap) {
+        void context.queryClient.invalidateQueries({ queryKey: ["thread-list"] });
+      }
       return;
     }
     case "account.updated":
@@ -83,6 +88,16 @@ export function routeWorkbenchServerMessage(
         message.params.thread,
       );
       context.upsertThread(message.params.thread);
+      return;
+    case "thread.closed":
+      context.markThreadClosed(message.params.threadId);
+      return;
+    case "thread.tokenUsageUpdated":
+      context.setTurnTokenUsage(
+        message.params.threadId,
+        message.params.turnId,
+        message.params.tokenUsage,
+      );
       return;
     case "turn.updated":
       context.applyTurn(message.params.threadId, message.params.turn);

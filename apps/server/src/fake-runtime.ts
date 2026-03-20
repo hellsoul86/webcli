@@ -19,6 +19,7 @@ import type {
   ReasoningEffort,
   RuntimeStatus,
   SandboxMode,
+  ThreadMetadataGitInfoUpdate,
   TimelineEntry,
 } from "@webcli/contracts";
 import type {
@@ -239,6 +240,10 @@ export class FakeRuntime implements SessionRuntime {
       .map((thread) => cloneThread(thread));
   }
 
+  async readThread(threadId: string): Promise<RuntimeThreadRecord> {
+    return cloneThread(this.requireThread(threadId));
+  }
+
   async listLoadedThreadIds(): Promise<Array<string>> {
     return [...this.threads.values()]
       .filter((thread) => !thread.archived)
@@ -273,6 +278,46 @@ export class FakeRuntime implements SessionRuntime {
 
   async resumeThread(threadId: string): Promise<RuntimeThreadRecord> {
     return cloneThread(this.requireThread(threadId));
+  }
+
+  async updateThreadMetadata(
+    threadId: string,
+    input: { gitInfo?: ThreadMetadataGitInfoUpdate | null },
+  ): Promise<RuntimeThreadRecord> {
+    const thread = this.requireThread(threadId);
+    thread.gitInfo =
+      input.gitInfo === undefined
+        ? thread.gitInfo
+        : input.gitInfo === null
+          ? null
+          : {
+              ...(thread.gitInfo && typeof thread.gitInfo === "object" ? thread.gitInfo as Record<string, unknown> : {}),
+              ...(input.gitInfo.originUrl !== undefined ? { originUrl: input.gitInfo.originUrl } : {}),
+              ...(input.gitInfo.branch !== undefined ? { branch: input.gitInfo.branch } : {}),
+              ...(input.gitInfo.sha !== undefined ? { sha: input.gitInfo.sha } : {}),
+            };
+    thread.updatedAt = Math.floor(Date.now() / 1000);
+    this.emit({
+      type: "thread.updated",
+      thread: cloneThread(thread),
+    });
+    return cloneThread(thread);
+  }
+
+  async unsubscribeThread(
+    threadId: string,
+  ): Promise<"notLoaded" | "notSubscribed" | "unsubscribed"> {
+    const thread = this.requireThread(threadId);
+    if (thread.status.type === "notLoaded") {
+      return "notLoaded";
+    }
+    thread.status = { type: "notLoaded" };
+    thread.updatedAt = Math.floor(Date.now() / 1000);
+    this.emit({
+      type: "thread.closed",
+      threadId,
+    });
+    return "unsubscribed";
   }
 
   async renameThread(threadId: string, name: string): Promise<void> {
@@ -353,6 +398,7 @@ export class FakeRuntime implements SessionRuntime {
       id: turnId,
       status: "in_progress",
       errorMessage: null,
+      tokenUsage: null,
       items: [userItem],
     };
 
@@ -510,6 +556,7 @@ export class FakeRuntime implements SessionRuntime {
       id: turnId,
       status: "completed",
       errorMessage: null,
+      tokenUsage: null,
       items: [
         makeTimelineEntry({
           id: randomUUID(),

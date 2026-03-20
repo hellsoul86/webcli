@@ -36,7 +36,7 @@ import {
   resolveHomeDirectory,
   resolveWorkspacePath,
 } from "./home-paths.js";
-import type { SessionRuntime, SessionRuntimeEvent } from "./runtime.js";
+import type { RuntimeThreadRecord, SessionRuntime, SessionRuntimeEvent } from "./runtime.js";
 import { ThreadProjectionService } from "./thread-projection-service.js";
 import { WorkspaceCatalogService } from "./workspace-catalog-service.js";
 import { WorkspaceRepo } from "./workspace-repo.js";
@@ -272,6 +272,22 @@ export class WorkbenchService {
           sessionId,
           message.params as AppRequestParams<"thread.resume">,
         );
+      case "thread.list":
+        return this.handleThreadList(
+          message.params as AppRequestParams<"thread.list">,
+        );
+      case "thread.read":
+        return this.handleThreadRead(
+          message.params as AppRequestParams<"thread.read">,
+        );
+      case "thread.metadata.update":
+        return this.handleThreadMetadataUpdate(
+          message.params as AppRequestParams<"thread.metadata.update">,
+        );
+      case "thread.unsubscribe":
+        return this.handleThreadUnsubscribe(
+          message.params as AppRequestParams<"thread.unsubscribe">,
+        );
       case "thread.rename":
         {
           const params = message.params as AppRequestParams<"thread.rename">;
@@ -436,15 +452,7 @@ export class WorkbenchService {
       sandboxMode: workspace.sandboxMode,
     });
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-
-    const workspaces = await this.getWorkspaceCatalog([
-      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
-    ]);
-    const thread = this.threadProjection.toWorkbenchThread(runtimeThread, workspaces);
-    this.setThreadView(thread);
-    this.threadSummaries.set(thread.thread.id, thread.thread);
-    this.invalidateWorkspaceCatalog();
-    this.broadcast("thread.updated", { thread: thread.thread });
+    const thread = await this.hydrateRuntimeThread(runtimeThread);
     return { thread };
   }
 
@@ -495,6 +503,80 @@ export class WorkbenchService {
     };
   }
 
+  private async handleThreadList(
+    params: AppRequestParams<"thread.list">,
+  ): Promise<AppRequestResult<"thread.list">> {
+    return this.listThreadSummaries({
+      archived: params.archived,
+      cursor: params.cursor ?? null,
+      limit: params.limit ?? null,
+      workspaceId:
+        params.workspaceId && params.workspaceId !== "all" ? params.workspaceId : undefined,
+    });
+  }
+
+  private async handleThreadRead(
+    params: AppRequestParams<"thread.read">,
+  ): Promise<AppRequestResult<"thread.read">> {
+    const existingSummary = this.threadSummaries.get(params.threadId) ?? null;
+    const runtimeThread = await this.runtime.readThread(params.threadId);
+    return {
+      thread: await this.hydrateRuntimeThread(runtimeThread, {
+        archived: existingSummary?.archived ?? false,
+        existingView: this.threadViews.get(params.threadId),
+      }),
+    };
+  }
+
+  private async handleThreadMetadataUpdate(
+    params: AppRequestParams<"thread.metadata.update">,
+  ): Promise<AppRequestResult<"thread.metadata.update">> {
+    const existingSummary = this.threadSummaries.get(params.threadId) ?? null;
+    const runtimeThread = await this.runtime.updateThreadMetadata(params.threadId, {
+      gitInfo: params.gitInfo ?? undefined,
+    });
+    return {
+      thread: await this.hydrateRuntimeThread(runtimeThread, {
+        archived: existingSummary?.archived ?? false,
+        existingView: this.threadViews.get(params.threadId),
+      }),
+    };
+  }
+
+  private async handleThreadUnsubscribe(
+    params: AppRequestParams<"thread.unsubscribe">,
+  ): Promise<AppRequestResult<"thread.unsubscribe">> {
+    const status = await this.runtime.unsubscribeThread(params.threadId);
+    this.applyThreadClosed(params.threadId);
+    return { status };
+  }
+
+  private async hydrateRuntimeThread(
+    runtimeThread: RuntimeThreadRecord,
+    options?: {
+      archived?: boolean;
+      existingView?: WorkbenchThread | null;
+    },
+  ): Promise<WorkbenchThread> {
+    const archived = options?.archived ?? runtimeThread.archived;
+    const workspaces = await this.getWorkspaceCatalog([
+      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
+    ]);
+    const thread = this.threadProjection.toWorkbenchThread(
+      {
+        ...runtimeThread,
+        archived,
+      },
+      workspaces,
+      options?.existingView ?? undefined,
+    );
+    this.setThreadView(thread);
+    this.threadSummaries.set(thread.thread.id, thread.thread);
+    this.invalidateWorkspaceCatalog();
+    this.broadcast("thread.updated", { thread: thread.thread });
+    return thread;
+  }
+
   private async handleThreadResume(
     sessionId: string,
     params: { threadId: string },
@@ -502,19 +584,10 @@ export class WorkbenchService {
     const existing = this.threadSummaries.get(params.threadId) ?? null;
     const runtimeThread = await this.runtime.resumeThread(params.threadId, existing?.path ?? null);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-
-    const workspaces = await this.getWorkspaceCatalog([
-      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
-    ]);
-    const thread = this.threadProjection.toWorkbenchThread(
-      runtimeThread,
-      workspaces,
-      this.threadViews.get(runtimeThread.id),
-    );
-    this.setThreadView(thread);
-    this.threadSummaries.set(thread.thread.id, thread.thread);
-    this.invalidateWorkspaceCatalog();
-    this.broadcast("thread.updated", { thread: thread.thread });
+    const thread = await this.hydrateRuntimeThread(runtimeThread, {
+      archived: existing?.archived ?? false,
+      existingView: this.threadViews.get(runtimeThread.id),
+    });
     return { thread };
   }
 
@@ -524,18 +597,10 @@ export class WorkbenchService {
   ): Promise<{ thread: WorkbenchThread }> {
     const runtimeThread = await this.runtime.unarchiveThread(params.threadId);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-    const workspaces = await this.getWorkspaceCatalog([
-      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
-    ]);
-    const thread = this.threadProjection.toWorkbenchThread(
-      runtimeThread,
-      workspaces,
-      this.threadViews.get(runtimeThread.id),
-    );
-    this.setThreadView(thread);
-    this.threadSummaries.set(thread.thread.id, thread.thread);
-    this.invalidateWorkspaceCatalog();
-    this.broadcast("thread.updated", { thread: thread.thread });
+    const thread = await this.hydrateRuntimeThread(runtimeThread, {
+      archived: false,
+      existingView: this.threadViews.get(runtimeThread.id),
+    });
     return { thread };
   }
 
@@ -550,14 +615,7 @@ export class WorkbenchService {
 
     const runtimeThread = await this.runtime.forkThread(params.threadId, summary.cwd);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-    const workspaces = await this.getWorkspaceCatalog([
-      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
-    ]);
-    const thread = this.threadProjection.toWorkbenchThread(runtimeThread, workspaces);
-    this.setThreadView(thread);
-    this.threadSummaries.set(thread.thread.id, thread.thread);
-    this.invalidateWorkspaceCatalog();
-    this.broadcast("thread.updated", { thread: thread.thread });
+    const thread = await this.hydrateRuntimeThread(runtimeThread);
     return { thread };
   }
 
@@ -565,20 +623,13 @@ export class WorkbenchService {
     sessionId: string,
     params: { threadId: string; numTurns: number },
   ): Promise<{ thread: WorkbenchThread }> {
+    const existing = this.threadSummaries.get(params.threadId) ?? null;
     const runtimeThread = await this.runtime.rollbackThread(params.threadId, params.numTurns);
     this.approvalBroker.rememberThreadOwner(runtimeThread.id, sessionId);
-    const workspaces = await this.getWorkspaceCatalog([
-      { cwd: runtimeThread.cwd, updatedAt: runtimeThread.updatedAt },
-    ]);
-    const thread = this.threadProjection.toWorkbenchThread(
-      runtimeThread,
-      workspaces,
-      this.threadViews.get(runtimeThread.id),
-    );
-    this.setThreadView(thread);
-    this.threadSummaries.set(thread.thread.id, thread.thread);
-    this.invalidateWorkspaceCatalog();
-    this.broadcast("thread.updated", { thread: thread.thread });
+    const thread = await this.hydrateRuntimeThread(runtimeThread, {
+      archived: existing?.archived ?? false,
+      existingView: this.threadViews.get(runtimeThread.id),
+    });
     return { thread };
   }
 
@@ -863,6 +914,12 @@ export class WorkbenchService {
         this.broadcast("thread.updated", { thread: next });
         return;
       }
+      case "thread.closed":
+        this.applyThreadClosed(event.threadId);
+        return;
+      case "thread.tokenUsage.updated":
+        this.applyTurnTokenUsage(event.threadId, event.turnId, event.tokenUsage);
+        return;
       case "turn.updated": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {
@@ -971,6 +1028,71 @@ export class WorkbenchService {
         return;
       }
     }
+  }
+
+  private applyThreadClosed(threadId: string): void {
+    const summary = this.threadSummaries.get(threadId);
+    if (summary) {
+      const next = {
+        ...summary,
+        status: { type: "notLoaded" } as const,
+      };
+      this.threadSummaries.set(threadId, next);
+      const existing = this.threadViews.get(threadId);
+      if (existing) {
+        this.setThreadView({
+          ...existing,
+          thread: next,
+        });
+      }
+      this.broadcast("thread.updated", { thread: next });
+    }
+    this.broadcast("thread.closed", { threadId });
+  }
+
+  private applyTurnTokenUsage(
+    threadId: string,
+    turnId: string,
+    tokenUsage: import("@webcli/contracts").ThreadTokenUsage,
+  ): void {
+    const existing = this.threadViews.get(threadId);
+    if (!existing) {
+      this.broadcast("thread.tokenUsageUpdated", {
+        threadId,
+        turnId,
+        tokenUsage,
+      });
+      return;
+    }
+
+    const turn = existing.turns[turnId];
+    if (!turn) {
+      this.broadcast("thread.tokenUsageUpdated", {
+        threadId,
+        turnId,
+        tokenUsage,
+      });
+      return;
+    }
+
+    this.setThreadView({
+      ...existing,
+      turns: {
+        ...existing.turns,
+        [turnId]: {
+          ...turn,
+          turn: {
+            ...turn.turn,
+            tokenUsage,
+          },
+        },
+      },
+    });
+    this.broadcast("thread.tokenUsageUpdated", {
+      threadId,
+      turnId,
+      tokenUsage,
+    });
   }
 
   private async refreshIntegrations(

@@ -5,7 +5,11 @@
       "account/login/start",
       "account/login/cancel",
       "account/logout",
-      "account/read"
+      "account/read",
+      "thread/unsubscribe",
+      "thread/metadata/update",
+      "thread/list",
+      "thread/read"
     ],
     "partial": [
       "thread/start",
@@ -39,10 +43,6 @@
       "fuzzyFileSearch"
     ],
     "missing": [
-      "thread/unsubscribe",
-      "thread/metadata/update",
-      "thread/list",
-      "thread/read",
       "skills/remote/list",
       "skills/remote/export",
       "skills/config/write",
@@ -63,7 +63,9 @@
   },
   "notifications": {
     "supported": [
-      "account/updated"
+      "account/updated",
+      "thread/closed",
+      "thread/tokenUsage/updated"
     ],
     "partial": [
       "error",
@@ -95,9 +97,7 @@
       "account/login/completed"
     ],
     "missing": [
-      "thread/closed",
       "skills/changed",
-      "thread/tokenUsage/updated",
       "rawResponseItem/completed",
       "item/commandExecution/terminalInteraction",
       "account/rateLimits/updated",
@@ -124,6 +124,10 @@
     "thread/name/set": "thread.rename",
     "thread/unarchive": "thread.unarchive",
     "thread/compact/start": "thread.compact",
+    "thread/list": "thread.list",
+    "thread/read": "thread.read",
+    "thread/metadata/update": "thread.metadata.update",
+    "thread/unsubscribe": "thread.unsubscribe",
     "plugin/uninstall": "integrations.plugin.uninstall",
     "turn/start": "turn.start",
     "turn/steer": "turn.steer",
@@ -142,6 +146,7 @@
     "thread/archived": "thread.updated",
     "thread/unarchived": "thread.updated",
     "thread/name/updated": "thread.updated",
+    "thread/closed": "thread.closed",
     "turn/started": "turn.updated",
     "turn/completed": "turn.updated",
     "turn/diff/updated": "diff.updated",
@@ -158,7 +163,8 @@
     "item/reasoning/summaryTextDelta": "timeline.delta",
     "item/reasoning/summaryPartAdded": "timeline.delta",
     "item/reasoning/textDelta": "timeline.delta",
-    "thread/compacted": "timeline.item"
+    "thread/compacted": "timeline.item",
+    "thread/tokenUsage/updated": "thread.tokenUsageUpdated"
   },
   "notes": {
     "initialize": "Handled internally by the runtime adapter; not intended for browser exposure.",

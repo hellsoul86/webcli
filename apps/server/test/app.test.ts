@@ -24,6 +24,7 @@ import type {
   ReasoningEffort,
   RuntimeStatus,
   SandboxMode,
+  ThreadMetadataGitInfoUpdate,
 } from "@webcli/contracts";
 import {
   WorkspaceRepo,
@@ -201,6 +202,16 @@ class FakeRuntime implements SessionRuntime {
     return archived ? [...this.archivedThreads] : [...this.activeThreads];
   }
 
+  async readThread(threadId: string): Promise<RuntimeThreadRecord> {
+    const thread =
+      this.activeThreads.find((entry) => entry.id === threadId) ??
+      this.archivedThreads.find((entry) => entry.id === threadId);
+    if (!thread) {
+      throw new Error("Thread not found");
+    }
+    return thread;
+  }
+
   async listLoadedThreadIds(): Promise<Array<string>> {
     return this.activeThreads.map((thread) => thread.id);
   }
@@ -221,13 +232,49 @@ class FakeRuntime implements SessionRuntime {
   }
 
   async resumeThread(threadId: string): Promise<RuntimeThreadRecord> {
-    const thread =
-      this.activeThreads.find((entry) => entry.id === threadId) ??
-      this.archivedThreads.find((entry) => entry.id === threadId);
-    if (!thread) {
-      throw new Error("Thread not found");
+    return this.readThread(threadId);
+  }
+
+  async updateThreadMetadata(
+    threadId: string,
+    input: { gitInfo?: ThreadMetadataGitInfoUpdate | null },
+  ): Promise<RuntimeThreadRecord> {
+    const thread = await this.readThread(threadId);
+    const next = {
+      ...thread,
+      gitInfo:
+        input.gitInfo === undefined
+          ? thread.gitInfo
+          : input.gitInfo === null
+            ? null
+            : {
+                ...(thread.gitInfo && typeof thread.gitInfo === "object"
+                  ? (thread.gitInfo as Record<string, unknown>)
+                  : {}),
+                ...(input.gitInfo.originUrl !== undefined ? { originUrl: input.gitInfo.originUrl } : {}),
+                ...(input.gitInfo.branch !== undefined ? { branch: input.gitInfo.branch } : {}),
+                ...(input.gitInfo.sha !== undefined ? { sha: input.gitInfo.sha } : {}),
+              },
+    };
+    this.activeThreads = this.activeThreads.map((entry) => (entry.id === threadId ? next : entry));
+    this.archivedThreads = this.archivedThreads.map((entry) => (entry.id === threadId ? next : entry));
+    this.emit({ type: "thread.updated", thread: next });
+    return next;
+  }
+
+  async unsubscribeThread(
+    threadId: string,
+  ): Promise<"notLoaded" | "notSubscribed" | "unsubscribed"> {
+    const thread = await this.readThread(threadId);
+    if (thread.status.type === "notLoaded") {
+      return "notLoaded";
     }
-    return thread;
+
+    const next = { ...thread, status: { type: "notLoaded" } as const };
+    this.activeThreads = this.activeThreads.map((entry) => (entry.id === threadId ? next : entry));
+    this.archivedThreads = this.archivedThreads.map((entry) => (entry.id === threadId ? next : entry));
+    this.emit({ type: "thread.closed", threadId });
+    return "unsubscribed";
   }
 
   async renameThread(threadId: string, name: string): Promise<void> {
@@ -290,6 +337,7 @@ class FakeRuntime implements SessionRuntime {
       id: `turn-${Date.now()}`,
       status: "running",
       errorMessage: null,
+      tokenUsage: null,
       items: [
         {
           id: `item-${Date.now()}`,
@@ -694,6 +742,94 @@ describe("createApp", () => {
           message.type === "server.notification" &&
           message.method === "workspace.git.updated" &&
           message.params.snapshot.workspaceId === savedWorkspace.id,
+        ),
+    );
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "thread-list-1",
+        method: "thread.list",
+        params: {
+          archived: false,
+          limit: 20,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "thread-list-1"));
+    const threadListResponse = getResponse(sessionAMessages, "thread-list-1");
+    expect(
+      threadListResponse?.result &&
+        "items" in threadListResponse.result &&
+        threadListResponse.result.items.some((thread) => thread.id === openedThreadId),
+    ).toBe(true);
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "thread-read-1",
+        method: "thread.read",
+        params: {
+          threadId: openedThreadId,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "thread-read-1"));
+    const threadReadResponse = getResponse(sessionAMessages, "thread-read-1");
+    expect(
+      threadReadResponse?.result &&
+        "thread" in threadReadResponse.result &&
+        threadReadResponse.result.thread.thread.id === openedThreadId,
+    ).toBe(true);
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "thread-meta-1",
+        method: "thread.metadata.update",
+        params: {
+          threadId: openedThreadId,
+          gitInfo: {
+            branch: "feature/parity",
+          },
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "thread-meta-1"));
+    const threadMetaResponse = getResponse(sessionAMessages, "thread-meta-1");
+    expect(
+      threadMetaResponse?.result &&
+        "thread" in threadMetaResponse.result &&
+        threadMetaResponse.result.thread.thread.gitInfo,
+    ).toMatchObject({ branch: "feature/parity" });
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "thread-unsubscribe-1",
+        method: "thread.unsubscribe",
+        params: {
+          threadId: openedThreadId,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "thread-unsubscribe-1"));
+    const threadUnsubscribeResponse = getResponse(sessionAMessages, "thread-unsubscribe-1");
+    expect(
+      threadUnsubscribeResponse?.result &&
+        "status" in threadUnsubscribeResponse.result &&
+        threadUnsubscribeResponse.result.status,
+    ).toBe("unsubscribed");
+    await waitFor(() =>
+      sessionAMessages.some(
+        (message) =>
+          message.type === "server.notification" &&
+          message.method === "thread.closed" &&
+          message.params.threadId === openedThreadId,
       ),
     );
 

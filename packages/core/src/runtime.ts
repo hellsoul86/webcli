@@ -18,6 +18,8 @@ import type {
   ReasoningEffort,
   RuntimeStatus,
   SandboxMode,
+  ThreadMetadataGitInfoUpdate,
+  ThreadTokenUsage,
   TimelineEntry,
   ThreadRuntimeStatus,
 } from "@webcli/contracts";
@@ -26,6 +28,7 @@ export type RuntimeTurnRecord = {
   id: string;
   status: string;
   errorMessage: string | null;
+  tokenUsage: ThreadTokenUsage | null;
   items: Array<TimelineEntry>;
 };
 
@@ -73,6 +76,16 @@ export type SessionRuntimeEvent =
       type: "thread.archive.changed";
       threadId: string;
       archived: boolean;
+    }
+  | {
+      type: "thread.closed";
+      threadId: string;
+    }
+  | {
+      type: "thread.tokenUsage.updated";
+      threadId: string;
+      turnId: string;
+      tokenUsage: ThreadTokenUsage;
     }
   | {
       type: "turn.updated";
@@ -145,9 +158,17 @@ export interface SessionRuntime {
   logoutAccount(): Promise<void>;
   listModels(): Promise<Array<ModelOption>>;
   listThreads(archived: boolean): Promise<Array<RuntimeThreadRecord>>;
+  readThread(threadId: string): Promise<RuntimeThreadRecord>;
   listLoadedThreadIds(): Promise<Array<string>>;
   openThread(input: RuntimeThreadConfig): Promise<RuntimeThreadRecord>;
   resumeThread(threadId: string, path?: string | null): Promise<RuntimeThreadRecord>;
+  updateThreadMetadata(
+    threadId: string,
+    input: { gitInfo?: ThreadMetadataGitInfoUpdate | null },
+  ): Promise<RuntimeThreadRecord>;
+  unsubscribeThread(
+    threadId: string,
+  ): Promise<"notLoaded" | "notSubscribed" | "unsubscribed">;
   renameThread(threadId: string, name: string): Promise<void>;
   archiveThread(threadId: string, path?: string | null): Promise<void>;
   unarchiveThread(threadId: string): Promise<RuntimeThreadRecord>;

@@ -18,7 +18,9 @@ import type {
   ReviewOutput,
   RuntimeStatus,
   ServiceTier,
+  ThreadMetadataGitInfoUpdate,
   ThreadSummary,
+  ThreadTokenUsage,
   TimelineEntry,
   WorkbenchThread,
   WorkbenchTurn,
@@ -50,6 +52,23 @@ export type AppRequestMap = {
   }>;
   "thread.open": RpcDefinition<{ workspaceId: string }, { thread: WorkbenchThread }>;
   "thread.resume": RpcDefinition<{ threadId: string }, { thread: WorkbenchThread }>;
+  "thread.list": RpcDefinition<{
+    archived: boolean;
+    cursor?: string | null;
+    limit?: number | null;
+    workspaceId?: string | "all";
+  }, {
+    items: Array<ThreadSummary>;
+    nextCursor: string | null;
+  }>;
+  "thread.read": RpcDefinition<{ threadId: string }, { thread: WorkbenchThread }>;
+  "thread.metadata.update": RpcDefinition<{
+    threadId: string;
+    gitInfo?: ThreadMetadataGitInfoUpdate | null;
+  }, { thread: WorkbenchThread }>;
+  "thread.unsubscribe": RpcDefinition<{ threadId: string }, {
+    status: "notLoaded" | "notSubscribed" | "unsubscribed";
+  }>;
   "thread.rename": RpcDefinition<{ threadId: string; name: string }, { ok: true }>;
   "thread.archive": RpcDefinition<{ threadId: string }, { ok: true }>;
   "thread.unarchive": RpcDefinition<{ threadId: string }, { thread: WorkbenchThread }>;
@@ -128,6 +147,12 @@ export type AppEventMap = {
   "runtime.statusChanged": { runtime: RuntimeStatus };
   "account.updated": { account: AccountSummary };
   "thread.updated": { thread: ThreadSummary };
+  "thread.closed": { threadId: string };
+  "thread.tokenUsageUpdated": {
+    threadId: string;
+    turnId: string;
+    tokenUsage: ThreadTokenUsage;
+  };
   "turn.updated": { threadId: string; turn: WorkbenchTurn };
   "timeline.item": { threadId: string; item: TimelineEntry };
   "timeline.delta": { threadId: string; item: TimelineEntry };

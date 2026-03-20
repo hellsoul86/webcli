@@ -9,6 +9,7 @@ import type {
   ReviewOutput,
   RuntimeStatus,
   SettingsTab,
+  ThreadTokenUsage,
   ThreadArchiveMode,
   ThreadSummary,
   TimelineEntry as WorkbenchTimelineEntry,
@@ -58,6 +59,7 @@ export type SessionSlice = {
   selectWorkspaceGitFile: (workspaceId: string, path: string | null) => void;
   renameThread: (threadId: string, threadName: string | null | undefined) => void;
   markThreadArchived: (threadId: string, archived: boolean) => void;
+  markThreadClosed: (threadId: string) => void;
   applyTurn: (threadId: string, turn: WorkbenchTurn) => void;
   applyTimelineItem: (threadId: string, item: TimelineEntry) => void;
   appendDelta: (
@@ -79,6 +81,11 @@ export type SessionSlice = {
   setLatestDiff: (threadId: string, diff: string) => void;
   setLatestPlan: (threadId: string, payload: ThreadView["latestPlan"]) => void;
   setReview: (threadId: string, review: ReviewOutput | null) => void;
+  setTurnTokenUsage: (
+    threadId: string,
+    turnId: string,
+    tokenUsage: ThreadTokenUsage,
+  ) => void;
   queueApproval: (approval: PendingApproval) => void;
   resolveApproval: (id: RequestId) => void;
   touchHydratedThread: (threadId: string) => void;
