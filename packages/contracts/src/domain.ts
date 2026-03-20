@@ -210,6 +210,33 @@ export type ThreadSummary = {
   workspaceName: string | null;
 };
 
+export type ConversationSummarySource =
+  | "cli"
+  | "vscode"
+  | "exec"
+  | "mcp"
+  | "unknown"
+  | { subagent: JsonValue };
+
+export type ConversationSummaryGitInfo = {
+  sha: string | null;
+  branch: string | null;
+  originUrl: string | null;
+};
+
+export type ConversationSummarySnapshot = {
+  conversationId: string;
+  path: string;
+  preview: string;
+  timestamp: string | null;
+  updatedAt: string | null;
+  modelProvider: string;
+  cwd: string;
+  cliVersion: string;
+  source: ConversationSummarySource;
+  gitInfo: ConversationSummaryGitInfo | null;
+};
+
 export type ThreadMetadataGitInfoUpdate = {
   sha?: string | null;
   branch?: string | null;
@@ -324,6 +351,12 @@ export type GitWorkingTreeSnapshot = {
 export type GitBranchReference = {
   name: string;
   current: boolean;
+};
+
+export type GitRemoteDiffSnapshot = {
+  cwd: string;
+  sha: string;
+  diff: string;
 };
 
 export type GitFileReviewDetail =

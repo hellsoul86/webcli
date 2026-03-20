@@ -489,6 +489,12 @@ export class WorkbenchService {
           (message.params as AppRequestParams<"externalAgentConfig.import">).migrationItems,
         );
         return { ok: true };
+      case "conversation.summary.read":
+        return {
+          summary: await this.runtime.readConversationSummary(
+            message.params as AppRequestParams<"conversation.summary.read">,
+          ),
+        };
       case "workspace.git.read":
         return this.handleWorkspaceGitRead(
           message.params as AppRequestParams<"workspace.git.read">,
@@ -505,6 +511,12 @@ export class WorkbenchService {
         return this.handleWorkspaceGitFileRead(
           message.params as AppRequestParams<"workspace.git.file.read">,
         );
+      case "git.diffToRemote":
+        return {
+          diff: await this.runtime.readGitDiffToRemote(
+            (message.params as AppRequestParams<"git.diffToRemote">).cwd,
+          ),
+        };
       case "workspace.searchFiles":
         return this.handleWorkspaceSearch(
           message.params as AppRequestParams<"workspace.searchFiles">,

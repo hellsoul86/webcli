@@ -1,4 +1,8 @@
-import type { AccountUsageWindow, ThreadSummary } from "@webcli/contracts";
+import type {
+  AccountUsageWindow,
+  ConversationSummarySnapshot,
+  ThreadSummary,
+} from "@webcli/contracts";
 import { useAppLocale } from "../../i18n/use-i18n";
 import { ComposerInlineDropdown, ComposerSpeedSwitch, type ComposerDropdownOption, type ComposerSpeedMode } from "./workbench-shell-controls";
 import { EditIcon, GearIcon, GlobeIcon } from "./workbench-icons";
@@ -7,6 +11,7 @@ type WorkbenchHeaderProps = {
   headerWorkspaceLabel: string;
   threadTitle: string;
   activeThreadEntry: ThreadSummary | null;
+  conversationSummary: ConversationSummarySnapshot | null;
   threadTitleEditing: boolean;
   threadTitleDraft: string;
   toolbarUsageWindows: Array<AccountUsageWindow>;
@@ -68,6 +73,15 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
             </div>
           )}
         </div>
+        {props.conversationSummary ? (
+          <p
+            className="window-toolbar__subtitle"
+            data-testid="thread-summary-display"
+            title={buildConversationSummaryTitle(props.conversationSummary)}
+          >
+            {buildConversationSummaryLabel(props.conversationSummary)}
+          </p>
+        ) : null}
       </div>
 
       <div className="window-toolbar__actions">
@@ -115,6 +129,24 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
       </div>
     </header>
   );
+}
+
+function buildConversationSummaryLabel(summary: ConversationSummarySnapshot): string {
+  const preview = summary.preview.trim();
+  const branch = summary.gitInfo?.branch?.trim() || "";
+  const parts = [preview || summary.cwd];
+  if (branch) {
+    parts.push(branch);
+  }
+  return parts.join(" · ");
+}
+
+function buildConversationSummaryTitle(summary: ConversationSummarySnapshot): string {
+  const details = [summary.path, summary.cwd];
+  if (summary.gitInfo?.originUrl) {
+    details.push(summary.gitInfo.originUrl);
+  }
+  return details.filter(Boolean).join("\n");
 }
 
 function formatUsageRemaining(value: number | null): string {

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   GitFileReviewDetail,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeSnapshot,
   WorkspaceRecord,
 } from "@webcli/contracts";
@@ -86,6 +87,12 @@ const details: Record<string, GitFileReviewDetail> = {
   },
 };
 
+const remoteDiff: GitRemoteDiffSnapshot = {
+  cwd: workspace.absPath,
+  sha: "abc1234",
+  diff: "diff --git a/README.md b/README.md\n+# Remote diff coverage",
+};
+
 function Harness(props: { initialSelectedPath?: string | null }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(
     props.initialSelectedPath ?? null,
@@ -106,6 +113,7 @@ function Harness(props: { initialSelectedPath?: string | null }) {
       onTreeFilterChange={setTreeFilter}
       onRefresh={() => {}}
       onReadFileDetail={async (path) => details[path]}
+      onReadRemoteDiff={async () => remoteDiff}
       onResizeStart={() => {}}
       onResizeKeyDown={() => {}}
     />
@@ -137,5 +145,15 @@ describe("GitReviewPanel", () => {
 
     await waitFor(() => expect(screen.getByTestId("git-review-fallback")).toBeVisible());
     expect(screen.getByTestId("git-review-fallback")).toHaveTextContent("Merge conflicts");
+  });
+
+  it("loads remote diff output inside the review panel", async () => {
+    render(<Harness initialSelectedPath="README.md" />);
+
+    fireEvent.click(screen.getByTestId("git-remote-diff-button"));
+
+    await waitFor(() => expect(screen.getByTestId("git-remote-diff-view")).toBeVisible());
+    expect(screen.getByTestId("git-review-path")).toHaveTextContent("远端与工作树差异");
+    expect(screen.getByTestId("git-remote-diff-view")).toHaveTextContent("Remote diff coverage");
   });
 });

@@ -31,6 +31,8 @@ const WAVE1_REQUESTS_NOT_MISSING = [
   "externalAgentConfig/detect",
   "externalAgentConfig/import",
   "config/batchWrite",
+  "getConversationSummary",
+  "gitDiffToRemote",
 ];
 const WAVE1_NOTIFICATIONS_NOT_MISSING = [
   "account/rateLimits/updated",
@@ -40,13 +42,19 @@ const WAVE1_NOTIFICATIONS_NOT_MISSING = [
   "rawResponseItem/completed",
   "item/commandExecution/terminalInteraction",
 ];
-const WAVE2_REQUESTS_DEFERRED = ["experimentalFeature/list", "feedback/upload"];
+const WAVE2_REQUESTS_DEFERRED = [
+  "experimentalFeature/list",
+  "feedback/upload",
+  "windowsSandbox/setupStart",
+];
 const WAVE2_NOTIFICATIONS_DEFERRED = [
   "thread/realtime/started",
   "thread/realtime/itemAdded",
   "thread/realtime/outputAudio/delta",
   "thread/realtime/error",
   "thread/realtime/closed",
+  "windows/worldWritableWarning",
+  "windowsSandbox/setupCompleted",
 ];
 
 test("desktop parity matrix covers every generated request and notification exactly once", () => {

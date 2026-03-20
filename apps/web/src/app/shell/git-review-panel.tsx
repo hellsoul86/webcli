@@ -1,6 +1,7 @@
 import {
   Suspense,
   lazy,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -10,6 +11,7 @@ import {
 } from "react";
 import type {
   GitFileReviewDetail,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   WorkspaceRecord,
@@ -48,6 +50,7 @@ type GitReviewPanelProps = {
   onTreeFilterChange: (value: string) => void;
   onRefresh: () => void;
   onReadFileDetail: (path: string) => Promise<GitFileReviewDetail>;
+  onReadRemoteDiff: () => Promise<GitRemoteDiffSnapshot>;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
 };
@@ -57,6 +60,7 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
   const {
     onClose,
     onReadFileDetail,
+    onReadRemoteDiff,
     onRefresh,
     onResizeKeyDown,
     onResizeStart,
@@ -88,17 +92,29 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
   const [detailByPath, setDetailByPath] = useState<Record<string, GitFileReviewDetail>>({});
   const [detailLoadingPath, setDetailLoadingPath] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [diffMode, setDiffMode] = useState<"working-tree" | "remote">("working-tree");
+  const [remoteDiff, setRemoteDiff] = useState<GitRemoteDiffSnapshot | null>(null);
+  const [remoteDiffLoading, setRemoteDiffLoading] = useState(false);
+  const [remoteDiffError, setRemoteDiffError] = useState<string | null>(null);
   const snapshotIdentity = `${snapshot?.workspaceId ?? "none"}:${snapshot?.generatedAt ?? 0}`;
   const autoExpandedDirectoryKeys = useMemo(
     () => collectAutoExpandedDirectoryKeys(groups, visibleSelectedPath, treeFilter),
     [groups, treeFilter, visibleSelectedPath],
   );
 
+  const handleSelectFile = useCallback(
+    (path: string | null) => {
+      setDiffMode("working-tree");
+      onSelectFile(path);
+    },
+    [onSelectFile],
+  );
+
   useEffect(() => {
     if (visibleSelectedPath !== selectedPath) {
-      onSelectFile(visibleSelectedPath);
+      handleSelectFile(visibleSelectedPath);
     }
-  }, [onSelectFile, selectedPath, visibleSelectedPath]);
+  }, [handleSelectFile, selectedPath, visibleSelectedPath]);
 
   useEffect(() => {
     const availableIds = groups.map((group) => group.id);
@@ -130,7 +146,42 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
     setDetailByPath({});
     setDetailLoadingPath(null);
     setDetailError(null);
+    setDiffMode("working-tree");
+    setRemoteDiff(null);
+    setRemoteDiffLoading(false);
+    setRemoteDiffError(null);
   }, [snapshotIdentity]);
+
+  useEffect(() => {
+    if (!snapshot || !snapshot.isGitRepository || diffMode !== "remote" || remoteDiff) {
+      return;
+    }
+
+    let cancelled = false;
+    setRemoteDiffLoading(true);
+    setRemoteDiffError(null);
+
+    void onReadRemoteDiff()
+      .then((nextDiff) => {
+        if (!cancelled) {
+          setRemoteDiff(nextDiff);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRemoteDiffError(localizeErrorWithFallback(error, "errors.requestFailed"));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setRemoteDiffLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [diffMode, onReadRemoteDiff, remoteDiff, snapshot]);
 
   useEffect(() => {
     if (!snapshot || !visibleSelectedPath || detailByPath[visibleSelectedPath]) {
@@ -169,6 +220,11 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
 
   const detail = visibleSelectedPath ? detailByPath[visibleSelectedPath] ?? null : null;
 
+  const remoteDiffLabel = useMemo(
+    () => (remoteDiff ? t("git.remoteDiffSha", { sha: remoteDiff.sha }) : t("git.remoteDiffReady")),
+    [remoteDiff, t],
+  );
+
   if (!workspace) {
     return (
       <div className="git-review-panel git-review-panel--empty" data-testid="git-workbench">
@@ -199,8 +255,26 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
           </div>
         </div>
         <div className="git-review-panel__header-actions">
-          <button type="button" className="ghost-button" onClick={onRefresh}>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => {
+              setRemoteDiff(null);
+              setRemoteDiffError(null);
+              void onRefresh();
+            }}
+          >
             {t("git.refresh")}
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            data-testid="git-remote-diff-button"
+            aria-pressed={diffMode === "remote"}
+            disabled={!snapshot?.isGitRepository}
+            onClick={() => setDiffMode((current) => (current === "remote" ? "working-tree" : "remote"))}
+          >
+            {t("git.remoteDiff")}
           </button>
           <button type="button" className="ghost-button" onClick={onClose}>
             {t("git.backToSession")}
@@ -266,7 +340,7 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
                           : [...current, directoryKey],
                       )
                     }
-                    onSelectFile={onSelectFile}
+                    onSelectFile={handleSelectFile}
                   />
                 ))}
               </div>
@@ -299,11 +373,26 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
               <strong
                 className="git-review-panel__diff-path"
                 data-testid="git-review-path"
-                title={selectedFile?.path ?? summary.title}
+                title={
+                  diffMode === "remote"
+                    ? remoteDiff?.cwd ?? workspace.absPath
+                    : selectedFile?.path ?? summary.title
+                }
               >
-                {selectedFile ? compactReviewPath(selectedFile.path) : summary.title}
+                {diffMode === "remote"
+                  ? t("git.remoteDiffTitle")
+                  : selectedFile
+                    ? compactReviewPath(selectedFile.path)
+                    : summary.title}
               </strong>
-              {selectedFile ? (
+              {diffMode === "remote" ? (
+                <div className="git-review-panel__diff-meta">
+                  <span>{remoteDiffLabel}</span>
+                  <span title={remoteDiff?.cwd ?? workspace.absPath}>
+                    {compactReviewPath(remoteDiff?.cwd ?? workspace.absPath)}
+                  </span>
+                </div>
+              ) : selectedFile ? (
                 <div className="git-review-panel__diff-meta">
                   <span className="git-review-panel__status-badge" title={formatGitFileBadge(t, selectedFile.status)}>
                     {formatGitFileShortStatus(selectedFile.status)}
@@ -318,7 +407,13 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
                 </div>
               ) : null}
             </div>
-            {selectedFile ? (
+            {diffMode === "remote" ? (
+              remoteDiff ? (
+                <div className="git-review-panel__diff-stats">
+                  <span className="git-review-panel__remote-sha">{remoteDiff.sha}</span>
+                </div>
+              ) : null
+            ) : selectedFile ? (
               <div className="git-review-panel__diff-stats">
                 <span className="window-stat window-stat--positive">{`+${selectedFile.additions}`}</span>
                 <span className="window-stat window-stat--negative">{`-${selectedFile.deletions}`}</span>
@@ -327,7 +422,29 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
           </div>
 
           <div className="git-review-panel__diff-body">
-            {!selectedFile ? (
+            {diffMode === "remote" ? (
+              remoteDiffLoading && !remoteDiff ? (
+                <GitReviewEmptyState title={t("git.loadingRemoteDiffTitle")} detail={workspace.absPath} />
+              ) : remoteDiffError && !remoteDiff ? (
+                <GitReviewEmptyState title={t("git.remoteDiffFailedTitle")} detail={remoteDiffError} />
+              ) : remoteDiff ? (
+                remoteDiff.diff.trim() ? (
+                  <div className="git-review-panel__fallback" data-testid="git-remote-diff-view">
+                    <div className="git-review-panel__fallback-copy">
+                      <strong>{t("git.remoteDiffTitle")}</strong>
+                      <p>{t("git.remoteDiffReady")}</p>
+                    </div>
+                    <div className="terminal-output inspector-terminal-output">
+                      <RenderableCodeBlock value={remoteDiff.diff} language="diff" />
+                    </div>
+                  </div>
+                ) : (
+                  <GitReviewEmptyState title={t("git.remoteDiffTitle")} detail={t("git.noDiffYet")} />
+                )
+              ) : (
+                <GitReviewEmptyState title={t("git.remoteDiffTitle")} detail={t("git.noDiffYet")} />
+              )
+            ) : !selectedFile ? (
               <GitReviewEmptyState title={t("git.selectPatchHint")} detail={t("git.noDiffYet")} />
             ) : detailLoadingPath === selectedFile.path && !detail ? (
               <GitReviewEmptyState title={t("git.loadingDetailTitle")} detail={compactReviewPath(selectedFile.path)} />

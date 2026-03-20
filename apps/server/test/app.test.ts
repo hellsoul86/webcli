@@ -19,11 +19,13 @@ import type {
   ConfigBatchWriteResult,
   ConfigRequirementsSnapshot,
   ConfigSnapshot,
+  ConversationSummarySnapshot,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   HazelnutScope,
@@ -234,6 +236,37 @@ class FakeRuntime implements SessionRuntime {
         secondary: null,
       },
       rateLimitsByLimitId: {},
+    };
+  }
+
+  async readConversationSummary(
+    input: { conversationId: string } | { rolloutPath: string },
+  ): Promise<ConversationSummarySnapshot> {
+    const thread =
+      "conversationId" in input
+        ? await this.readThread(input.conversationId)
+        : [...this.activeThreads, ...this.archivedThreads].find(
+            (entry) => getFakeThreadRolloutPath(entry) === input.rolloutPath,
+          );
+    if (!thread) {
+      throw new Error("Conversation not found");
+    }
+
+    return {
+      conversationId: thread.id,
+      path: getFakeThreadRolloutPath(thread),
+      preview: thread.preview,
+      timestamp: new Date(thread.createdAt * 1000).toISOString(),
+      updatedAt: new Date(thread.updatedAt * 1000).toISOString(),
+      modelProvider: thread.modelProvider,
+      cwd: thread.cwd,
+      cliVersion: "0.114.0",
+      source: "cli",
+      gitInfo: {
+        sha: "abc1234",
+        branch: this.gitCurrentBranch,
+        originUrl: "https://github.com/hellsoul86/webcli.git",
+      },
     };
   }
 
@@ -541,6 +574,22 @@ class FakeRuntime implements SessionRuntime {
     file: GitWorkingTreeFile,
   ): Promise<GitFileReviewDetail> {
     return makeGitFileReviewDetail(file);
+  }
+
+  async readGitDiffToRemote(cwd: string): Promise<GitRemoteDiffSnapshot> {
+    return {
+      cwd,
+      sha: "abc1234",
+      diff: [
+        "diff --git a/README.md b/README.md",
+        "index 1111111..2222222 100644",
+        "--- a/README.md",
+        "+++ b/README.md",
+        "@@ -1 +1 @@",
+        "-Hello",
+        "+Hello remote",
+      ].join("\n"),
+    };
   }
 
   async loginMcp(): Promise<string> {
@@ -895,6 +944,49 @@ describe("createApp", () => {
 
     const openedThreadId = runtime.activeThreads[0]?.id;
     expect(openedThreadId).toBeTruthy();
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "conversation-summary-1",
+        method: "conversation.summary.read",
+        params: {
+          conversationId: openedThreadId,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "conversation-summary-1"));
+    const conversationSummaryResponse = getResponse(sessionAMessages, "conversation-summary-1");
+    expect(
+      conversationSummaryResponse?.result &&
+        "summary" in conversationSummaryResponse.result &&
+        conversationSummaryResponse.result.summary.conversationId === openedThreadId,
+    ).toBe(true);
+    expect(
+      conversationSummaryResponse?.result && "summary" in conversationSummaryResponse.result
+        ? conversationSummaryResponse.result.summary.cwd
+        : null,
+    ).toBe(savedWorkspace.absPath);
+
+    wsA.send(
+      JSON.stringify({
+        type: "client.call",
+        id: "git-remote-diff-1",
+        method: "git.diffToRemote",
+        params: {
+          cwd: savedWorkspace.absPath,
+        },
+      } satisfies AppClientMessage),
+    );
+
+    await waitFor(() => hasResponse(sessionAMessages, "git-remote-diff-1"));
+    const gitRemoteDiffResponse = getResponse(sessionAMessages, "git-remote-diff-1");
+    expect(
+      gitRemoteDiffResponse?.result &&
+        "diff" in gitRemoteDiffResponse.result &&
+        gitRemoteDiffResponse.result.diff.diff,
+    ).toContain("Hello remote");
 
     const approval: PendingApproval = {
       id: "approval-1",
@@ -1643,6 +1735,10 @@ function makeRuntimeThread(
     ephemeral: false,
     turns: [],
   };
+}
+
+function getFakeThreadRolloutPath(thread: RuntimeThreadRecord): string {
+  return thread.path ?? join(thread.cwd, ".codex", "threads", `${thread.id}.json`);
 }
 
 function makeGitSnapshot(

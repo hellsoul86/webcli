@@ -13,6 +13,7 @@ import type {
   ConfigBatchWriteResult,
   ConfigRequirementsSnapshot,
   ConfigWarningNotice,
+  ConversationSummarySnapshot,
   ConfigSnapshot,
   DeprecationNotice,
   ExternalAgentConfigDetectInput,
@@ -20,6 +21,7 @@ import type {
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   HazelnutScope,
@@ -181,6 +183,9 @@ export interface SessionRuntime {
   getAccountSummary(force?: boolean): Promise<AccountSummary>;
   readAccountState(): Promise<AccountStateSnapshot>;
   readAccountRateLimits(): Promise<AccountRateLimitsSnapshot>;
+  readConversationSummary(
+    input: { conversationId: string } | { rolloutPath: string },
+  ): Promise<ConversationSummarySnapshot>;
   loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse>;
   cancelAccountLogin(loginId: string): Promise<AccountLoginCancelStatus>;
   logoutAccount(): Promise<void>;
@@ -243,6 +248,7 @@ export interface SessionRuntime {
   ): Promise<{ branches: Array<GitBranchReference>; currentBranch: string | null }>;
   switchWorkspaceGitBranch(cwd: string, branch: string): Promise<void>;
   readWorkspaceGitFileDetail(cwd: string, file: GitWorkingTreeFile): Promise<GitFileReviewDetail>;
+  readGitDiffToRemote(cwd: string): Promise<GitRemoteDiffSnapshot>;
   loginMcp(name: string): Promise<string>;
   reloadMcp(): Promise<void>;
   listMcpServerStatuses(): Promise<Array<McpServerSnapshot>>;

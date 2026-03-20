@@ -48,17 +48,16 @@
       "config/read",
       "config/batchWrite",
       "config/value/write",
+      "getConversationSummary",
+      "gitDiffToRemote",
       "getAuthStatus",
       "fuzzyFileSearch"
     ],
-    "missing": [
-      "windowsSandbox/setupStart",
-      "getConversationSummary",
-      "gitDiffToRemote"
-    ],
+    "missing": [],
     "deferred-wave2": [
       "experimentalFeature/list",
-      "feedback/upload"
+      "feedback/upload",
+      "windowsSandbox/setupStart"
     ]
   },
   "notifications": {
@@ -104,16 +103,15 @@
       "rawResponseItem/completed",
       "item/commandExecution/terminalInteraction"
     ],
-    "missing": [
-      "windows/worldWritableWarning",
-      "windowsSandbox/setupCompleted"
-    ],
+    "missing": [],
     "deferred-wave2": [
       "thread/realtime/started",
       "thread/realtime/itemAdded",
       "thread/realtime/outputAudio/delta",
       "thread/realtime/error",
-      "thread/realtime/closed"
+      "thread/realtime/closed",
+      "windows/worldWritableWarning",
+      "windowsSandbox/setupCompleted"
     ]
   },
   "mappings": {
@@ -148,6 +146,8 @@
     "command/exec/terminate": "command.stop",
     "command/exec/resize": "command.resize",
     "config/value/write": "settings.save",
+    "getConversationSummary": "conversation.summary.read",
+    "gitDiffToRemote": "git.diffToRemote",
     "fuzzyFileSearch": "workspace.searchFiles",
     "thread/started": "thread.updated",
     "thread/status/changed": "thread.updated",
@@ -188,6 +188,8 @@
     "model/list": "Model options are available through bootstrap and settings flows, but not yet as a dedicated app-level call.",
     "config/batchWrite": "The capability-plane request is exposed through the runtime and workbench service, but there is not yet a first-class web UI that drives batch writes directly.",
     "config/read": "Bootstrap and settings expose a subset of runtime config, but not the full config surface.",
+    "getConversationSummary": "Supported through conversation.summary.read and shown as a thread-level helper in the current conversation context.",
+    "gitDiffToRemote": "Supported through git.diffToRemote and surfaced inside the existing Git review context.",
     "getAuthStatus": "Bootstrap includes auth state, but not through a dedicated capability-plane request.",
     "error": "Runtime status and lastError capture some failures, but not the full raw error notification surface.",
     "mcpServer/oauthLogin/completed": "The UI refreshes integrations after login, but there is no dedicated completion event yet.",
@@ -195,10 +197,13 @@
     "item/commandExecution/terminalInteraction": "Implemented through the existing timeline.item path, so it is supported as a first-class timeline entry but still grouped under the generic timeline event surface.",
     "experimentalFeature/list": "Deferred to wave 2 long-tail capability work.",
     "feedback/upload": "Deferred to wave 2 long-tail capability work.",
+    "windowsSandbox/setupStart": "Deferred to wave 2 because Windows-host-specific sandbox setup is outside the first-wave desktop parity scope.",
     "thread/realtime/started": "Realtime thread and output-audio support are explicitly deferred to wave 2.",
     "thread/realtime/itemAdded": "Realtime thread and output-audio support are explicitly deferred to wave 2.",
     "thread/realtime/outputAudio/delta": "Realtime thread and output-audio support are explicitly deferred to wave 2.",
     "thread/realtime/error": "Realtime thread and output-audio support are explicitly deferred to wave 2.",
-    "thread/realtime/closed": "Realtime thread and output-audio support are explicitly deferred to wave 2."
+    "thread/realtime/closed": "Realtime thread and output-audio support are explicitly deferred to wave 2.",
+    "windows/worldWritableWarning": "Deferred to wave 2 because Windows-host-specific warnings are outside the first-wave desktop parity scope.",
+    "windowsSandbox/setupCompleted": "Deferred to wave 2 because Windows-host-specific sandbox setup is outside the first-wave desktop parity scope."
   }
 }

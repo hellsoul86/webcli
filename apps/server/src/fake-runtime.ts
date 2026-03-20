@@ -14,11 +14,13 @@ import type {
   ConfigBatchWriteResult,
   ConfigRequirementsSnapshot,
   ConfigSnapshot,
+  ConversationSummarySnapshot,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
+  GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
   HazelnutScope,
@@ -206,6 +208,21 @@ export class FakeRuntime implements SessionRuntime {
       },
       rateLimitsByLimitId: {},
     };
+  }
+
+  async readConversationSummary(
+    input: { conversationId: string } | { rolloutPath: string },
+  ): Promise<ConversationSummarySnapshot> {
+    const thread =
+      "conversationId" in input
+        ? this.requireThread(input.conversationId)
+        : [...this.threads.values()].find((entry) => getFakeThreadRolloutPath(entry) === input.rolloutPath);
+
+    if (!thread) {
+      throw new Error("Conversation not found");
+    }
+
+    return makeFakeConversationSummary(thread, this.gitBranchByCwd.get(thread.cwd) ?? "main");
   }
 
   async loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse> {
@@ -884,6 +901,24 @@ export class FakeRuntime implements SessionRuntime {
     return makeGitFileReviewDetail(cwd, file);
   }
 
+  async readGitDiffToRemote(cwd: string): Promise<GitRemoteDiffSnapshot> {
+    return {
+      cwd,
+      sha: "a1b2c3d4",
+      diff: [
+        "diff --git a/README.md b/README.md",
+        "index 1111111..2222222 100644",
+        "--- a/README.md",
+        "+++ b/README.md",
+        "@@ -1,3 +1,5 @@",
+        "-Old heading",
+        "+# WebCLI",
+        "+",
+        "+Remote diff coverage",
+      ].join("\n"),
+    };
+  }
+
   async loginMcp(name: string): Promise<string> {
     return `https://example.com/oauth/${encodeURIComponent(name)}`;
   }
@@ -1133,6 +1168,32 @@ function cloneTurn(turn: RuntimeTurnRecord): RuntimeTurnRecord {
   return {
     ...turn,
     items: turn.items.map((item) => ({ ...item })),
+  };
+}
+
+function getFakeThreadRolloutPath(thread: RuntimeThreadRecord): string {
+  return thread.path ?? join(thread.cwd, ".codex", "threads", `${thread.id}.json`);
+}
+
+function makeFakeConversationSummary(
+  thread: RuntimeThreadRecord,
+  branch: string,
+): ConversationSummarySnapshot {
+  return {
+    conversationId: thread.id,
+    path: getFakeThreadRolloutPath(thread),
+    preview: thread.preview,
+    timestamp: new Date(thread.createdAt * 1000).toISOString(),
+    updatedAt: new Date(thread.updatedAt * 1000).toISOString(),
+    modelProvider: thread.modelProvider,
+    cwd: thread.cwd,
+    cliVersion: "0.114.0",
+    source: "cli",
+    gitInfo: {
+      sha: "a1b2c3d4",
+      branch,
+      originUrl: "https://github.com/hellsoul86/webcli.git",
+    },
   };
 }
 
