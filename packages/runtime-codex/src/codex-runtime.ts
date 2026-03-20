@@ -3,16 +3,25 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { AppError } from "@webcli/contracts";
 import type {
+  AccountLoginCompleted,
   AccountUsageWindow,
   AccountLoginCancelStatus,
   AccountLoginStartInput,
   AccountLoginStartResponse,
+  AccountRateLimitsSnapshot,
   AccountStateSnapshot,
   AccountSummary,
   AppInstallHint,
   AppSnapshot,
   ApprovalPolicy,
+  ConfigBatchWriteInput,
+  ConfigBatchWriteResult,
+  ConfigRequirementsSnapshot,
+  ConfigWarningNotice,
   ConfigSnapshot,
+  DeprecationNotice,
+  ExternalAgentConfigDetectInput,
+  ExternalAgentConfigMigrationItem,
   ForcedLoginMethod,
   FuzzySearchSnapshot,
   GitBranchReference,
@@ -23,6 +32,7 @@ import type {
   IntegrationSnapshot,
   ModelOption,
   McpServerSnapshot,
+  ModelRerouteEvent,
   PendingServerRequest,
   PluginMarketplaceSnapshot,
   ProductSurface,
@@ -53,6 +63,11 @@ import type { AppInfo } from "./generated/v2/AppInfo";
 import type { AskForApproval } from "./generated/v2/AskForApproval";
 import type { CommandExecResponse } from "./generated/v2/CommandExecResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
+import type { ConfigRequirementsReadResponse } from "./generated/v2/ConfigRequirementsReadResponse";
+import type { ConfigWarningNotification } from "./generated/v2/ConfigWarningNotification";
+import type { ConfigWriteResponse } from "./generated/v2/ConfigWriteResponse";
+import type { DeprecationNoticeNotification } from "./generated/v2/DeprecationNoticeNotification";
+import type { ExternalAgentConfigDetectResponse } from "./generated/v2/ExternalAgentConfigDetectResponse";
 import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { GetAccountRateLimitsResponse } from "./generated/v2/GetAccountRateLimitsResponse";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
@@ -60,6 +75,7 @@ import type { CancelLoginAccountResponse } from "./generated/v2/CancelLoginAccou
 import type { ListMcpServerStatusResponse } from "./generated/v2/ListMcpServerStatusResponse";
 import type { McpServerOauthLoginResponse } from "./generated/v2/McpServerOauthLoginResponse";
 import type { ModelListResponse } from "./generated/v2/ModelListResponse";
+import type { ModelReroutedNotification } from "./generated/v2/ModelReroutedNotification";
 import type { PermissionsRequestApprovalResponse } from "./generated/v2/PermissionsRequestApprovalResponse";
 import type { PluginInstallResponse } from "./generated/v2/PluginInstallResponse";
 import type { PluginListResponse } from "./generated/v2/PluginListResponse";
@@ -83,6 +99,7 @@ import type { ThreadUnsubscribeResponse } from "./generated/v2/ThreadUnsubscribe
 import type { ThreadUnarchiveResponse } from "./generated/v2/ThreadUnarchiveResponse";
 import type { Turn } from "./generated/v2/Turn";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
+import type { AccountLoginCompletedNotification } from "./generated/v2/AccountLoginCompletedNotification";
 import {
   encodeJsonRpcLine,
   parseJsonRpcLine,
@@ -215,6 +232,14 @@ export class CodexRuntime implements SessionRuntime {
       account,
       authStatus,
     };
+  }
+
+  async readAccountRateLimits(): Promise<AccountRateLimitsSnapshot> {
+    const response = await this.call<GetAccountRateLimitsResponse, "account/rateLimits/read">(
+      "account/rateLimits/read",
+      undefined,
+    );
+    return mapAccountRateLimits(response);
   }
 
   async loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse> {
@@ -581,6 +606,14 @@ export class CodexRuntime implements SessionRuntime {
     };
   }
 
+  async readConfigRequirements(): Promise<ConfigRequirementsSnapshot | null> {
+    const response = await this.call<ConfigRequirementsReadResponse, "configRequirements/read">(
+      "configRequirements/read",
+      undefined,
+    );
+    return mapConfigRequirements(response.requirements);
+  }
+
   async getIntegrationSnapshot(input: {
     cwd?: string | null;
     threadId?: string | null;
@@ -611,33 +644,85 @@ export class CodexRuntime implements SessionRuntime {
   }
 
   async saveSettings(input: ConfigSnapshot): Promise<void> {
-    await Promise.all([
-      this.call("config/value/write", {
-        keyPath: "model",
-        value: input.model,
-        mergeStrategy: "replace",
-      }),
-      this.call("config/value/write", {
-        keyPath: "model_reasoning_effort",
-        value: input.reasoningEffort,
-        mergeStrategy: "replace",
-      }),
-      this.call("config/value/write", {
-        keyPath: "service_tier",
-        value: input.serviceTier,
-        mergeStrategy: "replace",
-      }),
-      this.call("config/value/write", {
-        keyPath: "approval_policy",
-        value: input.approvalPolicy,
-        mergeStrategy: "replace",
-      }),
-      this.call("config/value/write", {
-        keyPath: "sandbox_mode",
-        value: input.sandboxMode,
-        mergeStrategy: "replace",
-      }),
-    ]);
+    await this.batchWriteConfig({
+      edits: [
+        {
+          keyPath: "model",
+          value: input.model,
+          mergeStrategy: "replace",
+        },
+        {
+          keyPath: "model_reasoning_effort",
+          value: input.reasoningEffort,
+          mergeStrategy: "replace",
+        },
+        {
+          keyPath: "service_tier",
+          value: input.serviceTier,
+          mergeStrategy: "replace",
+        },
+        {
+          keyPath: "approval_policy",
+          value: input.approvalPolicy,
+          mergeStrategy: "replace",
+        },
+        {
+          keyPath: "sandbox_mode",
+          value: input.sandboxMode,
+          mergeStrategy: "replace",
+        },
+        {
+          keyPath: "forced_login_method",
+          value: input.forcedLoginMethod,
+          mergeStrategy: "replace",
+        },
+      ],
+    });
+  }
+
+  async batchWriteConfig(input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+    const response = await this.call<ConfigWriteResponse, "config/batchWrite">(
+      "config/batchWrite",
+      {
+        edits: input.edits.map((edit) => ({
+          keyPath: edit.keyPath,
+          value: edit.value,
+          mergeStrategy: edit.mergeStrategy,
+        })),
+        filePath: input.filePath ?? undefined,
+        expectedVersion: input.expectedVersion ?? undefined,
+        reloadUserConfig: input.reloadUserConfig ?? undefined,
+      },
+    );
+    return {
+      status: response.status,
+      version: response.version,
+      filePath: response.filePath,
+      overriddenMessage: response.overriddenMetadata?.message ?? null,
+    };
+  }
+
+  async detectExternalAgentConfig(
+    input: ExternalAgentConfigDetectInput,
+  ): Promise<Array<ExternalAgentConfigMigrationItem>> {
+    const response = await this.call<
+      ExternalAgentConfigDetectResponse,
+      "externalAgentConfig/detect"
+    >("externalAgentConfig/detect", {
+      includeHome: input.includeHome ?? undefined,
+      cwds: input.cwds ?? null,
+    });
+    return response.items.map(mapExternalAgentConfigMigrationItem);
+  }
+
+  async importExternalAgentConfig(items: Array<ExternalAgentConfigMigrationItem>): Promise<void> {
+    await this.call("externalAgentConfig/import", {
+      migrationItems: items.map((item) => ({
+        itemType: item.itemType,
+        description: item.description,
+        cwd: item.cwd,
+      })),
+    });
   }
 
   async loginMcp(name: string): Promise<string> {
@@ -1026,17 +1111,80 @@ export class CodexRuntime implements SessionRuntime {
   }
 
   private handleNotification(method: ServerNotificationMethod, params: unknown): void {
-    if (
-      method === "account/updated" ||
-      method === "account/login/completed" ||
-      method === "account/rateLimits/updated"
-    ) {
+    if (method === "account/updated") {
       void this.refreshAccountSummary().then((account) => {
         this.emit({
           type: "account.updated",
           account,
         });
         this.emitStatus();
+      });
+      return;
+    }
+
+    if (method === "account/login/completed") {
+      const login = mapAccountLoginCompleted(params as AccountLoginCompletedNotification);
+      this.emit({
+        type: "account.login.completed",
+        login,
+      });
+      void this.refreshAccountSummary().then((account) => {
+        this.emit({
+          type: "account.updated",
+          account,
+        });
+        this.emitStatus();
+      });
+      return;
+    }
+
+    if (method === "account/rateLimits/updated") {
+      void this.readAccountRateLimits()
+        .then((rateLimits) => {
+          this.account = {
+            ...this.account,
+            usageWindows: mapAccountUsageWindows(rateLimits),
+          };
+          this.emit({
+            type: "account.rateLimits.updated",
+            rateLimits,
+          });
+          this.emit({
+            type: "account.updated",
+            account: { ...this.account },
+          });
+        })
+        .catch(() => {});
+      void this.refreshAccountSummary().then((account) => {
+        this.emit({
+          type: "account.updated",
+          account,
+        });
+        this.emitStatus();
+      });
+      return;
+    }
+
+    if (method === "model/rerouted") {
+      this.emit({
+        type: "model.rerouted",
+        reroute: mapModelReroute(params as ModelReroutedNotification),
+      });
+      return;
+    }
+
+    if (method === "configWarning") {
+      this.emit({
+        type: "config.warning",
+        warning: mapConfigWarning(params as ConfigWarningNotification),
+      });
+      return;
+    }
+
+    if (method === "deprecationNotice") {
+      this.emit({
+        type: "deprecation.notice",
+        notice: mapDeprecationNotice(params as DeprecationNoticeNotification),
       });
       return;
     }
@@ -2002,7 +2150,7 @@ function normalizeDeltaTitle(kind: TimelineEntry["kind"]): string {
 }
 
 function mapAccountUsageWindows(
-  response: GetAccountRateLimitsResponse,
+  response: GetAccountRateLimitsResponse | AccountRateLimitsSnapshot,
 ): Array<AccountUsageWindow> {
   const snapshots = [
     response.rateLimits,
@@ -2034,6 +2182,153 @@ function mapAccountUsageWindows(
   }
 
   return Array.from(usageByLabel.values()).sort(compareUsageWindows);
+}
+
+function mapAccountRateLimits(
+  response: GetAccountRateLimitsResponse,
+): AccountRateLimitsSnapshot {
+  return {
+    rateLimits: mapRateLimitSnapshot(response.rateLimits),
+    rateLimitsByLimitId: Object.fromEntries(
+      Object.entries(response.rateLimitsByLimitId ?? {}).map(([limitId, snapshot]) => [
+        limitId,
+        snapshot ? mapRateLimitSnapshot(snapshot) : null,
+      ]),
+    ),
+  };
+}
+
+function mapRateLimitSnapshot(snapshot: {
+  primary: {
+    windowDurationMins: number | null;
+    usedPercent: number | null;
+    resetsAt: number | null;
+  } | null;
+  secondary: {
+    windowDurationMins: number | null;
+    usedPercent: number | null;
+    resetsAt: number | null;
+  } | null;
+}): AccountRateLimitsSnapshot["rateLimits"] {
+  return {
+    primary: mapRateLimitWindow(snapshot.primary),
+    secondary: mapRateLimitWindow(snapshot.secondary),
+  };
+}
+
+function mapRateLimitWindow(window: {
+  windowDurationMins: number | null;
+  usedPercent: number | null;
+  resetsAt: number | null;
+} | null): AccountRateLimitsSnapshot["rateLimits"]["primary"] {
+  if (!window) {
+    return null;
+  }
+
+  const usedPercent = clampPercent(window.usedPercent);
+  return {
+    windowDurationMins: window.windowDurationMins ?? null,
+    usedPercent,
+    remainingPercent: usedPercent === null ? null : clampPercent(100 - usedPercent),
+    resetsAt: window.resetsAt ?? null,
+  };
+}
+
+function mapConfigRequirements(requirements: {
+  allowedApprovalPolicies: Array<
+    | "untrusted"
+    | "on-failure"
+    | "on-request"
+    | "never"
+    | { reject: { sandbox_approval: boolean; rules: boolean; mcp_elicitations: boolean } }
+  > | null;
+  allowedSandboxModes: Array<RuntimeSandboxMode> | null;
+  allowedWebSearchModes: Array<"disabled" | "cached" | "live"> | null;
+  featureRequirements: { [key in string]?: boolean } | null;
+  enforceResidency: "us" | null;
+} | null): ConfigRequirementsSnapshot | null {
+  if (!requirements) {
+    return null;
+  }
+
+  return {
+    allowedApprovalPolicies:
+      requirements.allowedApprovalPolicies
+        ?.map((policy) => normalizeApprovalPolicy(policy))
+        .filter((policy): policy is ApprovalPolicy => policy !== null) ?? null,
+    allowedSandboxModes:
+      requirements.allowedSandboxModes
+        ?.map((mode) => normalizeSandboxMode(mode))
+        .filter((mode): mode is SandboxMode => mode !== null) ?? null,
+    allowedWebSearchModes: requirements.allowedWebSearchModes ?? null,
+    featureRequirements: requirements.featureRequirements
+      ? Object.fromEntries(
+          Object.entries(requirements.featureRequirements).map(([key, value]) => [key, Boolean(value)]),
+        )
+      : null,
+    enforceResidency: requirements.enforceResidency ?? null,
+  };
+}
+
+function mapExternalAgentConfigMigrationItem(item: {
+  itemType: ExternalAgentConfigMigrationItem["itemType"];
+  description: string;
+  cwd: string | null;
+}): ExternalAgentConfigMigrationItem {
+  return {
+    itemType: item.itemType,
+    description: item.description,
+    cwd: item.cwd ?? null,
+  };
+}
+
+function mapAccountLoginCompleted(
+  payload: AccountLoginCompletedNotification,
+): AccountLoginCompleted {
+  return {
+    loginId: payload.loginId ?? null,
+    success: payload.success,
+    error: payload.error ?? null,
+  };
+}
+
+function mapModelReroute(payload: ModelReroutedNotification): ModelRerouteEvent {
+  return {
+    threadId: payload.threadId,
+    turnId: payload.turnId,
+    fromModel: payload.fromModel,
+    toModel: payload.toModel,
+    reason: payload.reason,
+  };
+}
+
+function mapConfigWarning(payload: ConfigWarningNotification): ConfigWarningNotice {
+  return {
+    summary: payload.summary,
+    details: payload.details ?? null,
+    path: payload.path ?? null,
+    range: payload.range
+      ? {
+          start: {
+            line: payload.range.start.line,
+            column: payload.range.start.column,
+          },
+          end: {
+            line: payload.range.end.line,
+            column: payload.range.end.column,
+          },
+        }
+      : null,
+  };
+}
+
+function mapDeprecationNotice(
+  payload: DeprecationNoticeNotification,
+): DeprecationNotice {
+  return {
+    summary: payload.summary,
+    details: payload.details ?? null,
+  };
 }
 
 function formatUsageWindowLabel(windowDurationMins: number | null): string | null {

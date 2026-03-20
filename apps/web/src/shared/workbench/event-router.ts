@@ -3,6 +3,9 @@ import type {
   AccountSummary,
   AppServerMessage,
   BootstrapResponse,
+  ConfigWarningNotice,
+  DeprecationNotice,
+  ModelRerouteEvent,
   RuntimeStatus,
   ThreadSummary,
   TimelineEntry as WorkbenchTimelineEntry,
@@ -31,6 +34,15 @@ export type WorkbenchEventContext = {
   appendCommandOutput: StoreState["appendCommandOutput"];
   setIntegrations: StoreState["setIntegrations"];
   setIntegrationSnapshot: StoreState["setIntegrationSnapshot"];
+  onAccountLoginCompleted?: (
+    params: Extract<AppServerMessage, {
+      type: "server.notification";
+      method: "account.login.completed";
+    }>["params"],
+  ) => void;
+  onModelRerouted?: (reroute: ModelRerouteEvent) => void;
+  onConfigWarning?: (warning: ConfigWarningNotice) => void;
+  onDeprecationNotice?: (notice: DeprecationNotice) => void;
   onTimelineDeltaFlush?: (
     entries: Array<{
       threadId: string;
@@ -81,6 +93,16 @@ export function routeWorkbenchServerMessage(
     }
     case "account.updated":
       patchBootstrapAccountSummary(context.queryClient, message.params.account);
+      return;
+    case "account.login.completed":
+      patchBootstrapAccountSummary(context.queryClient, message.params.state.account);
+      context.setIntegrationSnapshot(message.params.snapshot);
+      context.onAccountLoginCompleted?.(message.params);
+      return;
+    case "account.rateLimitsUpdated":
+      context.queryClient.setQueryData(["account-rate-limits"], {
+        rateLimits: message.params.rateLimits,
+      });
       return;
     case "thread.updated":
       patchBootstrapThreadSummary(
@@ -159,6 +181,15 @@ export function routeWorkbenchServerMessage(
     case "app.listUpdated":
       context.setIntegrations({ apps: message.params.apps });
       void context.queryClient.invalidateQueries({ queryKey: ["integrations"] });
+      return;
+    case "model.rerouted":
+      context.onModelRerouted?.(message.params.reroute);
+      return;
+    case "config.warning":
+      context.onConfigWarning?.(message.params.warning);
+      return;
+    case "deprecation.notice":
+      context.onDeprecationNotice?.(message.params.notice);
       return;
   }
 }

@@ -14,9 +14,12 @@ import type {
   BootstrapResponse,
   CommandSessionSnapshot,
   ConfigSnapshot,
+  ConfigWarningNotice,
+  DeprecationNotice,
   GitWorkingTreeSnapshot,
   HealthResponse,
   IntegrationSnapshot,
+  ModelRerouteEvent,
   RequestId,
   RuntimeStatus,
   ThreadSummary,
@@ -262,6 +265,10 @@ export class WorkbenchService {
         );
       case "account.logout":
         return this.handleAccountLogout();
+      case "account.rateLimits.read":
+        return {
+          rateLimits: await this.runtime.readAccountRateLimits(),
+        };
       case "thread.open":
         return this.handleThreadOpen(
           sessionId,
@@ -454,11 +461,33 @@ export class WorkbenchService {
             serviceTier: params.serviceTier,
             approvalPolicy: normalizeNullableEnum(params.approvalPolicy),
             sandboxMode: normalizeNullableEnum(params.sandboxMode),
+            forcedLoginMethod: normalizeNullableEnum(params.forcedLoginMethod),
           } as ConfigSnapshot);
         }
         return {
           snapshot: await this.refreshIntegrations(),
         };
+      case "config.batchWrite":
+        return {
+          write: await this.runtime.batchWriteConfig(
+            message.params as AppRequestParams<"config.batchWrite">,
+          ),
+        };
+      case "configRequirements.read":
+        return {
+          requirements: await this.runtime.readConfigRequirements(),
+        };
+      case "externalAgentConfig.detect":
+        return {
+          items: await this.runtime.detectExternalAgentConfig(
+            message.params as AppRequestParams<"externalAgentConfig.detect">,
+          ),
+        };
+      case "externalAgentConfig.import":
+        await this.runtime.importExternalAgentConfig(
+          (message.params as AppRequestParams<"externalAgentConfig.import">).migrationItems,
+        );
+        return { ok: true };
       case "workspace.git.read":
         return this.handleWorkspaceGitRead(
           message.params as AppRequestParams<"workspace.git.read">,
@@ -945,6 +974,30 @@ export class WorkbenchService {
         return;
       case "account.updated":
         this.broadcast("account.updated", { account: event.account });
+        return;
+      case "account.login.completed": {
+        const state = await this.runtime.readAccountState();
+        const snapshot = await this.refreshIntegrations();
+        this.broadcast("account.login.completed", {
+          login: event.login,
+          state,
+          snapshot,
+        });
+        return;
+      }
+      case "account.rateLimits.updated":
+        this.broadcast("account.rateLimitsUpdated", {
+          rateLimits: event.rateLimits,
+        });
+        return;
+      case "model.rerouted":
+        this.broadcastModelRerouted(event.reroute);
+        return;
+      case "config.warning":
+        this.broadcastConfigWarning(event.warning);
+        return;
+      case "deprecation.notice":
+        this.broadcastDeprecationNotice(event.notice);
         return;
       case "thread.updated": {
         const workspaces = await this.getWorkspaceCatalog([
@@ -1541,6 +1594,18 @@ export class WorkbenchService {
     for (const connectionId of this.connections.keys()) {
       this.notifyConnection(connectionId, method, params);
     }
+  }
+
+  private broadcastModelRerouted(reroute: ModelRerouteEvent): void {
+    this.broadcast("model.rerouted", { reroute });
+  }
+
+  private broadcastConfigWarning(warning: ConfigWarningNotice): void {
+    this.broadcast("config.warning", { warning });
+  }
+
+  private broadcastDeprecationNotice(notice: DeprecationNotice): void {
+    this.broadcast("deprecation.notice", { notice });
   }
 }
 

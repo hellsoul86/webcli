@@ -1,16 +1,26 @@
 import type {
+  AccountLoginCompleted,
   AccountSummary,
   AccountLoginCancelStatus,
   AccountLoginStartInput,
   AccountLoginStartResponse,
+  AccountRateLimitsSnapshot,
   AccountStateSnapshot,
   AppErrorPayload,
   CommandSessionSnapshot,
+  ConfigBatchWriteInput,
+  ConfigBatchWriteResult,
+  ConfigRequirementsSnapshot,
+  ConfigWarningNotice,
+  DeprecationNotice,
+  ExternalAgentConfigDetectInput,
+  ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitWorkingTreeSnapshot,
   GitBranchReference,
   IntegrationSnapshot,
   LivePlan,
+  ModelRerouteEvent,
   PendingApproval,
   PendingServerRequest,
   ReasoningEffort,
@@ -49,6 +59,9 @@ export type AppRequestMap = {
   "account.logout": RpcDefinition<Record<string, never>, {
     state: AccountStateSnapshot;
     snapshot: IntegrationSnapshot;
+  }>;
+  "account.rateLimits.read": RpcDefinition<Record<string, never>, {
+    rateLimits: AccountRateLimitsSnapshot;
   }>;
   "thread.open": RpcDefinition<{ workspaceId: string }, { thread: WorkbenchThread }>;
   "thread.resume": RpcDefinition<{ threadId: string }, { thread: WorkbenchThread }>;
@@ -178,6 +191,18 @@ export type AppRequestMap = {
     sandboxMode: string | null;
     forcedLoginMethod: import("./domain.js").ForcedLoginMethod | null;
   }, { snapshot: IntegrationSnapshot }>;
+  "config.batchWrite": RpcDefinition<ConfigBatchWriteInput, {
+    write: ConfigBatchWriteResult;
+  }>;
+  "configRequirements.read": RpcDefinition<Record<string, never>, {
+    requirements: ConfigRequirementsSnapshot | null;
+  }>;
+  "externalAgentConfig.detect": RpcDefinition<ExternalAgentConfigDetectInput, {
+    items: Array<ExternalAgentConfigMigrationItem>;
+  }>;
+  "externalAgentConfig.import": RpcDefinition<{
+    migrationItems: Array<ExternalAgentConfigMigrationItem>;
+  }, { ok: true }>;
   "workspace.git.read": RpcDefinition<{
     workspaceId: string;
   }, { snapshot: GitWorkingTreeSnapshot }>;
@@ -205,6 +230,12 @@ export type AppRequestResult<TMethod extends AppRequestMethod> = AppRequestMap[T
 export type AppEventMap = {
   "runtime.statusChanged": { runtime: RuntimeStatus };
   "account.updated": { account: AccountSummary };
+  "account.login.completed": {
+    login: AccountLoginCompleted;
+    state: AccountStateSnapshot;
+    snapshot: IntegrationSnapshot;
+  };
+  "account.rateLimitsUpdated": { rateLimits: AccountRateLimitsSnapshot };
   "thread.updated": { thread: ThreadSummary };
   "thread.closed": { threadId: string };
   "thread.tokenUsageUpdated": {
@@ -232,6 +263,9 @@ export type AppEventMap = {
   "integrations.updated": { snapshot: IntegrationSnapshot };
   "skills.changed": Record<string, never>;
   "app.listUpdated": { apps: Array<import("./domain.js").AppSnapshot> };
+  "model.rerouted": { reroute: ModelRerouteEvent };
+  "config.warning": { warning: ConfigWarningNotice };
+  "deprecation.notice": { notice: DeprecationNotice };
 };
 
 export type AppEventMethod = keyof AppEventMap;

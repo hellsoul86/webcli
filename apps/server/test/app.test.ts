@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type {
+  AccountRateLimitsSnapshot,
   AccountLoginCancelStatus,
   AccountLoginStartInput,
   AccountLoginStartResponse,
@@ -14,7 +15,12 @@ import type {
   AppClientMessage,
   AppServerMessage,
   ApprovalPolicy,
+  ConfigBatchWriteInput,
+  ConfigBatchWriteResult,
+  ConfigRequirementsSnapshot,
   ConfigSnapshot,
+  ExternalAgentConfigDetectInput,
+  ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
@@ -34,6 +40,7 @@ import type {
   SandboxMode,
   ThreadMetadataGitInfoUpdate,
   SkillGroupSnapshot,
+  ThreadSummary,
 } from "@webcli/contracts";
 import {
   WorkspaceRepo,
@@ -210,6 +217,21 @@ class FakeRuntime implements SessionRuntime {
               : null,
         requiresOpenaiAuth: this.account.requiresOpenaiAuth,
       },
+    };
+  }
+
+  async readAccountRateLimits(): Promise<AccountRateLimitsSnapshot> {
+    return {
+      rateLimits: {
+        primary: {
+          windowDurationMins: 300,
+          usedPercent: 25,
+          remainingPercent: 75,
+          resetsAt: 1_710_000_000_000,
+        },
+        secondary: null,
+      },
+      rateLimitsByLimitId: {},
     };
   }
 
@@ -431,6 +453,10 @@ class FakeRuntime implements SessionRuntime {
     return { ...this.config };
   }
 
+  async readConfigRequirements(): Promise<ConfigRequirementsSnapshot | null> {
+    return null;
+  }
+
   async getIntegrationSnapshot(): Promise<IntegrationSnapshot> {
     const authMethod =
       this.account.accountType === "chatgpt"
@@ -458,6 +484,23 @@ class FakeRuntime implements SessionRuntime {
       })),
     };
   }
+
+  async batchWriteConfig(_input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+    return {
+      status: "ok",
+      version: "test-runtime",
+      filePath: join(tmpdir(), "config.toml"),
+      overriddenMessage: null,
+    };
+  }
+
+  async detectExternalAgentConfig(
+    _input: ExternalAgentConfigDetectInput,
+  ): Promise<Array<ExternalAgentConfigMigrationItem>> {
+    return [];
+  }
+
+  async importExternalAgentConfig(): Promise<void> {}
 
   async saveSettings(input: ConfigSnapshot): Promise<void> {
     this.config = { ...input };
@@ -935,7 +978,9 @@ describe("createApp", () => {
     expect(
       threadListResponse?.result &&
         "items" in threadListResponse.result &&
-        threadListResponse.result.items.some((thread) => thread.id === openedThreadId),
+        threadListResponse.result.items.some(
+          (thread) => isThreadSummary(thread) && thread.id === openedThreadId,
+        ),
     ).toBe(true);
 
     wsA.send(
@@ -1601,6 +1646,15 @@ function getResponse(messages: Array<AppServerMessage>, id: string) {
   return messages.find(
     (message): message is Extract<AppServerMessage, { type: "server.response" }> =>
       message.type === "server.response" && message.id === id,
+  );
+}
+
+function isThreadSummary(value: unknown): value is ThreadSummary {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof (value as { id?: unknown }).id === "string"
   );
 }
 
