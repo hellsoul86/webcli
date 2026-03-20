@@ -1,7 +1,6 @@
 import {
   Suspense,
   lazy,
-  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -60,8 +59,6 @@ import { createWorkbenchMessageDispatcher } from "../../shared/workbench/event-r
 import {
   type CodeLinkReference,
   type ImagePreviewReference,
-  RenderableCodeBlock,
-  RenderableMarkdown,
 } from "../../shared/workbench/renderable-content";
 import {
   countTimelineEntries,
@@ -71,19 +68,15 @@ import {
   type ThreadView,
 } from "../../store/workbench-store";
 import {
-  buildGitFileTree,
-  filterGitFilesByQuery,
   resolvePreferredSelection,
   summarizeGitSnapshot,
-  type GitFileTreeNode,
 } from "./inspector-helpers";
-import { DecisionCenter } from "./decision-center";
-import {
-  describeActivityDetails,
-  describeActivitySummary,
-  isMessageEntry,
-  shouldCollapseActivityByDefault,
-} from "./timeline-helpers";
+import { ConversationPane, ComposerPane } from "./conversation-pane";
+import { WorkbenchHeader } from "./workbench-header";
+import { RightRail } from "./right-rail";
+import { type ComposerDropdownOption, type ComposerSpeedMode } from "./workbench-shell-controls";
+import { WorkbenchSidebar } from "./workbench-sidebar";
+import { WorkbenchOverlays } from "./workbench-overlays";
 
 const LazyGitReviewPanel = lazy(() =>
   import("./git-review-panel").then((module) => ({
@@ -125,15 +118,6 @@ type PaletteAction = {
   description: string;
   run: () => void;
 };
-
-type ComposerDropdownOption<T extends string> = {
-  value: T;
-  label: string;
-  testIdSuffix?: string;
-  icon?: ReactNode;
-};
-
-type ComposerSpeedMode = "standard" | "fast";
 
 type AccountLoginState = {
   method: "chatgpt" | "deviceCode" | "apiKey" | "chatgptAuthTokens";
@@ -531,6 +515,36 @@ export function App() {
         threads: activeThreadEntries.filter((thread) => thread.workspaceId === workspace.id),
       })),
     [activeThreadEntries, visibleSidebarWorkspaces],
+  );
+  const sidebarGroups = useMemo(
+    () =>
+      workspaceTree.map(({ workspace, threads }) => ({
+        workspace,
+        subtitle: getWorkspaceDuplicateHint(workspace, visibleSidebarWorkspaces),
+        active: workspace.id === activeWorkspaceId,
+        expanded: expandedWorkspaceIds.includes(workspace.id),
+        threads: threads.map((thread) => ({
+          thread,
+          title: formatThreadTitle(thread) ?? t("workspace.untitledThread"),
+          relativeTime: formatRelativeThreadAge(thread.updatedAt, relativeTimeNow),
+          absoluteTime: formatAbsoluteDateTime(thread.updatedAt),
+          active: thread.id === activeThreadId,
+          running: isThreadRunning(thread.status),
+          showCompletionMark: Boolean(completedThreadMarks[thread.id]),
+          menuOpen: threadMenuId === thread.id,
+        })),
+      })),
+    [
+      activeThreadId,
+      activeWorkspaceId,
+      completedThreadMarks,
+      expandedWorkspaceIds,
+      relativeTimeNow,
+      t,
+      threadMenuId,
+      visibleSidebarWorkspaces,
+      workspaceTree,
+    ],
   );
   const selectedWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
@@ -2789,90 +2803,25 @@ export function App() {
       ref={desktopShellRef}
       style={desktopShellStyle}
     >
-      <aside className="sidebar-shell">
-        <div className="sidebar-brand">
-          <div className="sidebar-brand__mark">C</div>
-          <div className="sidebar-brand__body">
-            <span className="sidebar-brand__eyebrow">Remote Codex</span>
-            <strong>webcli</strong>
-          </div>
-        </div>
-
-        <section className="sidebar-section">
-          <div className="sidebar-tree-toolbar">
-            <button
-              className={
-                activeWorkspaceId === "all"
-                  ? "workspace-tree__row sidebar-tree-toolbar__label sidebar-toggle--active"
-                  : "workspace-tree__row sidebar-tree-toolbar__label"
-              }
-              data-testid="workspace-all-button"
-              onClick={() => handleWorkspaceSelect("all")}
-            >
-              <span>{t("sidebar.projectsCount", { count: visibleSidebarWorkspaces.length })}</span>
-            </button>
-            <button
-              className="sidebar-icon-button"
-              data-testid="workspace-create-button"
-              aria-label={t("common.newProject")}
-              onClick={openCreateWorkspaceModal}
-            >
-              <FolderPlusIcon />
-            </button>
-          </div>
-
-          <div className="workspace-tree">
-            {workspaceTree.map(({ workspace, threads: workspaceThreads }) => (
-              <div className="workspace-group" key={workspace.id}>
-                <WorkspaceListRow
-                  workspace={workspace}
-                  subtitle={getWorkspaceDuplicateHint(workspace, visibleSidebarWorkspaces)}
-                  active={workspace.id === activeWorkspaceId}
-                  expanded={expandedWorkspaceIds.includes(workspace.id)}
-                  onSelect={() => handleWorkspaceSelect(workspace.id)}
-                  onCompose={() => void openThread(workspace.id)}
-                  onEdit={() => openEditWorkspaceModal(workspace)}
-                />
-                {expandedWorkspaceIds.includes(workspace.id) && workspaceThreads.length > 0 ? (
-                  <div className="thread-list thread-list--nested">
-                    {workspaceThreads.map((thread) => (
-                      <ThreadRow
-                        key={thread.id}
-                        thread={thread}
-                        now={relativeTimeNow}
-                        active={thread.id === activeThreadId}
-                        running={isThreadRunning(thread.status)}
-                        showCompletionMark={Boolean(completedThreadMarks[thread.id])}
-                        nested
-                      menuOpen={threadMenuId === thread.id}
-                      onClick={() => void handleResumeThread(thread.id, workspace.id)}
-                      onToggleMenu={() =>
-                          setThreadMenuId((current) => (current === thread.id ? null : thread.id))
-                        }
-                        onRename={() => void handleRenameThread(thread)}
-                        onFork={() => void handleForkThread(thread)}
-                        onArchive={() => void handleArchiveThread(thread)}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-                {expandedWorkspaceIds.includes(workspace.id) && workspaceThreads.length === 0 ? (
-                  <div className="sidebar-empty-state sidebar-empty-state--nested">
-                    {t("sidebar.emptyThreadsNested")}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-            {workspaceTree.length > 0 && workspaceTree.every((group) => group.threads.length === 0) ? (
-              <div className="sidebar-empty-state">{t("sidebar.emptyThreads")}</div>
-            ) : null}
-            {workspaceTree.length === 0 ? (
-              <div className="sidebar-empty-state">{t("sidebar.emptyProjects")}</div>
-            ) : null}
-          </div>
-        </section>
-
-      </aside>
+      <WorkbenchSidebar
+        visibleWorkspaceCount={visibleSidebarWorkspaces.length}
+        workspaceGroups={sidebarGroups}
+        activeWorkspaceId={activeWorkspaceId}
+        emptyProjects={workspaceTree.length === 0}
+        emptyThreads={workspaceTree.length > 0 && workspaceTree.every((group) => group.threads.length === 0)}
+        onSelectAll={() => handleWorkspaceSelect("all")}
+        onCreateWorkspace={openCreateWorkspaceModal}
+        onSelectWorkspace={handleWorkspaceSelect}
+        onComposeWorkspace={(workspaceId) => void openThread(workspaceId)}
+        onEditWorkspace={openEditWorkspaceModal}
+        onResumeThread={(threadId, workspaceId) => void handleResumeThread(threadId, workspaceId)}
+        onToggleThreadMenu={(threadId) =>
+          setThreadMenuId((current) => (current === threadId ? null : threadId))
+        }
+        onRenameThread={(thread) => void handleRenameThread(thread)}
+        onForkThread={(thread) => void handleForkThread(thread)}
+        onArchiveThread={(thread) => void handleArchiveThread(thread)}
+      />
 
       <div
         className={sidebarResizing ? "sidebar-resizer sidebar-resizer--active" : "sidebar-resizer"}
@@ -2897,114 +2846,45 @@ export function App() {
       />
 
       <div className="workbench-shell">
-        <header className="window-toolbar">
-          <div className="window-toolbar__title">
-            <div className="toolbar-breadcrumb toolbar-breadcrumb--full">
-              <span className="toolbar-breadcrumb__workspace">{headerWorkspaceLabel}</span>
-              <span className="toolbar-breadcrumb__separator">{">"}</span>
-              {threadTitleEditing && activeThreadEntry ? (
-                <input
-                  className="toolbar-title-input"
-                  data-testid="thread-title-input"
-                  autoFocus
-                  value={threadTitleDraft}
-                  onChange={(event) => setThreadTitleDraft(event.target.value)}
-                  onBlur={() => void handleRenameThread(activeThreadEntry, threadTitleDraft)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void handleRenameThread(activeThreadEntry, threadTitleDraft);
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setThreadTitleEditing(false);
-                      setThreadTitleDraft(formatThreadTitle(activeThreadEntry) ?? "");
-                    }
-                  }}
-                />
-              ) : (
-                <div className="toolbar-breadcrumb__current">
-                  <h1 className="toolbar-title" data-testid="thread-title-display">
-                    {threadTitle}
-                  </h1>
-                  {activeThreadEntry ? (
-                    <button
-                      className="toolbar-title-edit"
-                      data-testid="thread-title-edit-button"
-                      aria-label={t("toolbar.editThreadTitle")}
-                      onClick={() => {
-                        setThreadTitleDraft(threadTitle);
-                        setThreadTitleEditing(true);
-                      }}
-                    >
-                      <EditIcon />
-                    </button>
-                  ) : null}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="window-toolbar__actions">
-            {toolbarUsageWindows.map((window) => (
-              <span
-                key={window.label}
-                className="window-toolbar__usage"
-                title={buildUsageWindowTitle(window)}
-              >
-                <span className="window-toolbar__usage-label">{window.label}</span>
-                <span className="window-toolbar__usage-value">
-                  {formatUsageRemaining(window.remainingPercent)}
-                </span>
-              </span>
-            ))}
-            <ComposerSpeedSwitch
-              className="window-toolbar__speed"
-              mode={composerSpeedMode}
-              disabled={false}
-              onToggle={() =>
-                void handleComposerSpeedChange(composerSpeedMode === "fast" ? "standard" : "fast")
-              }
-            />
-            <ComposerInlineDropdown
-              className="window-toolbar__locale-select"
-              testId="locale-toggle-button"
-              ariaLabel={t("toolbar.toggleLanguage")}
-              icon={<GlobeIcon />}
-              iconOnly
-              menuPlacement="below"
-              value={locale}
-              label={t("settings.language")}
-              options={toolbarLocaleOptions}
-              menuTitle={t("settings.language")}
-              onChange={setLocale}
-            />
-            <button
-              type="button"
-              className="toolbar-pill-button window-toolbar__icon-button"
-              data-testid="settings-button"
-              aria-label={t("common.settings")}
-              title={t("common.settings")}
-              onClick={() => {
-                setSettingsOpen(true);
-                setSettingsTab("account");
-                setSettingsNotice(null);
-              }}
-            >
-              <GearIcon />
-            </button>
-          </div>
-        </header>
+        <WorkbenchHeader
+          headerWorkspaceLabel={headerWorkspaceLabel}
+          threadTitle={threadTitle}
+          activeThreadEntry={activeThreadEntry}
+          threadTitleEditing={threadTitleEditing}
+          threadTitleDraft={threadTitleDraft}
+          toolbarUsageWindows={toolbarUsageWindows}
+          composerSpeedMode={composerSpeedMode}
+          locale={locale}
+          toolbarLocaleOptions={toolbarLocaleOptions}
+          onThreadTitleDraftChange={setThreadTitleDraft}
+          onCommitThreadTitle={() => {
+            if (activeThreadEntry) {
+              void handleRenameThread(activeThreadEntry, threadTitleDraft);
+            }
+          }}
+          onCancelThreadTitle={() => {
+            setThreadTitleEditing(false);
+            setThreadTitleDraft(formatThreadTitle(activeThreadEntry) ?? "");
+          }}
+          onStartThreadTitleEdit={() => {
+            setThreadTitleDraft(threadTitle);
+            setThreadTitleEditing(true);
+          }}
+          onToggleSpeed={() =>
+            void handleComposerSpeedChange(composerSpeedMode === "fast" ? "standard" : "fast")
+          }
+          onLocaleChange={setLocale}
+          onOpenSettings={() => {
+            setSettingsOpen(true);
+            setSettingsTab("account");
+            setSettingsNotice(null);
+          }}
+        />
 
         <div className="window-body">
-          <section
-            className={
-              gitWorkbenchExpanded
-                ? "conversation-shell conversation-shell--git-expanded"
-                : "conversation-shell"
-            }
-          >
-            {gitWorkbenchExpanded ? (
+          <ConversationPane
+            gitWorkbenchExpanded={gitWorkbenchExpanded}
+            gitReviewPanel={
               <Suspense fallback={<GitReviewPanelLoadingState />}>
                 <LazyGitReviewPanel
                   workspace={currentGitWorkspace}
@@ -3040,187 +2920,109 @@ export function App() {
                   onResizeKeyDown={handleInspectorResizeKeyDown}
                 />
               </Suspense>
-            ) : (
-              <>
-                <div
-                  className="conversation-body"
-                  ref={conversationBodyRef}
-                  onScroll={handleConversationScroll}
-                >
-                  {!selectedWorkspaceForContext && !activeThreadId ? (
-                    <EmptyWorkspaceState onCreateWorkspace={openCreateWorkspaceModal} />
-                  ) : activeThreadView ? (
-                    timeline.length > 0 ? (
-                      <ConversationTimeline
-                        timeline={timeline}
-                        hiddenTimelineEntryCount={hiddenTimelineEntryCount}
-                        timelineEntryCount={timelineEntryCount}
-                        cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
-                        streamingPlainItems={streamingPlainItems}
-                        onCodeLinkActivate={openCodePreview}
-                        onImageActivate={openImagePreview}
-                        onLoadOlder={loadOlderTimelineEntries}
-                      />
-                    ) : (
-                      <EmptyThreadState
-                        thread={activeThreadView.thread}
-                        archived={activeThreadArchived}
-                      />
-                    )
-                  ) : (
-                    <ReadyState
-                      workspace={selectedWorkspaceForContext}
-                      onSuggestionClick={(prompt) => setComposer(prompt)}
-                    />
-                  )}
-                </div>
+            }
+            selectedWorkspaceForContext={selectedWorkspaceForContext}
+            activeThreadId={activeThreadId}
+            activeThreadView={activeThreadView}
+            activeThreadEntry={activeThreadEntry}
+            activeThreadTitle={threadTitle}
+            activeThreadArchived={activeThreadArchived}
+            timeline={timeline}
+            hiddenTimelineEntryCount={hiddenTimelineEntryCount}
+            timelineEntryCount={timelineEntryCount}
+            cwd={activeThreadEntry?.cwd ?? selectedWorkspaceForContext?.absPath ?? null}
+            streamingPlainItems={streamingPlainItems}
+            composerPane={
+              <ComposerPane
+                composer={composer}
+                activeTurn={activeTurn}
+                selectedWorkspaceForContext={selectedWorkspaceForContext}
+                activeThreadId={activeThreadId}
+                composerModelValue={selectedBaseComposerModel?.model ?? composerModel}
+                composerModelLabel={composerModelLabel}
+                composerModelOptions={composerModelOptions}
+                composerReasoningValue={effectiveComposerReasoningEffort}
+                composerReasoningLabel={composerReasoningLabel}
+                composerReasoningOptions={composerReasoningOptions}
+                composerApprovalPolicy={composerApprovalPolicy}
+                composerApprovalPolicyLabel={formatApprovalPolicy(composerApprovalPolicy)}
+                approvalPolicyOptions={approvalPolicyOptions}
+                composerSandboxMode={composerSandboxMode}
+                composerSandboxModeLabel={formatSandboxMode(composerSandboxMode)}
+                sandboxModeOptions={sandboxModeOptions}
+                currentGitWorkspace={currentGitWorkspace}
+                gitSummary={gitSummary}
+                currentGitBranchName={currentGitBranchName}
+                gitBranchOptions={gitBranchOptions}
+                gitBranchSwitchPending={gitBranchSwitchPending}
+                activeGitSnapshot={activeGitSnapshot}
+                activePlan={activePlan}
+                queuedPrompts={activeQueuedPrompts}
+                onComposerChange={setComposer}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) {
+                    return;
+                  }
 
-                <div className="composer-shell">
-                  <div className="composer-shell__toolbar">
-                    <div className="composer-toolbar__selectors">
-                      <ComposerInlineDropdown
-                        testId="composer-model-select"
-                        value={selectedBaseComposerModel?.model ?? composerModel}
-                        label={composerModelLabel}
-                        options={composerModelOptions}
-                        disabled={composerModelOptions.length === 0}
-                        onChange={(value) => void handleComposerModelChange(value)}
-                      />
-                      <ComposerInlineDropdown
-                        testId="composer-reasoning-select"
-                        value={effectiveComposerReasoningEffort}
-                        label={composerReasoningLabel}
-                        options={composerReasoningOptions}
-                        menuTitle={t("composer.reasoningMenu")}
-                        onChange={(value) => void handleComposerReasoningEffortChange(value)}
-                      />
-                      <ComposerInlineDropdown
-                        testId="composer-approval-policy-select"
-                        value={composerApprovalPolicy}
-                        label={formatApprovalPolicy(composerApprovalPolicy)}
-                        options={approvalPolicyOptions}
-                        menuTitle={t("composer.approvalMenu")}
-                        onChange={(value) => void handleComposerApprovalPolicyChange(value)}
-                      />
-                      <ComposerInlineDropdown
-                        testId="composer-sandbox-mode-select"
-                        value={composerSandboxMode}
-                        label={formatSandboxMode(composerSandboxMode)}
-                        options={sandboxModeOptions}
-                        menuTitle={t("composer.sandboxMenu")}
-                        onChange={(value) => void handleComposerSandboxModeChange(value)}
-                      />
-                    </div>
-                    {currentGitWorkspace ? (
-                      <GitSummaryBar
-                        summary={gitSummary}
-                        branchValue={currentGitBranchName}
-                        branchOptions={gitBranchOptions}
-                        branchDisabled={!activeGitSnapshot?.isGitRepository || gitBranchSwitchPending}
-                        onOpen={() => setGitWorkbenchExpanded(true)}
-                        onBranchChange={(branch) => void handleGitBranchChange(branch)}
-                      />
-                    ) : null}
-                  </div>
-
-                  {activePlan && (activePlan.explanation || activePlan.plan.length > 0) ? (
-                    <ComposerPlanCard plan={activePlan} />
-                  ) : null}
-
-                  {activeQueuedPrompts.length > 0 ? (
-                    <div className="composer-queue" data-testid="composer-queue">
-                      {activeQueuedPrompts.map((queuedPrompt, index) => (
-                        <div key={queuedPrompt.id} className="composer-queue__item">
-                          <span className="composer-queue__label">
-                            {t("composer.queued", { index: formatNumber(index + 1) })}
-                          </span>
-                          <span className="composer-queue__text">{queuedPrompt.text}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="composer-input-shell">
-                    <textarea
-                      data-testid="composer-input"
-                      value={composer}
-                      onChange={(event) => setComposer(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing) {
-                          return;
-                        }
-
-                        if (event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          void handleSendMessage();
-                        }
-                      }}
-                      placeholder={t("composer.placeholder")}
-                    />
-                    <button
-                      className={
-                        activeTurn
-                          ? "composer-inline-button composer-inline-button--interrupt"
-                          : "composer-inline-button composer-inline-button--send"
-                      }
-                      data-testid="send-button"
-                      aria-label={activeTurn ? t("composer.interrupt") : t("composer.send")}
-                      onClick={() => {
-                        if (activeTurn) {
-                          void handleInterrupt();
-                          return;
-                        }
-                        void handleSendMessage();
-                      }}
-                      disabled={
-                        activeTurn
-                          ? !activeThreadId
-                          : !composer.trim() || (!selectedWorkspaceForContext && !activeThreadId)
-                      }
-                    >
-                      {activeTurn ? <InterruptIcon /> : <SendArrowIcon />}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <DecisionCenter requests={pendingApprovals} onResolve={handleResolveServerRequest} />
-          </section>
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleSendMessage();
+                  }
+                }}
+                onModelChange={(value) => void handleComposerModelChange(value)}
+                onReasoningChange={(value) => void handleComposerReasoningEffortChange(value)}
+                onApprovalPolicyChange={(value) => void handleComposerApprovalPolicyChange(value)}
+                onSandboxModeChange={(value) => void handleComposerSandboxModeChange(value)}
+                onGitBranchChange={(branch) => void handleGitBranchChange(branch)}
+                onOpenReview={() => setGitWorkbenchExpanded(true)}
+                onInterrupt={() => void handleInterrupt()}
+                onSend={() => void handleSendMessage()}
+              />
+            }
+            conversationBodyRef={conversationBodyRef}
+            onConversationScroll={handleConversationScroll}
+            onCodeLinkActivate={openCodePreview}
+            onImageActivate={openImagePreview}
+            onLoadOlder={loadOlderTimelineEntries}
+            onCreateWorkspace={openCreateWorkspaceModal}
+            onSuggestionClick={setComposer}
+          />
+          <RightRail requests={pendingApprovals} onResolve={handleResolveServerRequest} />
         </div>
       </div>
 
-      {workspaceModalOpen ? (
-        <WorkspaceModal
-          initialValue={workspaceEditor}
-          models={models}
-          submitting={workspaceMutationPending}
-          submitError={workspaceMutationError}
-          onClose={closeWorkspaceModal}
-          onDelete={workspaceEditor ? () => void handleDeleteWorkspace() : undefined}
-          deleteLabel={workspaceEditor?.source === "derived" ? t("common.remove") : t("common.delete")}
-          onSubmit={(input) => void handleWorkspaceSubmit(input)}
-        />
-      ) : null}
-
-      {codePreview && codePreviewVisible ? (
-        <Suspense fallback={<CodePreviewDialogLoadingState reference={codePreview} onClose={closeCodePreview} />}>
-          <LazyCodePreviewDialog
-            reference={codePreview}
-            content={codePreviewQuery.data ?? ""}
-            loading={codePreviewQuery.isLoading}
-            error={codePreviewQuery.error instanceof Error ? codePreviewQuery.error.message : null}
-            onClose={closeCodePreview}
-          />
-        </Suspense>
-      ) : null}
-
-      {imagePreview ? (
-        <ImagePreviewModal reference={imagePreview} onClose={closeImagePreview} />
-      ) : null}
-
-      {integrations.settingsOpen ? (
-        <SettingsOverlay
+      <WorkbenchOverlays
+        workspaceModal={
+          workspaceModalOpen ? (
+            <WorkspaceModal
+              initialValue={workspaceEditor}
+              models={models}
+              submitting={workspaceMutationPending}
+              submitError={workspaceMutationError}
+              onClose={closeWorkspaceModal}
+              onDelete={workspaceEditor ? () => void handleDeleteWorkspace() : undefined}
+              deleteLabel={workspaceEditor?.source === "derived" ? t("common.remove") : t("common.delete")}
+              onSubmit={(input) => void handleWorkspaceSubmit(input)}
+            />
+          ) : null
+        }
+        codePreview={
+          codePreview && codePreviewVisible ? (
+            <Suspense fallback={<CodePreviewDialogLoadingState reference={codePreview} onClose={closeCodePreview} />}>
+              <LazyCodePreviewDialog
+                reference={codePreview}
+                content={codePreviewQuery.data ?? ""}
+                loading={codePreviewQuery.isLoading}
+                error={codePreviewQuery.error instanceof Error ? codePreviewQuery.error.message : null}
+                onClose={closeCodePreview}
+              />
+            </Suspense>
+          ) : null
+        }
+        imagePreview={imagePreview ? <ImagePreviewModal reference={imagePreview} onClose={closeImagePreview} /> : null}
+        settingsOverlay={
+          integrations.settingsOpen ? (
+            <SettingsOverlay
           tab={integrations.settingsTab}
           notice={settingsNotice}
           account={account}
@@ -3293,11 +3095,12 @@ export function App() {
           onUnarchiveThread={(thread) => void handleUnarchiveThread(thread)}
           onPluginUninstall={(pluginId) => void handlePluginUninstall(pluginId)}
           onArchivedLoadMore={() => void archivedThreadsQuery.fetchNextPage()}
-        />
-      ) : null}
-
-      {paletteOpen ? (
-        <CommandPalette
+            />
+          ) : null
+        }
+        commandPalette={
+          paletteOpen ? (
+            <CommandPalette
           query={paletteQuery}
           actions={filteredPaletteActions}
           fileResults={paletteFileResults}
@@ -3313,875 +3116,13 @@ export function App() {
             setPaletteOpen(false);
             setPaletteQuery("");
           }}
-        />
-      ) : null}
-
-      {blocking ? <BlockingOverlay email={account?.email ?? null} /> : null}
-
-      {errorMessage ? (
-        <div
-          style={{
-            position: "fixed",
-            right: 18,
-            bottom: 14,
-            display: "grid",
-            gap: 4,
-            justifyItems: "end",
-            zIndex: 35,
-          }}
-        >
-          <span style={{ color: "#f06d65", fontSize: "0.85rem" }}>{errorMessage}</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function WorkspaceListRow(props: {
-  workspace: WorkspaceRecord;
-  subtitle?: string | null;
-  active: boolean;
-  expanded: boolean;
-  onSelect: () => void;
-  onCompose?: () => void;
-  onEdit?: () => void;
-}) {
-  const { t } = useAppLocale();
-  return (
-    <div className="workspace-row" data-active={props.active ? "true" : "false"}>
-      <button
-        className="workspace-row__main"
-        data-testid={`workspace-row-${props.workspace.id}`}
-        onClick={props.onSelect}
-        title={props.workspace.absPath}
-      >
-        <div className="workspace-row__content">
-          <div className="workspace-row__title">
-            {props.expanded ? <FolderOpenIcon /> : <FolderIcon />}
-            <strong>{props.workspace.name}</strong>
-          </div>
-          {props.subtitle ? <span>{props.subtitle}</span> : null}
-        </div>
-      </button>
-      <div className="workspace-row__actions">
-        {props.onEdit ? (
-          <button
-            className="workspace-row__icon-button"
-            onClick={props.onEdit}
-            aria-label={t("sidebar.manageProject")}
-          >
-            <GearIcon />
-          </button>
-        ) : null}
-        {props.onCompose ? (
-          <button
-            className="workspace-row__icon-button"
-            data-testid={props.active ? "thread-open-button" : undefined}
-            onClick={props.onCompose}
-            aria-label={t("sidebar.composeThread")}
-          >
-            <ComposeIcon />
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ThreadRow(props: {
-  thread: ThreadSummary;
-  now: number;
-  active: boolean;
-  running: boolean;
-  showCompletionMark: boolean;
-  nested?: boolean;
-  menuOpen: boolean;
-  onClick: () => void;
-  onToggleMenu: () => void;
-  onRename: () => void;
-  onFork: () => void;
-  onArchive: () => void;
-}) {
-  const { t } = useAppLocale();
-  return (
-    <div
-      className={[
-        "thread-row",
-        props.nested ? "thread-row--nested" : "",
-        props.active ? "thread-row--active" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      <button
-        className="thread-row__main"
-        data-testid={`thread-row-${props.thread.id}`}
-        onClick={props.onClick}
-      >
-        <div className="thread-row__title">
-          {props.running ? (
-            <span
-              className="thread-row__status-indicator thread-row__status-indicator--running"
-              title={t("sidebar.threadRunning")}
             />
-          ) : props.showCompletionMark ? (
-            <span
-              className="thread-row__status-indicator thread-row__status-indicator--completed"
-              title={t("sidebar.threadCompletedOutput")}
-            />
-          ) : null}
-          <strong>{formatThreadTitle(props.thread) ?? t("workspace.untitledThread")}</strong>
-        </div>
-        <span className="thread-row__time" title={formatAbsoluteDateTime(props.thread.updatedAt)}>
-          {formatRelativeThreadAge(props.thread.updatedAt, props.now)}
-        </span>
-      </button>
-      <button
-        className="thread-row__menu-trigger"
-        data-testid={`thread-menu-${props.thread.id}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onToggleMenu();
-        }}
-      >
-        <MoreIcon />
-      </button>
-
-      {props.menuOpen ? (
-        <div className="thread-row__menu" onClick={(event) => event.stopPropagation()}>
-          <button onClick={props.onRename}>{t("sidebar.renameThread")}</button>
-          <button onClick={props.onFork}>{t("sidebar.forkThread")}</button>
-          <button onClick={props.onArchive}>
-            {props.thread.archived ? t("sidebar.restoreThread") : t("sidebar.archiveThread")}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ComposerInlineDropdown<T extends string>(props: {
-  className?: string;
-  testId: string;
-  icon?: ReactNode;
-  ariaLabel?: string;
-  iconOnly?: boolean;
-  value: T;
-  label: string;
-  options: Array<ComposerDropdownOption<T>>;
-  menuTitle?: string;
-  menuPlacement?: "above" | "below";
-  disabled?: boolean;
-  onChange: (value: T) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node) || !rootRef.current?.contains(target)) {
-        setOpen(false);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <div
-      ref={rootRef}
-      className={[
-        "composer-inline-select",
-        props.className ?? "",
-        open ? "composer-inline-select--open" : "",
-        props.iconOnly ? "composer-inline-select--icon-only" : "",
-        props.menuPlacement === "below" ? "composer-inline-select--below" : "",
-        props.disabled ? "composer-inline-select--disabled" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      <button
-        type="button"
-        className="composer-inline-select__trigger"
-        data-testid={props.testId}
-        data-value={props.value}
-        aria-label={props.ariaLabel}
-        aria-haspopup="menu"
-        aria-expanded={open ? "true" : "false"}
-        disabled={props.disabled}
-        onClick={() => setOpen((current) => !current)}
-      >
-        {props.icon ? <span className="composer-inline-select__icon">{props.icon}</span> : null}
-        <span className="composer-inline-select__label">{props.label}</span>
-        <span className="composer-inline-select__chevron" aria-hidden="true" />
-      </button>
-
-      {open ? (
-        <div className="composer-inline-select__menu" role="menu" data-testid={`${props.testId}-menu`}>
-          {props.menuTitle ? (
-            <div className="composer-inline-select__menu-title">{props.menuTitle}</div>
-          ) : null}
-          {props.options.map((option) => {
-            const selected = option.value === props.value;
-            return (
-              <button
-                key={(option.testIdSuffix ?? option.value) || "default"}
-                type="button"
-                role="menuitemradio"
-                className="composer-inline-select__option"
-                data-selected={selected ? "true" : "false"}
-                data-testid={`${props.testId}-option-${(option.testIdSuffix ?? option.value) || "default"}`}
-                aria-checked={selected ? "true" : "false"}
-                onClick={() => {
-                  setOpen(false);
-                  props.onChange(option.value);
-                }}
-              >
-                {option.icon ? (
-                  <span className="composer-inline-select__option-icon" aria-hidden="true">
-                    {option.icon}
-                  </span>
-                ) : null}
-                <span className="composer-inline-select__option-label">{option.label}</span>
-                {selected ? (
-                  <span className="composer-inline-select__option-check" aria-hidden="true">
-                    <CheckIcon />
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ComposerSpeedSwitch(props: {
-  className?: string;
-  mode: ComposerSpeedMode;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useAppLocale();
-  const fast = props.mode === "fast";
-
-  return (
-    <div
-      className={[
-        "composer-speed-switch",
-        props.className ?? "",
-        fast ? "composer-speed-switch--fast" : "",
-        props.disabled ? "composer-speed-switch--disabled" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      <span className="composer-speed-switch__value">
-        {fast ? t("composer.speedFast") : t("composer.speedStandard")}
-      </span>
-      <button
-        type="button"
-        className="composer-speed-switch__control"
-        data-testid="composer-speed-switch"
-        role="switch"
-        aria-label={t("composer.switchSpeedAria")}
-        aria-checked={fast ? "true" : "false"}
-        disabled={props.disabled}
-        onClick={props.onToggle}
-      >
-        <span className="composer-speed-switch__track" aria-hidden="true">
-          <span className="composer-speed-switch__thumb">
-            <BoltIcon />
-          </span>
-        </span>
-      </button>
-    </div>
-  );
-}
-
-function EmptyWorkspaceState(props: { onCreateWorkspace: () => void }) {
-  const { t } = useAppLocale();
-  return (
-    <div className="conversation-empty">
-      <p className="conversation-empty__eyebrow">{t("shell.emptyWorkspaceEyebrow")}</p>
-      <h2>{t("shell.emptyWorkspaceTitle")}</h2>
-      <p>{t("shell.emptyWorkspaceBody")}</p>
-      <button className="primary-button" onClick={props.onCreateWorkspace}>
-        {t("workspace.modalTitleNew")}
-      </button>
-    </div>
-  );
-}
-
-function ReadyState(props: {
-  workspace: WorkspaceRecord | null;
-  onSuggestionClick: (prompt: string) => void;
-}) {
-  const { t } = useAppLocale();
-  const promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
-  return (
-    <div className="conversation-ready">
-      <div>
-        <p className="conversation-empty__eyebrow">{t("shell.readyEyebrow")}</p>
-        <h2>
-          {props.workspace
-            ? t("shell.readyStartThread", { name: props.workspace.name })
-            : t("shell.readySelectProject")}
-        </h2>
-      </div>
-      <div className="suggestion-list">
-        {promptSuggestions.map((prompt) => (
-          <button
-            key={prompt}
-            className="suggestion-chip"
-            onClick={() => props.onSuggestionClick(prompt)}
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EmptyThreadState(props: { thread: ThreadSummary; archived: boolean }) {
-  const { t } = useAppLocale();
-  return (
-    <div className="conversation-ready">
-      <div>
-        <p className="conversation-empty__eyebrow">
-          {props.archived ? t("settings.archivedThreads") : describeThreadStatus(props.thread.status)}
-        </p>
-        <h2>{formatThreadTitle(props.thread)}</h2>
-      </div>
-      <p>{t("shell.emptyThreadBody")}</p>
-    </div>
-  );
-}
-
-function ComposerPlanCard(props: {
-  plan: NonNullable<ThreadView["latestPlan"]>;
-}) {
-  const { t } = useAppLocale();
-  const completedCount = props.plan.plan.filter((step) => normalizePlanStepStatus(step.status) === "completed").length;
-
-  return (
-    <section className="composer-plan" data-testid="composer-plan">
-      <div className="composer-plan__header">
-        <div>
-          <span className="composer-plan__eyebrow">{t("timeline.planTitle")}</span>
-          <strong>
-            {t("timeline.planSummary", {
-              total: formatNumber(props.plan.plan.length),
-              completed: formatNumber(completedCount),
-            })}
-          </strong>
-        </div>
-      </div>
-
-      {props.plan.explanation ? (
-        <p className="composer-plan__explanation">{props.plan.explanation}</p>
-      ) : null}
-
-      {props.plan.plan.length > 0 ? (
-        <div className="composer-plan__list">
-          {props.plan.plan.map((step, index) => {
-            const normalizedStatus = normalizePlanStepStatus(step.status);
-            return (
-              <div key={`${index}-${step.step}`} className="composer-plan__row">
-                <span
-                  className={`composer-plan__status composer-plan__status--${normalizedStatus}`}
-                  aria-hidden="true"
-                />
-                <span className="composer-plan__index">{`${index + 1}.`}</span>
-                <span className="composer-plan__step">{step.step}</span>
-                <span className="composer-plan__state">{formatPlanStepStatus(step.status)}</span>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-const ConversationTimeline = memo(function ConversationTimeline(props: {
-  timeline: Array<TimelineEntry>;
-  hiddenTimelineEntryCount: number;
-  timelineEntryCount: number;
-  cwd?: string | null;
-  streamingPlainItems: Record<string, true>;
-  onCodeLinkActivate?: (reference: CodeLinkReference) => void;
-  onImageActivate?: (reference: ImagePreviewReference) => void;
-  onLoadOlder: () => void;
-}) {
-  useAppLocale();
-
-  return (
-    <div className="timeline-stream" data-testid="timeline-list">
-      {props.hiddenTimelineEntryCount > 0 ? (
-        <div className="timeline-stream__window-banner">
-          <span className="timeline-stream__window-summary">
-            {translate("timeline.windowSummary", {
-              visible: formatNumber(props.timeline.length),
-              total: formatNumber(props.timelineEntryCount),
-            })}
-          </span>
-          <button
-            className="timeline-stream__window-button"
-            type="button"
-            onClick={props.onLoadOlder}
-          >
-            {translate("timeline.loadOlder")}
-          </button>
-        </div>
-      ) : null}
-      {props.timeline.map((entry) => (
-        <ConversationEntry
-          key={entry.id}
-          entry={entry}
-          cwd={props.cwd}
-          streamingPlainText={Boolean(props.streamingPlainItems[entry.id])}
-          onCodeLinkActivate={props.onCodeLinkActivate}
-          onImageActivate={props.onImageActivate}
-        />
-      ))}
-    </div>
-  );
-});
-
-const ConversationEntry = memo(function ConversationEntry(props: {
-  entry: TimelineEntry;
-  cwd?: string | null;
-  streamingPlainText?: boolean;
-  onCodeLinkActivate?: (reference: CodeLinkReference) => void;
-  onImageActivate?: (reference: ImagePreviewReference) => void;
-}) {
-  const { entry, cwd, streamingPlainText, onCodeLinkActivate, onImageActivate } = props;
-  return isMessageEntry(entry.kind) ? (
-    <MessageEntry
-      entry={entry}
-      cwd={cwd}
-      streamingPlainText={Boolean(streamingPlainText && entry.kind === "agentMessage")}
-      onCodeLinkActivate={onCodeLinkActivate}
-      onImageActivate={onImageActivate}
-    />
-  ) : (
-    <ActivityEntry
-      entry={entry}
-      cwd={cwd}
-      streamingPlainText={Boolean(streamingPlainText && entry.kind === "reasoning")}
-      onCodeLinkActivate={onCodeLinkActivate}
-      onImageActivate={onImageActivate}
-    />
-  );
-});
-
-const MessageEntry = memo(function MessageEntry(props: {
-  entry: TimelineEntry;
-  cwd?: string | null;
-  streamingPlainText?: boolean;
-  onCodeLinkActivate?: (reference: CodeLinkReference) => void;
-  onImageActivate?: (reference: ImagePreviewReference) => void;
-}) {
-  useAppLocale();
-  const { entry, cwd, streamingPlainText, onCodeLinkActivate, onImageActivate } = props;
-  const placeholder = entry.kind === "agentMessage" ? translate("common.loading") : "...";
-
-  return (
-    <article
-      className={`stream-entry stream-entry--message ${
-        entry.kind === "userMessage" ? "stream-entry--user" : "stream-entry--assistant"
-      }`}
-      data-testid={`timeline-item-${entry.id}`}
-    >
-      {entry.body.trim() ? (
-        <RenderableMarkdown
-          text={entry.body}
-          cwd={cwd}
-          renderMode={streamingPlainText ? "plain" : "auto"}
-          onCodeLinkActivate={onCodeLinkActivate}
-          onImageActivate={onImageActivate}
-        />
-      ) : (
-        <div className="stream-entry__placeholder">{placeholder}</div>
-      )}
-    </article>
-  );
-});
-
-const ActivityEntry = memo(function ActivityEntry(props: {
-  entry: TimelineEntry;
-  cwd?: string | null;
-  streamingPlainText?: boolean;
-  onCodeLinkActivate?: (reference: CodeLinkReference) => void;
-  onImageActivate?: (reference: ImagePreviewReference) => void;
-}) {
-  useAppLocale();
-  const { entry, cwd, streamingPlainText, onCodeLinkActivate, onImageActivate } = props;
-  const summary = describeActivitySummary(entry);
-  const details = describeActivityDetails(entry);
-  const collapsible = shouldCollapseActivityByDefault(entry.kind) && Boolean(details?.trim());
-  const [expanded, setExpanded] = useState(() => !collapsible);
-
-  return (
-    <article
-      className={`stream-entry stream-entry--activity stream-entry--activity-${entry.kind}`}
-      data-testid={`timeline-item-${entry.id}`}
-    >
-      {collapsible ? (
-        <button
-          className={expanded ? "stream-activity__toggle stream-activity__toggle--expanded" : "stream-activity__toggle"}
-          type="button"
-          onClick={() => setExpanded((current) => !current)}
-        >
-          <span className="stream-activity__chevron" aria-hidden="true">
-            ▸
-          </span>
-          <span className="stream-activity__summary">
-            {renderInlineFormattedText(summary, `${entry.id}-summary`)}
-          </span>
-        </button>
-      ) : (
-        <div className="stream-activity__summary">
-          {renderInlineFormattedText(summary, `${entry.id}-summary`)}
-        </div>
-      )}
-      {details && (!collapsible || expanded) ? (
-        <div className="stream-activity__details">
-          <RenderableMarkdown
-            text={details}
-            cwd={cwd}
-            compact
-            renderMode={streamingPlainText ? "plain" : "auto"}
-            onCodeLinkActivate={onCodeLinkActivate}
-            onImageActivate={onImageActivate}
-          />
-        </div>
-      ) : null}
-    </article>
-  );
-});
-
-function renderInlineFormattedText(text: string, keyPrefix: string): ReactNode {
-  if (!text) {
-    return null;
-  }
-
-  return text.split(/(`[^`\n]+`|\[[^\]]+\]\([^)]+\))/g).map((part, index) => {
-    if (!part) {
-      return null;
-    }
-
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={`${keyPrefix}-code-${index}`}>{part.slice(1, -1)}</code>;
-    }
-
-    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (linkMatch) {
-      return (
-        <a
-          key={`${keyPrefix}-link-${index}`}
-          href={linkMatch[2]}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {linkMatch[1]}
-        </a>
-      );
-    }
-
-    return <span key={`${keyPrefix}-text-${index}`}>{part}</span>;
-  });
-}
-
-function GitSummaryBar(props: {
-  summary: ReturnType<typeof summarizeGitSnapshot>;
-  branchValue: string | null;
-  branchOptions: Array<ComposerDropdownOption<string>>;
-  branchDisabled: boolean;
-  onOpen: () => void;
-  onBranchChange: (branch: string) => void;
-}) {
-  const { t } = useAppLocale();
-  return (
-    <div className="composer-gitbar">
-      {props.branchValue ? (
-        <ComposerInlineDropdown
-          testId="composer-git-branch-select"
-          value={props.branchValue}
-          label={props.branchValue}
-          options={props.branchOptions}
-          menuTitle={t("composer.switchBranchMenu")}
-          disabled={props.branchDisabled || props.branchOptions.length === 0}
-          onChange={props.onBranchChange}
-        />
-      ) : null}
-      <div
-        className={
-          props.summary.expandable
-            ? "composer-gitbar__summary"
-            : "composer-gitbar__summary composer-gitbar__summary--disabled"
+          ) : null
         }
-        data-testid="git-summary-bar"
-      >
-        <span>{t("composer.gitFilesCount", { count: props.summary.files })}</span>
-        <span className="window-stat window-stat--positive">{`+${props.summary.additions}`}</span>
-        <span className="window-stat window-stat--negative">{`-${props.summary.deletions}`}</span>
-      </div>
-      <button
-        type="button"
-        className="ghost-button composer-gitbar__review"
-        data-testid="git-workbench-open-button"
-        onClick={props.onOpen}
-        disabled={!props.summary.expandable}
-      >
-        {t("composer.review")}
-      </button>
+        blockingOverlay={blocking ? <BlockingOverlay email={account?.email ?? null} /> : null}
+        errorMessage={errorMessage}
+      />
     </div>
-  );
-}
-
-function GitWorkbenchPanel(props: {
-  workspace: WorkspaceRecord | null;
-  snapshot: GitWorkingTreeSnapshot | null;
-  summary: ReturnType<typeof summarizeGitSnapshot>;
-  selectedFile: GitWorkingTreeFile | null;
-  treeFilter: string;
-  treeWidth: number;
-  treeBounds: { min: number; max: number };
-  treeResizing: boolean;
-  canReview: boolean;
-  onClose: () => void;
-  onSelectFile: (path: string) => void;
-  onTreeFilterChange: (value: string) => void;
-  onRefresh: () => void;
-  onReview: () => void;
-  onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onResizeKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-}) {
-  const { t } = useAppLocale();
-  const allFiles = props.snapshot?.files ?? [];
-  const treeFiles = useMemo(
-    () => filterGitFilesByQuery(allFiles, props.treeFilter),
-    [allFiles, props.treeFilter],
-  );
-  const fileTree = useMemo(() => buildGitFileTree(treeFiles), [treeFiles]);
-  const visibleSelectedFile =
-    allFiles.find((file) => file.path === props.selectedFile?.path) ?? allFiles[0] ?? null;
-
-  if (!props.workspace) {
-    return (
-      <div className="git-workbench git-workbench--empty">
-        <strong>{t("git.noCurrentProjectTitle")}</strong>
-        <p>{t("git.noCurrentProjectDetail")}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="git-workbench" data-testid="git-workbench">
-      <div className="git-workbench__header">
-        <div className="git-workbench__header-body">
-          <p className="inspector-pane__eyebrow">{t("git.dirtyTitle")}</p>
-          <div className="git-workbench__header-title">
-            <strong>{props.workspace.name}</strong>
-            <span>{props.summary.detail}</span>
-          </div>
-        </div>
-        <div className="git-workbench__header-actions">
-          <button type="button" className="ghost-button" onClick={props.onRefresh}>
-            {t("git.refresh")}
-          </button>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={props.onReview}
-            disabled={!props.canReview || !props.snapshot?.isGitRepository || Boolean(props.snapshot?.clean)}
-          >
-            {t("composer.review")}
-          </button>
-          <button type="button" className="ghost-button" onClick={props.onClose}>
-            {t("git.backToSession")}
-          </button>
-        </div>
-      </div>
-
-      <div className="git-workbench__body">
-        <section className="git-workbench__main">
-          <div className="git-workbench__panel git-workbench__panel--patch">
-            <div className="inspector-pane__header">
-              <div>
-                <p className="inspector-pane__eyebrow">{t("git.changedContent")}</p>
-                <strong>{visibleSelectedFile?.path ?? props.summary.title}</strong>
-              </div>
-              {visibleSelectedFile ? (
-                <div className="git-workbench__stat-row">
-                  <span>{formatGitFileBadge(visibleSelectedFile.status)}</span>
-                  <span className="window-stat window-stat--positive">{`+${visibleSelectedFile.additions}`}</span>
-                  <span className="window-stat window-stat--negative">{`-${visibleSelectedFile.deletions}`}</span>
-                </div>
-              ) : null}
-            </div>
-            <div className="git-workbench__panel-body">
-              {visibleSelectedFile ? (
-                <div className="terminal-output inspector-terminal-output">
-                  <RenderableCodeBlock
-                    value={visibleSelectedFile.patch || t("git.noDiffYet")}
-                    language="diff"
-                  />
-                </div>
-              ) : (
-                <div className="sidebar-empty-state">
-                  {!props.snapshot
-                    ? t("git.initializingPatch")
-                    : props.snapshot.isGitRepository
-                      ? t("git.selectPatchHint")
-                      : t("git.unavailablePatch")}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <div
-          className={
-            props.treeResizing
-              ? "git-workbench__resizer git-workbench__resizer--active"
-              : "git-workbench__resizer"
-          }
-          data-testid="git-workbench-resizer"
-          role="separator"
-          tabIndex={0}
-          aria-label={t("git.resizeTreeAria")}
-          aria-orientation="vertical"
-          aria-valuemin={props.treeBounds.min}
-          aria-valuemax={props.treeBounds.max}
-          aria-valuenow={Math.round(props.treeWidth)}
-          onPointerDown={props.onResizeStart}
-          onKeyDown={props.onResizeKeyDown}
-        />
-
-        <aside className="git-workbench__tree">
-          <div>
-            <p className="inspector-pane__eyebrow">{t("git.treeTitle")}</p>
-            <strong>{t("git.treeLabel")}</strong>
-          </div>
-          <div className="git-workbench__tree-filter">
-            <input
-              className="git-tree-filter"
-              value={props.treeFilter}
-              onChange={(event) => props.onTreeFilterChange(event.target.value)}
-              placeholder={t("git.filterPlaceholder")}
-            />
-          </div>
-          <div className="git-workbench__tree-body" data-testid="git-file-tree">
-            {!props.snapshot ? (
-              <div className="sidebar-empty-state">{t("git.readingTreeDetail")}</div>
-            ) : !props.snapshot.isGitRepository ? (
-              <div className="sidebar-empty-state">{t("git.notRepoInline")}</div>
-            ) : props.snapshot.clean ? (
-              <div className="sidebar-empty-state">{t("git.noTree")}</div>
-            ) : (
-              <div className="git-tree">
-                {fileTree.map((node) => (
-                  <GitFileTreeRow
-                    key={node.id}
-                    node={node}
-                    depth={0}
-                    selectedPath={visibleSelectedFile?.path ?? null}
-                    onSelectFile={props.onSelectFile}
-                  />
-                ))}
-                {fileTree.length === 0 ? (
-                  <div className="sidebar-empty-state">{t("git.noTreeMatch")}</div>
-                ) : null}
-              </div>
-            )}
-          </div>
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-function GitFileTreeRow(props: {
-  node: GitFileTreeNode;
-  depth: number;
-  selectedPath: string | null;
-  onSelectFile: (path: string) => void;
-}) {
-  const { t } = useAppLocale();
-  const depthStyle = { "--tree-depth": props.depth } as CSSProperties;
-
-  if (props.node.kind === "directory") {
-    return (
-      <div className="git-tree__branch">
-        <div className="git-tree__row git-tree__row--directory" style={depthStyle}>
-          <div className="git-tree__label">
-            <FolderOpenIcon />
-            <strong>{props.node.name}</strong>
-          </div>
-          <div className="git-tree__stats">
-            <span className="git-tree__count">
-              {t("git.fileCount", { count: props.node.fileCount })}
-            </span>
-            <span className="window-stat window-stat--positive">{`+${props.node.additions}`}</span>
-            <span className="window-stat window-stat--negative">{`-${props.node.deletions}`}</span>
-          </div>
-        </div>
-        <div className="git-tree__children">
-          {props.node.children.map((child) => (
-            <GitFileTreeRow
-              key={child.id}
-              node={child}
-              depth={props.depth + 1}
-              selectedPath={props.selectedPath}
-              onSelectFile={props.onSelectFile}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const fileNode = props.node;
-  const active = props.selectedPath === fileNode.file.path;
-  return (
-    <button
-      type="button"
-      className={active ? "git-tree__row git-tree__row--file git-tree__row--active" : "git-tree__row git-tree__row--file"}
-      style={depthStyle}
-      onClick={() => props.onSelectFile(fileNode.file.path)}
-    >
-      <div className="git-tree__label">
-        <span className="git-tree__file-dot" />
-        <span className="git-tree__file-name">{fileNode.name}</span>
-        <span className="git-tree__file-meta">{formatGitFileStatus(fileNode.file)}</span>
-      </div>
-      <div className="git-tree__stats">
-        <span className="window-stat window-stat--positive">{`+${fileNode.file.additions}`}</span>
-        <span className="window-stat window-stat--negative">{`-${fileNode.file.deletions}`}</span>
-      </div>
-    </button>
   );
 }
 
@@ -5691,198 +4632,6 @@ const dockedSettingsPanelStyle: CSSProperties = {
   width: "min(980px, calc(100vw - 48px))",
   maxHeight: "calc(100vh - 48px)",
 };
-
-function FolderIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M2.5 6a2 2 0 0 1 2-2h3.1c.34 0 .66.16.85.42l.95 1.28c.19.26.5.42.84.42h5.25a2 2 0 0 1 2 2v5.75a2 2 0 0 1-2 2H4.5a2 2 0 0 1-2-2z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function FolderOpenIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M2.5 7.25a2 2 0 0 1 2-2h3.1c.34 0 .66.16.85.42l.95 1.28c.19.26.5.42.84.42h4.3a2 2 0 0 1 1.95 2.46l-.8 3.6a2 2 0 0 1-1.95 1.54H4.55a2 2 0 0 1-1.95-2.4z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M2.7 8h14.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function FolderPlusIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M2.5 5.5a2 2 0 0 1 2-2h3l1.4 1.7a1 1 0 0 0 .78.36h5.82a2 2 0 0 1 2 2v6.75a2 2 0 0 1-2 2H4.5a2 2 0 0 1-2-2z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M10 8v5M7.5 10.5h5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function ComposeIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M4.25 5.75A1.5 1.5 0 0 1 5.75 4.25h6.5a1.5 1.5 0 0 1 1.5 1.5v1.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M4.25 9.25v5a1.5 1.5 0 0 0 1.5 1.5h6.5a1.5 1.5 0 0 0 1.5-1.5V11.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M10.9 9.2 15.6 4.5a1.35 1.35 0 0 1 1.9 0 1.35 1.35 0 0 1 0 1.9L12.8 11.1 10 12z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function BoltIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M11.8 1.8 4.7 10h4l-1 8.2L15.3 10h-4.1l.6-8.2Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="m4.9 10.4 3.2 3.2 7-7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="m8.1 2.9.45 1.7a5.9 5.9 0 0 1 2.9 0l.45-1.7 1.9.8-.5 1.7c.48.34.91.76 1.26 1.24l1.72-.5.79 1.9-1.7.45a5.9 5.9 0 0 1 0 2.9l1.7.45-.8 1.9-1.71-.5a5.9 5.9 0 0 1-1.25 1.25l.5 1.71-1.9.79-.45-1.7a5.9 5.9 0 0 1-2.9 0l-.45 1.7-1.9-.8.5-1.7a5.9 5.9 0 0 1-1.24-1.26l-1.72.5-.79-1.9 1.7-.45a5.9 5.9 0 0 1 0-2.9l-1.7-.45.8-1.9 1.71.5c.34-.48.76-.9 1.25-1.25l-.5-1.71z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
-      <circle cx="10" cy="10" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
-    </svg>
-  );
-}
-
-function GlobeIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      <path
-        d="M3.7 10h12.6M10 3c1.8 1.9 2.8 4.4 2.8 7s-1 5.1-2.8 7c-1.8-1.9-2.8-4.4-2.8-7S8.2 4.9 10 3Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function MoreIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="4" cy="10" r="1.4" fill="currentColor" />
-      <circle cx="10" cy="10" r="1.4" fill="currentColor" />
-      <circle cx="16" cy="10" r="1.4" fill="currentColor" />
-    </svg>
-  );
-}
-
-function EditIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="M13.8 3.6a1.7 1.7 0 0 1 2.4 0l.2.2a1.7 1.7 0 0 1 0 2.4l-7.8 7.8-3.5.9.9-3.5 7.8-7.8Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M11.9 5.5 14.5 8.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function SendArrowIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path
-        d="m10 3.8 4.8 4.8-1.1 1.1-2.9-2.8v8.3H9.2V6.9L6.4 9.7 5.2 8.6 10 3.8Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function InterruptIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <rect x="5.2" y="5.2" width="9.6" height="9.6" rx="2.2" fill="currentColor" />
-    </svg>
-  );
-}
 
 function buildPaletteActions(input: {
   activeThreadEntry: ThreadSummary | null;

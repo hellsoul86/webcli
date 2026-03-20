@@ -35,10 +35,7 @@ test("creates a workspace, opens a thread, and replays approvals after reload", 
   await expect(page.getByTestId("git-review-group-staged-unstaged")).toBeVisible();
   const conflictedGroup = page.getByTestId("git-review-group-conflicted");
   await conflictedGroup.getByRole("button", { name: /docs/i }).click({ force: true });
-  await conflictedGroup.getByRole("button", { name: /review/i }).click({ force: true });
-  await conflictedGroup
-    .getByRole("button", { name: /notes.md/i })
-    .evaluate((node) => (node as HTMLButtonElement).click());
+  await expect(page.getByTestId("git-review-path")).toContainText("docs/review/notes.md");
   await expect(page.getByText("Merge conflicts are shown as raw patch output.")).toBeVisible();
   const unstagedGroup = page.getByTestId("git-review-group-unstaged");
   await unstagedGroup
