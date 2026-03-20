@@ -1,4 +1,11 @@
 export type RequestId = string | number;
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue =
+  | JsonPrimitive
+  | Array<JsonValue>
+  | {
+      [key: string]: JsonValue;
+    };
 
 export type AppErrorCode =
   | "invalid.json"
@@ -64,6 +71,7 @@ export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "
 export type ServiceTier = "fast" | "flex";
 export type HazelnutScope = "example" | "workspace-shared" | "all-shared" | "personal";
 export type ProductSurface = "chatgpt" | "codex" | "api" | "atlas";
+export type WebSearchMode = "disabled" | "cached" | "live";
 export type SettingsTab =
   | "account"
   | "general"
@@ -111,6 +119,23 @@ export type AccountUsageWindow = {
   remainingPercent: number | null;
   usedPercent: number | null;
   resetsAt: number | null;
+};
+
+export type AccountRateLimitWindowSnapshot = {
+  windowDurationMins: number | null;
+  usedPercent: number | null;
+  remainingPercent: number | null;
+  resetsAt: number | null;
+};
+
+export type AccountRateLimitSnapshot = {
+  primary: AccountRateLimitWindowSnapshot | null;
+  secondary: AccountRateLimitWindowSnapshot | null;
+};
+
+export type AccountRateLimitsSnapshot = {
+  rateLimits: AccountRateLimitSnapshot;
+  rateLimitsByLimitId: Record<string, AccountRateLimitSnapshot | null>;
 };
 
 export type AccountSummary = {
@@ -403,6 +428,53 @@ export type FuzzySearchSnapshot = {
   results: Array<FuzzyFileSearchResult>;
 };
 
+export type ConfigRequirementsSnapshot = {
+  allowedApprovalPolicies: Array<ApprovalPolicy> | null;
+  allowedSandboxModes: Array<SandboxMode> | null;
+  allowedWebSearchModes: Array<WebSearchMode> | null;
+  featureRequirements: Record<string, boolean> | null;
+  enforceResidency: "us" | null;
+};
+
+export type ConfigMergeStrategy = "replace" | "upsert";
+
+export type ConfigEdit = {
+  keyPath: string;
+  value: JsonValue;
+  mergeStrategy: ConfigMergeStrategy;
+};
+
+export type ConfigBatchWriteInput = {
+  edits: Array<ConfigEdit>;
+  filePath?: string | null;
+  expectedVersion?: string | null;
+  reloadUserConfig?: boolean;
+};
+
+export type ConfigBatchWriteResult = {
+  status: "ok" | "okOverridden";
+  version: string;
+  filePath: string;
+  overriddenMessage: string | null;
+};
+
+export type ExternalAgentConfigMigrationItemType =
+  | "AGENTS_MD"
+  | "CONFIG"
+  | "SKILLS"
+  | "MCP_SERVER_CONFIG";
+
+export type ExternalAgentConfigMigrationItem = {
+  itemType: ExternalAgentConfigMigrationItemType;
+  description: string;
+  cwd: string | null;
+};
+
+export type ExternalAgentConfigDetectInput = {
+  includeHome?: boolean;
+  cwds?: Array<string> | null;
+};
+
 export type AuthStatusSnapshot = {
   authMethod: string | null;
   requiresOpenaiAuth: boolean;
@@ -461,6 +533,44 @@ export type AccountLoginStartResponse =
     };
 
 export type AccountLoginCancelStatus = "canceled" | "notFound";
+
+export type AccountLoginCompleted = {
+  loginId: string | null;
+  success: boolean;
+  error: string | null;
+};
+
+export type TextPosition = {
+  line: number;
+  column: number;
+};
+
+export type TextRange = {
+  start: TextPosition;
+  end: TextPosition;
+};
+
+export type ConfigWarningNotice = {
+  summary: string;
+  details: string | null;
+  path: string | null;
+  range: TextRange | null;
+};
+
+export type DeprecationNotice = {
+  summary: string;
+  details: string | null;
+};
+
+export type ModelRerouteReason = "highRiskCyberActivity";
+
+export type ModelRerouteEvent = {
+  threadId: string;
+  turnId: string;
+  fromModel: string;
+  toModel: string;
+  reason: ModelRerouteReason;
+};
 
 export type McpServerSnapshot = {
   name: string;

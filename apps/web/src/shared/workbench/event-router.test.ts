@@ -479,6 +479,7 @@ describe("routeWorkbenchServerMessage", () => {
   it("updates app state when the runtime pushes an app list refresh", () => {
     const queryClient = new QueryClient();
     const setIntegrations = vi.fn();
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
 
     routeWorkbenchServerMessage(
       {
@@ -533,6 +534,271 @@ describe("routeWorkbenchServerMessage", () => {
           installUrl: "https://example.com/install",
         },
       ],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["integrations"] });
+  });
+
+  it("applies account login completion state and forwards the callback", () => {
+    const queryClient = new QueryClient();
+    const setIntegrationSnapshot = vi.fn();
+    const onAccountLoginCompleted = vi.fn();
+    const bootstrap: BootstrapResponse = {
+      runtime: {
+        connected: true,
+        childPid: 11,
+        authenticated: false,
+        requiresOpenaiAuth: true,
+        restartCount: 1,
+        lastError: null,
+      },
+      account: {
+        authenticated: false,
+        requiresOpenaiAuth: true,
+        accountType: "unknown",
+        email: null,
+        planType: null,
+        usageWindows: [],
+      },
+      models: [],
+      workspaces: [],
+      activeThreads: [],
+      archivedThreadCount: 0,
+      settings: {
+        config: null,
+      },
+    };
+    queryClient.setQueryData(["bootstrap"], bootstrap);
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "account.login.completed",
+        params: {
+          login: {
+            loginId: "login-1",
+            success: true,
+            error: null,
+          },
+          state: {
+            account: {
+              authenticated: true,
+              requiresOpenaiAuth: false,
+              accountType: "chatgpt",
+              email: "user@example.com",
+              planType: "pro",
+              usageWindows: [],
+            },
+            authStatus: {
+              authMethod: "chatgpt",
+              requiresOpenaiAuth: false,
+            },
+          },
+          snapshot: {
+            authStatus: {
+              authMethod: "chatgpt",
+              requiresOpenaiAuth: false,
+            },
+            config: null,
+            mcpServers: [],
+            skills: [],
+            apps: [],
+            plugins: [],
+          },
+        },
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        markThreadClosed: vi.fn(),
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        setTurnTokenUsage: vi.fn(),
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrations: vi.fn(),
+        setIntegrationSnapshot,
+        setWorkspaceGitSnapshot: vi.fn(),
+        onAccountLoginCompleted,
+      },
+    );
+
+    expect(queryClient.getQueryData<BootstrapResponse>(["bootstrap"])?.account.email).toBe(
+      "user@example.com",
+    );
+    expect(setIntegrationSnapshot).toHaveBeenCalledWith({
+      authStatus: {
+        authMethod: "chatgpt",
+        requiresOpenaiAuth: false,
+      },
+      config: null,
+      mcpServers: [],
+      skills: [],
+      apps: [],
+      plugins: [],
+    });
+    expect(onAccountLoginCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores account rate limits updates in the query cache", () => {
+    const queryClient = new QueryClient();
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "account.rateLimitsUpdated",
+        params: {
+          rateLimits: {
+            rateLimits: {
+              primary: {
+                windowDurationMins: 300,
+                usedPercent: 25,
+                remainingPercent: 75,
+                resetsAt: 1_700_000_000_000,
+              },
+              secondary: null,
+            },
+            rateLimitsByLimitId: {},
+          },
+        },
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        markThreadClosed: vi.fn(),
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        setTurnTokenUsage: vi.fn(),
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrations: vi.fn(),
+        setIntegrationSnapshot: vi.fn(),
+        setWorkspaceGitSnapshot: vi.fn(),
+      },
+    );
+
+    expect(queryClient.getQueryData(["account-rate-limits"])).toEqual({
+      rateLimits: {
+        rateLimits: {
+          primary: {
+            windowDurationMins: 300,
+            usedPercent: 25,
+            remainingPercent: 75,
+            resetsAt: 1_700_000_000_000,
+          },
+          secondary: null,
+        },
+        rateLimitsByLimitId: {},
+      },
+    });
+  });
+
+  it("forwards warning and reroute notifications to the provided callbacks", () => {
+    const queryClient = new QueryClient();
+    const onConfigWarning = vi.fn();
+    const onDeprecationNotice = vi.fn();
+    const onModelRerouted = vi.fn();
+    const context = {
+      queryClient,
+      setConnection: vi.fn(),
+      upsertThread: vi.fn(),
+      markThreadClosed: vi.fn(),
+      applyTurn: vi.fn(),
+      applyTimelineItem: vi.fn(),
+      appendDelta: vi.fn(),
+      appendDeltaBatch: vi.fn(),
+      setLatestDiff: vi.fn(),
+      setLatestPlan: vi.fn(),
+      setReview: vi.fn(),
+      setTurnTokenUsage: vi.fn(),
+      queueApproval: vi.fn(),
+      resolveApproval: vi.fn(),
+      setCommandSession: vi.fn(),
+      appendCommandOutput: vi.fn(),
+      setIntegrations: vi.fn(),
+      setIntegrationSnapshot: vi.fn(),
+      setWorkspaceGitSnapshot: vi.fn(),
+      onConfigWarning,
+      onDeprecationNotice,
+      onModelRerouted,
+    };
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "config.warning",
+        params: {
+          warning: {
+            summary: "Managed config blocked a value",
+            details: "Project config overrides user config",
+            path: "/tmp/config.toml",
+            range: null,
+          },
+        },
+      },
+      context,
+    );
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "deprecation.notice",
+        params: {
+          notice: {
+            summary: "Legacy key is deprecated",
+            details: "Use model_reasoning_effort instead",
+          },
+        },
+      },
+      context,
+    );
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "model.rerouted",
+        params: {
+          reroute: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            fromModel: "gpt-5",
+            toModel: "gpt-5-safe",
+            reason: "highRiskCyberActivity",
+          },
+        },
+      },
+      context,
+    );
+
+    expect(onConfigWarning).toHaveBeenCalledWith({
+      summary: "Managed config blocked a value",
+      details: "Project config overrides user config",
+      path: "/tmp/config.toml",
+      range: null,
+    });
+    expect(onDeprecationNotice).toHaveBeenCalledWith({
+      summary: "Legacy key is deprecated",
+      details: "Use model_reasoning_effort instead",
+    });
+    expect(onModelRerouted).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      fromModel: "gpt-5",
+      toModel: "gpt-5-safe",
+      reason: "highRiskCyberActivity",
     });
   });
 });

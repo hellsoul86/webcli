@@ -1,13 +1,22 @@
 import type {
+  AccountLoginCompleted,
   AccountLoginCancelStatus,
   AccountLoginStartInput,
   AccountLoginStartResponse,
+  AccountRateLimitsSnapshot,
   AccountStateSnapshot,
   AccountSummary,
   AppInstallHint,
   ApprovalPolicy,
   CommandSessionSnapshot,
+  ConfigBatchWriteInput,
+  ConfigBatchWriteResult,
+  ConfigRequirementsSnapshot,
+  ConfigWarningNotice,
   ConfigSnapshot,
+  DeprecationNotice,
+  ExternalAgentConfigDetectInput,
+  ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
@@ -17,6 +26,7 @@ import type {
   IntegrationSnapshot,
   ModelOption,
   McpServerSnapshot,
+  ModelRerouteEvent,
   PendingServerRequest,
   PluginMarketplaceSnapshot,
   ProductSurface,
@@ -70,6 +80,11 @@ export type RuntimeThreadConfig = {
 export type SessionRuntimeEvent =
   | { type: "status.changed"; status: RuntimeStatus }
   | { type: "account.updated"; account: AccountSummary }
+  | { type: "account.login.completed"; login: AccountLoginCompleted }
+  | { type: "account.rateLimits.updated"; rateLimits: AccountRateLimitsSnapshot }
+  | { type: "model.rerouted"; reroute: ModelRerouteEvent }
+  | { type: "config.warning"; warning: ConfigWarningNotice }
+  | { type: "deprecation.notice"; notice: DeprecationNotice }
   | { type: "thread.updated"; thread: RuntimeThreadRecord }
   | {
       type: "thread.status.changed";
@@ -164,6 +179,7 @@ export interface SessionRuntime {
   getStatus(): RuntimeStatus;
   getAccountSummary(force?: boolean): Promise<AccountSummary>;
   readAccountState(): Promise<AccountStateSnapshot>;
+  readAccountRateLimits(): Promise<AccountRateLimitsSnapshot>;
   loginAccount(input: AccountLoginStartInput): Promise<AccountLoginStartResponse>;
   cancelAccountLogin(loginId: string): Promise<AccountLoginCancelStatus>;
   logoutAccount(): Promise<void>;
@@ -205,6 +221,12 @@ export interface SessionRuntime {
   resizeCommand(processId: string, cols: number, rows: number): Promise<void>;
   stopCommand(processId: string): Promise<void>;
   readConfigSnapshot(cwd?: string | null): Promise<ConfigSnapshot | null>;
+  readConfigRequirements(): Promise<ConfigRequirementsSnapshot | null>;
+  batchWriteConfig(input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult>;
+  detectExternalAgentConfig(
+    input: ExternalAgentConfigDetectInput,
+  ): Promise<Array<ExternalAgentConfigMigrationItem>>;
+  importExternalAgentConfig(items: Array<ExternalAgentConfigMigrationItem>): Promise<void>;
   getIntegrationSnapshot(input: {
     cwd?: string | null;
     threadId?: string | null;

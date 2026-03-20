@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import type {
+  AccountRateLimitsSnapshot,
   AccountLoginCancelStatus,
   AccountLoginStartInput,
   AccountLoginStartResponse,
@@ -9,7 +10,12 @@ import type {
   AppInstallHint,
   AppSnapshot,
   ApprovalPolicy,
+  ConfigBatchWriteInput,
+  ConfigBatchWriteResult,
+  ConfigRequirementsSnapshot,
   ConfigSnapshot,
+  ExternalAgentConfigDetectInput,
+  ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
   GitBranchReference,
   GitFileReviewDetail,
@@ -178,6 +184,26 @@ export class FakeRuntime implements SessionRuntime {
               : null,
         requiresOpenaiAuth: this.account.requiresOpenaiAuth,
       },
+    };
+  }
+
+  async readAccountRateLimits(): Promise<AccountRateLimitsSnapshot> {
+    return {
+      rateLimits: {
+        primary: {
+          windowDurationMins: 300,
+          usedPercent: 18,
+          remainingPercent: 82,
+          resetsAt: Date.now() + 18_000,
+        },
+        secondary: {
+          windowDurationMins: 10_080,
+          usedPercent: 39,
+          remainingPercent: 61,
+          resetsAt: Date.now() + 604_800,
+        },
+      },
+      rateLimitsByLimitId: {},
     };
   }
 
@@ -678,6 +704,10 @@ export class FakeRuntime implements SessionRuntime {
     return { ...this.config };
   }
 
+  async readConfigRequirements(): Promise<ConfigRequirementsSnapshot | null> {
+    return null;
+  }
+
   async getIntegrationSnapshot(): Promise<IntegrationSnapshot> {
     const authMethod =
       this.account.accountType === "chatgpt"
@@ -732,6 +762,23 @@ export class FakeRuntime implements SessionRuntime {
       ],
     };
   }
+
+  async batchWriteConfig(_input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+    return {
+      status: "ok",
+      version: "fake-runtime",
+      filePath: join(this.projectRoot, ".codex", "config.toml"),
+      overriddenMessage: null,
+    };
+  }
+
+  async detectExternalAgentConfig(
+    _input: ExternalAgentConfigDetectInput,
+  ): Promise<Array<ExternalAgentConfigMigrationItem>> {
+    return [];
+  }
+
+  async importExternalAgentConfig(): Promise<void> {}
 
   async saveSettings(input: ConfigSnapshot): Promise<void> {
     this.config = { ...input };

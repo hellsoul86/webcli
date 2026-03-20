@@ -16,6 +16,8 @@ import {
 import type { TFunction } from "i18next";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AccountLoginCompleted,
+  AccountRateLimitsSnapshot,
   AccountSummary,
   AccountStateSnapshot,
   AccountUsageWindow,
@@ -23,6 +25,10 @@ import type {
   AuthStatusSnapshot,
   BootstrapResponse,
   ConfigSnapshot,
+  ConfigRequirementsSnapshot,
+  ConfigWarningNotice,
+  DeprecationNotice,
+  ExternalAgentConfigMigrationItem,
   ForcedLoginMethod,
   GitBranchReference,
   GitWorkingTreeFile,
@@ -30,6 +36,7 @@ import type {
   HazelnutScope,
   IntegrationSnapshot,
   InspectorTab,
+  ModelRerouteEvent,
   ModelOption,
   PendingApproval,
   ProductSurface,
@@ -90,6 +97,9 @@ const INSPECTOR_WIDTH_STORAGE_KEY = "webcli.gitTreeWidth";
 const INITIAL_TIMELINE_WINDOW_SIZE = 80;
 const TIMELINE_WINDOW_BATCH_SIZE = 80;
 const TIMELINE_WINDOW_SCROLL_THRESHOLD = 120;
+const ACCOUNT_RATE_LIMITS_QUERY_KEY = ["account-rate-limits"] as const;
+const CONFIG_REQUIREMENTS_QUERY_KEY = ["config-requirements"] as const;
+const MAX_SETTINGS_SURFACE_ITEMS = 6;
 
 type WorkspaceFormInput = {
   name: string;
@@ -197,6 +207,20 @@ function splitPathSegments(value: string): Array<string> {
   return value.split("/").filter(Boolean);
 }
 
+function prependDistinctByKey<T>(
+  items: Array<T>,
+  next: T,
+  getKey: (item: T) => string,
+  limit = MAX_SETTINGS_SURFACE_ITEMS,
+): Array<T> {
+  const nextKey = getKey(next);
+  return [next, ...items.filter((item) => getKey(item) !== nextKey)].slice(0, limit);
+}
+
+function getExternalAgentConfigItemKey(item: ExternalAgentConfigMigrationItem): string {
+  return `${item.itemType}:${item.cwd ?? "home"}:${item.description}`;
+}
+
 function arraysEqual(left: Array<string>, right: Array<string>): boolean {
   if (left.length !== right.length) {
     return false;
@@ -292,6 +316,18 @@ export function App() {
   const [workspaceMutationPending, setWorkspaceMutationPending] = useState(false);
   const [workspaceMutationError, setWorkspaceMutationError] = useState<string | null>(null);
   const [accountLoginState, setAccountLoginState] = useState<AccountLoginState | null>(null);
+  const [lastAccountLoginCompletion, setLastAccountLoginCompletion] =
+    useState<AccountLoginCompleted | null>(null);
+  const [configWarnings, setConfigWarnings] = useState<Array<ConfigWarningNotice>>([]);
+  const [deprecationNotices, setDeprecationNotices] = useState<Array<DeprecationNotice>>([]);
+  const [modelReroutes, setModelReroutes] = useState<Array<ModelRerouteEvent>>([]);
+  const [externalAgentConfigItems, setExternalAgentConfigItems] = useState<
+    Array<ExternalAgentConfigMigrationItem>
+  >([]);
+  const [selectedExternalAgentConfigKeys, setSelectedExternalAgentConfigKeys] = useState<
+    Array<string>
+  >([]);
+  const [externalAgentConfigPending, setExternalAgentConfigPending] = useState(false);
   const [completedThreadMarks, setCompletedThreadMarks] = useState<Record<string, true>>({});
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [sidebarWidth, setSidebarWidth] = useState(() => readInitialSidebarWidth());
@@ -411,6 +447,20 @@ export function App() {
     staleTime: 60_000,
   });
 
+  const accountRateLimitsQuery = useQuery({
+    queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY,
+    queryFn: () => codexClient.call("account.rateLimits.read", {}),
+    enabled: integrations.settingsOpen && Boolean(bootstrapQuery.data?.account.authenticated),
+    staleTime: 60_000,
+  });
+
+  const configRequirementsQuery = useQuery({
+    queryKey: CONFIG_REQUIREMENTS_QUERY_KEY,
+    queryFn: () => codexClient.call("configRequirements.read", {}),
+    enabled: integrations.settingsOpen,
+    staleTime: 60_000,
+  });
+
   const codePreviewQuery = useQuery({
     queryKey: ["code-preview", codePreview?.path],
     queryFn: () => api.resourceText(codePreview!.path),
@@ -428,6 +478,9 @@ export function App() {
 
   const bootstrap = bootstrapQuery.data ?? null;
   const account = bootstrap?.account ?? null;
+  const accountRateLimits =
+    account?.authenticated ? accountRateLimitsQuery.data?.rateLimits ?? null : null;
+  const configRequirements = configRequirementsQuery.data?.requirements ?? null;
   const models = bootstrap?.models ?? [];
   const workspaces = bootstrap?.workspaces ?? [];
   const archivedThreadCount = bootstrap?.archivedThreadCount ?? 0;
@@ -985,6 +1038,61 @@ export function App() {
       appendCommandOutput,
       setIntegrations,
       setIntegrationSnapshot,
+      onAccountLoginCompleted: (params) => {
+        setLastAccountLoginCompletion(params.login);
+        applyAccountResult({
+          state: params.state,
+          snapshot: params.snapshot,
+        });
+        void queryClient.invalidateQueries({ queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY });
+        if (params.login.success) {
+          setAccountLoginState(null);
+          setSettingsNotice(
+            t(
+              accountLoginState?.method === "deviceCode"
+                ? "settings.notices.deviceCodeLoginSuccess"
+                : "settings.notices.chatgptLoginSuccess",
+            ),
+          );
+          return;
+        }
+
+        setAccountLoginState((current) =>
+          current && (!params.login.loginId || current.loginId === params.login.loginId)
+            ? {
+                ...current,
+                phase: "failed",
+                error: params.login.error ?? t("settings.notices.loginFailed"),
+              }
+            : current,
+        );
+        setSettingsNotice(params.login.error ?? t("settings.notices.loginFailed"));
+      },
+      onModelRerouted: (reroute) => {
+        setModelReroutes((current) =>
+          prependDistinctByKey(
+            current,
+            reroute,
+            (entry) =>
+              `${entry.threadId}:${entry.turnId}:${entry.fromModel}:${entry.toModel}:${entry.reason}`,
+          ),
+        );
+      },
+      onConfigWarning: (warning) => {
+        setConfigWarnings((current) =>
+          prependDistinctByKey(
+            current,
+            warning,
+            (entry) =>
+              `${entry.summary}:${entry.path ?? ""}:${entry.range?.start.line ?? 0}:${entry.range?.start.column ?? 0}`,
+          ),
+        );
+      },
+      onDeprecationNotice: (notice) => {
+        setDeprecationNotices((current) =>
+          prependDistinctByKey(current, notice, (entry) => `${entry.summary}:${entry.details ?? ""}`),
+        );
+      },
       onTimelineDeltaFlush: (entries) => {
         markStreamingItems(entries);
       },
@@ -1005,6 +1113,7 @@ export function App() {
       unsubscribeConnection();
     };
   }, [
+    accountLoginState,
     appendCommandOutput,
     appendDelta,
     appendDeltaBatch,
@@ -1018,12 +1127,17 @@ export function App() {
     setCommandSession,
     setConnection,
     setIntegrations,
+    setConfigWarnings,
+    setDeprecationNotices,
     setIntegrationSnapshot,
+    setLastAccountLoginCompletion,
     setLatestDiff,
     setLatestPlan,
+    setModelReroutes,
     setReview,
     setTurnTokenUsage,
     setWorkspaceGitSnapshot,
+    t,
     upsertThread,
   ]);
 
@@ -2455,12 +2569,18 @@ export function App() {
       ...current,
       account: input.state.account,
     }));
+    if (!input.state.account.authenticated) {
+      queryClient.removeQueries({ queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY, exact: true });
+    }
   }
 
   async function handleAccountRefresh(): Promise<void> {
     await runAction(async () => {
       const response = await codexClient.call("account.read", {});
       applyAccountResult(response);
+      if (response.state.account.authenticated) {
+        await queryClient.invalidateQueries({ queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY });
+      }
       setSettingsNotice(t("settings.notices.accountRefreshed"));
     });
   }
@@ -2473,6 +2593,7 @@ export function App() {
       applyAccountResult(response);
       if (response.login.type === "chatgpt") {
         window.open(response.login.authUrl, "_blank", "noopener,noreferrer");
+        setLastAccountLoginCompletion(null);
         setAccountLoginState({
           method: "chatgpt",
           loginId: response.login.loginId,
@@ -2495,6 +2616,7 @@ export function App() {
       });
       applyAccountResult(response);
       if (response.login.type === "deviceCode") {
+        setLastAccountLoginCompletion(null);
         setAccountLoginState({
           method: "deviceCode",
           loginId: response.login.loginId,
@@ -2518,6 +2640,8 @@ export function App() {
         apiKey,
       });
       applyAccountResult(response);
+      await queryClient.invalidateQueries({ queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY });
+      setLastAccountLoginCompletion(null);
       setAccountLoginState(null);
       setSettingsNotice(t("settings.notices.apiKeyLoginSuccess"));
       success = true;
@@ -2539,6 +2663,8 @@ export function App() {
         chatgptPlanType: input.chatgptPlanType ?? null,
       });
       applyAccountResult(response);
+      await queryClient.invalidateQueries({ queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY });
+      setLastAccountLoginCompletion(null);
       setAccountLoginState(null);
       setSettingsNotice(t("settings.notices.tokensLoginSuccess"));
       success = true;
@@ -2557,6 +2683,7 @@ export function App() {
         loginId,
       });
       applyAccountResult(response);
+      setLastAccountLoginCompletion(null);
       setAccountLoginState(null);
       setSettingsNotice(
         response.status === "canceled"
@@ -2570,8 +2697,65 @@ export function App() {
     await runAction(async () => {
       const response = await codexClient.call("account.logout", {});
       applyAccountResult(response);
+      setLastAccountLoginCompletion(null);
       setAccountLoginState(null);
       setSettingsNotice(t("settings.notices.loggedOut"));
+    });
+  }
+
+  async function handleDetectExternalAgentConfig(): Promise<void> {
+    setBusyMessage(t("composer.busy.detectingExternalAgentConfig"));
+    setExternalAgentConfigPending(true);
+    await runAction(async () => {
+      const response = await codexClient.call("externalAgentConfig.detect", {
+        includeHome: true,
+        cwds: selectedWorkspaceForContext ? [selectedWorkspaceForContext.absPath] : null,
+      });
+      setExternalAgentConfigItems(response.items);
+      setSelectedExternalAgentConfigKeys(response.items.map(getExternalAgentConfigItemKey));
+      setSettingsNotice(
+        response.items.length > 0
+          ? t("settings.notices.externalAgentConfigDetected", { count: response.items.length })
+          : t("settings.notices.externalAgentConfigEmpty"),
+      );
+    }).finally(() => {
+      setExternalAgentConfigPending(false);
+    });
+  }
+
+  function handleToggleExternalAgentConfigItem(item: ExternalAgentConfigMigrationItem): void {
+    const key = getExternalAgentConfigItemKey(item);
+    setSelectedExternalAgentConfigKeys((current) =>
+      current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key],
+    );
+  }
+
+  async function handleImportExternalAgentConfig(): Promise<void> {
+    const selectedItems = externalAgentConfigItems.filter((item) =>
+      selectedExternalAgentConfigKeys.includes(getExternalAgentConfigItemKey(item)),
+    );
+    if (selectedItems.length === 0) {
+      return;
+    }
+
+    setBusyMessage(t("composer.busy.importingExternalAgentConfig"));
+    setExternalAgentConfigPending(true);
+    await runAction(async () => {
+      await codexClient.call("externalAgentConfig.import", {
+        migrationItems: selectedItems,
+      });
+      const refresh = await codexClient.call("integrations.refresh", {
+        workspaceId: activeWorkspaceId,
+        threadId: activeThreadId,
+      });
+      setIntegrationSnapshot(refresh.snapshot);
+      await queryClient.invalidateQueries({ queryKey: CONFIG_REQUIREMENTS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ACCOUNT_RATE_LIMITS_QUERY_KEY });
+      setSettingsNotice(
+        t("settings.notices.externalAgentConfigImported", { count: selectedItems.length }),
+      );
+    }).finally(() => {
+      setExternalAgentConfigPending(false);
     });
   }
 
@@ -3037,7 +3221,28 @@ export function App() {
           tab={integrations.settingsTab}
           notice={settingsNotice}
           account={account}
+          accountRateLimits={accountRateLimits}
+          accountRateLimitsLoading={accountRateLimitsQuery.isLoading || accountRateLimitsQuery.isFetching}
+          accountRateLimitsError={
+            accountRateLimitsQuery.error instanceof Error ? accountRateLimitsQuery.error.message : null
+          }
           authStatus={integrations.authStatus}
+          configRequirements={configRequirements}
+          configRequirementsLoading={
+            configRequirementsQuery.isLoading || configRequirementsQuery.isFetching
+          }
+          configRequirementsError={
+            configRequirementsQuery.error instanceof Error
+              ? configRequirementsQuery.error.message
+              : null
+          }
+          configWarnings={configWarnings}
+          deprecationNotices={deprecationNotices}
+          modelReroutes={modelReroutes}
+          externalAgentConfigItems={externalAgentConfigItems}
+          selectedExternalAgentConfigKeys={selectedExternalAgentConfigKeys}
+          externalAgentConfigPending={externalAgentConfigPending}
+          lastAccountLoginCompletion={lastAccountLoginCompletion}
           loginState={accountLoginState}
           config={bootstrap?.settings.config ?? integrations.config ?? null}
           models={models}
@@ -3063,6 +3268,9 @@ export function App() {
           onChatgptTokensLogin={(input) => handleChatgptTokensLogin(input)}
           onCancelChatgptLogin={() => void handleCancelChatgptLogin()}
           onAccountLogout={() => void handleAccountLogout()}
+          onDetectExternalAgentConfig={() => void handleDetectExternalAgentConfig()}
+          onToggleExternalAgentConfigItem={(item) => handleToggleExternalAgentConfigItem(item)}
+          onImportExternalAgentConfig={() => void handleImportExternalAgentConfig()}
           onMcpLogin={(name) => void handleMcpLogin(name)}
           onMcpStatusRefresh={() => void handleRefreshMcpServers()}
           onMcpReload={() => void handleMcpReload()}
@@ -4023,7 +4231,20 @@ function SettingsOverlay(props: {
   tab: SettingsTab;
   notice: string | null;
   account: AccountSummary | null;
+  accountRateLimits: AccountRateLimitsSnapshot | null;
+  accountRateLimitsLoading: boolean;
+  accountRateLimitsError: string | null;
   authStatus: AuthStatusSnapshot | null;
+  configRequirements: ConfigRequirementsSnapshot | null;
+  configRequirementsLoading: boolean;
+  configRequirementsError: string | null;
+  configWarnings: Array<ConfigWarningNotice>;
+  deprecationNotices: Array<DeprecationNotice>;
+  modelReroutes: Array<ModelRerouteEvent>;
+  externalAgentConfigItems: Array<ExternalAgentConfigMigrationItem>;
+  selectedExternalAgentConfigKeys: Array<string>;
+  externalAgentConfigPending: boolean;
+  lastAccountLoginCompletion: AccountLoginCompleted | null;
   loginState: AccountLoginState | null;
   config: ConfigSnapshot | null;
   models: Array<ModelOption>;
@@ -4053,6 +4274,9 @@ function SettingsOverlay(props: {
   }) => Promise<boolean>;
   onCancelChatgptLogin: () => void;
   onAccountLogout: () => void;
+  onDetectExternalAgentConfig: () => void;
+  onToggleExternalAgentConfigItem: (item: ExternalAgentConfigMigrationItem) => void;
+  onImportExternalAgentConfig: () => void;
   onMcpLogin: (name: string) => void;
   onMcpStatusRefresh: () => void;
   onMcpReload: () => void;
@@ -4146,6 +4370,9 @@ function SettingsOverlay(props: {
       : accountSummary.requiresOpenaiAuth
         ? t("settings.accountStates.needsAuth")
         : t("settings.accountStates.disconnected");
+  const selectedExternalAgentConfigCount = props.externalAgentConfigItems.filter((item) =>
+    props.selectedExternalAgentConfigKeys.includes(getExternalAgentConfigItemKey(item)),
+  ).length;
 
   const handleApiKeySubmit = async (): Promise<void> => {
     if (!apiKey.trim()) {
@@ -4264,6 +4491,44 @@ function SettingsOverlay(props: {
 
               <div className="settings-card">
                 <div className="inspector-section__header">
+                  <strong>{t("settings.accountRateLimitsTitle")}</strong>
+                  <span>{props.accountRateLimits ? t("common.active") : t("common.unknownState")}</span>
+                </div>
+                {props.accountRateLimitsLoading ? (
+                  <div className="settings-empty-inline">{t("common.loading")}</div>
+                ) : props.accountRateLimitsError ? (
+                  <div className="settings-empty-inline">{props.accountRateLimitsError}</div>
+                ) : props.accountRateLimits ? (
+                  <div className="settings-stack">
+                    {buildAccountRateLimitSections(props.accountRateLimits, t).map((section) => (
+                      <div key={section.id} className="settings-diagnostics">
+                        <div className="inspector-section__header">
+                          <strong>{section.label}</strong>
+                        </div>
+                        {section.windows.length > 0 ? (
+                          section.windows.map((window) => (
+                            <div key={`${section.id}:${window.slot}`}>
+                              <span className="field-note">
+                                {t(`settings.accountRateLimitSlots.${window.slot}`)}
+                              </span>
+                              <strong>{formatAccountRateLimitWindow(window.window, locale, t)}</strong>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="settings-empty-inline">
+                            {t("settings.accountUsageEmpty")}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="settings-empty-inline">{t("settings.accountUsageEmpty")}</div>
+                )}
+              </div>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
                   <strong>{t("settings.accountLoginTitle")}</strong>
                   <span>{accountStateLabel}</span>
                 </div>
@@ -4366,6 +4631,27 @@ function SettingsOverlay(props: {
                   {props.loginState?.phase === "failed" && props.loginState.error ? (
                     <div className="settings-empty-inline">{props.loginState.error}</div>
                   ) : null}
+
+                  {props.lastAccountLoginCompletion ? (
+                    <div className="settings-diagnostics">
+                      <div>
+                        <span className="field-note">{t("settings.accountFields.lastLoginResult")}</span>
+                        <strong>
+                          {props.lastAccountLoginCompletion.success
+                            ? t("settings.accountLoginResult.success")
+                            : t("settings.accountLoginResult.failed")}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="field-note">{t("settings.accountFields.lastLoginId")}</span>
+                        <strong>{props.lastAccountLoginCompletion.loginId ?? t("common.unknown")}</strong>
+                      </div>
+                      <div>
+                        <span className="field-note">{t("settings.accountFields.lastLoginError")}</span>
+                        <strong>{props.lastAccountLoginCompletion.error ?? t("common.unknown")}</strong>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -4428,6 +4714,139 @@ function SettingsOverlay(props: {
                   </div>
                 </div>
               </details>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.externalAgentConfigTitle")}</strong>
+                  <span>{formatNumber(props.externalAgentConfigItems.length)}</span>
+                </div>
+                <p className="field-note">{t("settings.externalAgentConfigHelp")}</p>
+                <div className="approval-actions">
+                  <button
+                    className="ghost-button"
+                    onClick={props.onDetectExternalAgentConfig}
+                    disabled={props.externalAgentConfigPending}
+                  >
+                    {t("settings.accountActions.detectExternalAgentConfig")}
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={props.onImportExternalAgentConfig}
+                    disabled={props.externalAgentConfigPending || selectedExternalAgentConfigCount === 0}
+                  >
+                    {t("settings.accountActions.importExternalAgentConfig", {
+                      count: selectedExternalAgentConfigCount,
+                    })}
+                  </button>
+                </div>
+                {props.externalAgentConfigItems.length > 0 ? (
+                  <div className="settings-stack">
+                    {props.externalAgentConfigItems.map((item) => {
+                      const key = getExternalAgentConfigItemKey(item);
+                      const checked = props.selectedExternalAgentConfigKeys.includes(key);
+                      return (
+                        <label key={key} className="settings-inline-actions">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => props.onToggleExternalAgentConfigItem(item)}
+                          />
+                          <span>
+                            <strong>{formatExternalAgentConfigItemType(item.itemType, t)}</strong>
+                            {": "}
+                            {item.description}
+                            {item.cwd ? ` (${item.cwd})` : ` (${t("settings.externalAgentConfigHomeScope")})`}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="settings-empty-inline">
+                    {t("settings.externalAgentConfigEmpty")}
+                  </div>
+                )}
+              </div>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.warningsTitle")}</strong>
+                  <span>
+                    {formatNumber(
+                      props.configWarnings.length +
+                        props.deprecationNotices.length +
+                        props.modelReroutes.length,
+                    )}
+                  </span>
+                </div>
+                {props.configWarnings.length === 0 &&
+                props.deprecationNotices.length === 0 &&
+                props.modelReroutes.length === 0 ? (
+                  <div className="settings-empty-inline">{t("settings.warningsEmpty")}</div>
+                ) : (
+                  <div className="settings-stack">
+                    {props.configWarnings.map((warning, index) => (
+                      <div key={`warning:${index}`} className="settings-diagnostics">
+                        <div>
+                          <span className="field-note">{t("settings.warningKinds.config")}</span>
+                          <strong>{warning.summary}</strong>
+                        </div>
+                        {warning.details ? (
+                          <div>
+                            <span className="field-note">{t("settings.warningDetailsLabel")}</span>
+                            <strong>{warning.details}</strong>
+                          </div>
+                        ) : null}
+                        {warning.path ? (
+                          <div>
+                            <span className="field-note">{t("settings.warningPathLabel")}</span>
+                            <strong>
+                              {warning.path}
+                              {warning.range
+                                ? `:${warning.range.start.line}:${warning.range.start.column}`
+                                : ""}
+                            </strong>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                    {props.deprecationNotices.map((notice, index) => (
+                      <div key={`deprecation:${index}`} className="settings-diagnostics">
+                        <div>
+                          <span className="field-note">{t("settings.warningKinds.deprecation")}</span>
+                          <strong>{notice.summary}</strong>
+                        </div>
+                        {notice.details ? (
+                          <div>
+                            <span className="field-note">{t("settings.warningDetailsLabel")}</span>
+                            <strong>{notice.details}</strong>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                    {props.modelReroutes.map((reroute) => (
+                      <div
+                        key={`${reroute.threadId}:${reroute.turnId}:${reroute.fromModel}:${reroute.toModel}`}
+                        className="settings-diagnostics"
+                      >
+                        <div>
+                          <span className="field-note">{t("settings.warningKinds.reroute")}</span>
+                          <strong>
+                            {t("settings.modelRerouteSummary", {
+                              fromModel: reroute.fromModel,
+                              toModel: reroute.toModel,
+                            })}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="field-note">{t("settings.warningReasonLabel")}</span>
+                          <strong>{formatModelRerouteReason(reroute.reason, t)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
 
@@ -4454,6 +4873,70 @@ function SettingsOverlay(props: {
 
           {props.tab === "defaults" ? (
             <div className="settings-stack">
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.configRequirementsTitle")}</strong>
+                  <span>{props.configRequirements ? t("common.active") : t("common.unknownState")}</span>
+                </div>
+                {props.configRequirementsLoading ? (
+                  <div className="settings-empty-inline">{t("common.loading")}</div>
+                ) : props.configRequirementsError ? (
+                  <div className="settings-empty-inline">{props.configRequirementsError}</div>
+                ) : props.configRequirements ? (
+                  <div className="settings-diagnostics">
+                    <div>
+                      <span className="field-note">{t("settings.configRequirementFields.approvalPolicies")}</span>
+                      <strong>
+                        {formatConfigRequirementList(
+                          props.configRequirements.allowedApprovalPolicies?.map((policy) =>
+                            formatApprovalPolicyLabel(policy, t),
+                          ) ?? [],
+                          t,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="field-note">{t("settings.configRequirementFields.sandboxModes")}</span>
+                      <strong>
+                        {formatConfigRequirementList(
+                          props.configRequirements.allowedSandboxModes?.map((mode) =>
+                            formatSandboxModeLabel(mode, t),
+                          ) ?? [],
+                          t,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="field-note">{t("settings.configRequirementFields.webSearchModes")}</span>
+                      <strong>
+                        {formatConfigRequirementList(
+                          props.configRequirements.allowedWebSearchModes?.map((mode) =>
+                            formatWebSearchModeLabel(mode, t),
+                          ) ?? [],
+                          t,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="field-note">{t("settings.configRequirementFields.residency")}</span>
+                      <strong>
+                        {props.configRequirements.enforceResidency
+                          ? t("settings.configRequirementResidency.us")
+                          : t("settings.configRequirementResidency.none")}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="field-note">{t("settings.configRequirementFields.features")}</span>
+                      <strong>
+                        {formatFeatureRequirements(props.configRequirements.featureRequirements, t)}
+                      </strong>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="settings-empty-inline">{t("settings.configRequirementsEmpty")}</div>
+                )}
+              </div>
+
               <div className="settings-card">
                 <div className="inspector-section__header">
                   <strong>{t("settings.defaultAgentConfig")}</strong>
@@ -5637,6 +6120,21 @@ function formatApprovalPolicy(value: ApprovalPolicy | null | undefined): string 
   return translate("common.default");
 }
 
+function formatApprovalPolicyLabel(value: ApprovalPolicy, t: TFunction): string {
+  switch (value) {
+    case "on-request":
+      return t("settings.approvalPolicies.on-request");
+    case "on-failure":
+      return t("settings.approvalPolicies.on-failure");
+    case "untrusted":
+      return t("settings.approvalPolicies.untrusted");
+    case "never":
+      return t("settings.approvalPolicies.never");
+    default:
+      return value;
+  }
+}
+
 function formatSettingsAuthMethodLabel(
   value: string | null | undefined,
   t: TFunction,
@@ -5683,6 +6181,165 @@ function formatSandboxMode(value: SandboxMode | null | undefined): string {
   }
 
   return translate("common.default");
+}
+
+function formatSandboxModeLabel(value: SandboxMode, t: TFunction): string {
+  switch (value) {
+    case "danger-full-access":
+      return t("settings.sandboxModes.danger-full-access");
+    case "workspace-write":
+      return t("settings.sandboxModes.workspace-write");
+    case "read-only":
+      return t("settings.sandboxModes.read-only");
+    default:
+      return value;
+  }
+}
+
+function formatWebSearchModeLabel(
+  value: NonNullable<ConfigRequirementsSnapshot["allowedWebSearchModes"]>[number],
+  t: TFunction,
+): string {
+  switch (value) {
+    case "disabled":
+      return t("settings.webSearchModes.disabled");
+    case "cached":
+      return t("settings.webSearchModes.cached");
+    case "live":
+      return t("settings.webSearchModes.live");
+    default:
+      return String(value);
+  }
+}
+
+function formatConfigRequirementList(values: Array<string>, t: TFunction): string {
+  return values.length > 0 ? values.join(", ") : t("settings.configRequirementsUnrestricted");
+}
+
+function formatFeatureRequirements(
+  requirements: ConfigRequirementsSnapshot["featureRequirements"],
+  t: TFunction,
+): string {
+  if (!requirements || Object.keys(requirements).length === 0) {
+    return t("settings.configRequirementsUnrestricted");
+  }
+
+  return Object.entries(requirements)
+    .map(([feature, enabled]) =>
+      `${feature}: ${enabled ? t("common.enabled") : t("common.disabled")}`,
+    )
+    .join(", ");
+}
+
+function buildAccountRateLimitSections(
+  rateLimits: AccountRateLimitsSnapshot,
+  t: TFunction,
+): Array<{
+  id: string;
+  label: string;
+  windows: Array<{
+    slot: "primary" | "secondary";
+    window: AccountRateLimitsSnapshot["rateLimits"]["primary"];
+  }>;
+}> {
+  const sections = [
+    {
+      id: "default",
+      label: t("settings.accountRateLimitSections.default"),
+      snapshot: rateLimits.rateLimits,
+    },
+    ...Object.entries(rateLimits.rateLimitsByLimitId).map(([limitId, snapshot]) => ({
+      id: limitId,
+      label: t("settings.accountRateLimitSections.limit", { limitId }),
+      snapshot,
+    })),
+  ];
+
+  return sections.map((section) => ({
+    id: section.id,
+    label: section.label,
+    windows: section.snapshot
+      ? [
+          { slot: "primary" as const, window: section.snapshot.primary },
+          { slot: "secondary" as const, window: section.snapshot.secondary },
+        ].filter((entry) => entry.window !== null)
+      : [],
+  }));
+}
+
+function formatAccountRateLimitWindow(
+  window: AccountRateLimitsSnapshot["rateLimits"]["primary"],
+  locale: string,
+  t: TFunction,
+): string {
+  if (!window) {
+    return t("common.unknown");
+  }
+
+  const parts: Array<string> = [
+    t("settings.accountRateLimitWindowSummary", {
+      duration: formatUsageWindowDuration(window.windowDurationMins, t),
+      remaining: formatUsageRemaining(window.remainingPercent),
+    }),
+  ];
+  if (window.usedPercent !== null) {
+    parts.push(
+      t("settings.accountRateLimitWindowUsed", {
+        used: `${Math.round(window.usedPercent)}%`,
+      }),
+    );
+  }
+  if (window.resetsAt) {
+    parts.push(formatDateTime(window.resetsAt / 1000, locale as "zh-CN" | "en-US"));
+  }
+  return parts.join(" · ");
+}
+
+function formatUsageWindowDuration(value: number | null, t: TFunction): string {
+  if (!value || value <= 0) {
+    return t("common.unknown");
+  }
+
+  if (value % 10_080 === 0) {
+    return t("settings.duration.weeks", { count: value / 10_080 });
+  }
+  if (value % 1_440 === 0) {
+    return t("settings.duration.days", { count: value / 1_440 });
+  }
+  if (value % 60 === 0) {
+    return t("settings.duration.hours", { count: value / 60 });
+  }
+  return t("settings.duration.minutes", { count: value });
+}
+
+function formatExternalAgentConfigItemType(
+  value: ExternalAgentConfigMigrationItem["itemType"],
+  t: TFunction,
+): string {
+  switch (value) {
+    case "AGENTS_MD":
+      return t("settings.externalAgentConfigTypes.agents");
+    case "CONFIG":
+      return t("settings.externalAgentConfigTypes.config");
+    case "SKILLS":
+      return t("settings.externalAgentConfigTypes.skills");
+    case "MCP_SERVER_CONFIG":
+      return t("settings.externalAgentConfigTypes.mcp");
+    default:
+      return value;
+  }
+}
+
+function formatModelRerouteReason(
+  value: ModelRerouteEvent["reason"],
+  t: TFunction,
+): string {
+  switch (value) {
+    case "highRiskCyberActivity":
+      return t("settings.modelRerouteReasons.highRiskCyberActivity");
+    default:
+      return value;
+  }
 }
 
 function formatThreadTitle(thread: Pick<ThreadSummary, "name" | "preview"> | null): string | null {
