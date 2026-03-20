@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
-import { AppError } from "@webcli/contracts";
+import { AppError, buildDefaultServerRequestResolveInput, isLegacyServerRequestResolveInput } from "@webcli/contracts";
 import type {
   AppClientCallEnvelope,
   AppClientMessage,
@@ -19,9 +19,11 @@ import type {
   GitWorkingTreeSnapshot,
   HealthResponse,
   IntegrationSnapshot,
+  LegacyServerRequestResolveInput,
   ModelRerouteEvent,
   RequestId,
   RuntimeStatus,
+  ServerRequestResolveInput,
   ThreadSummary,
   ThreadSummaryPageResponse,
   WorkbenchThread,
@@ -372,9 +374,8 @@ export class WorkbenchService {
           (message.params as AppRequestParams<"approval.resolve">).decision,
         );
       case "serverRequest.resolve":
-        return this.handleApprovalResolve(
-          (message.params as AppRequestParams<"serverRequest.resolve">).requestId,
-          (message.params as AppRequestParams<"serverRequest.resolve">).decision,
+        return this.handleServerRequestResolve(
+          message.params as AppRequestParams<"serverRequest.resolve">,
         );
       case "integrations.refresh":
         return {
@@ -839,7 +840,29 @@ export class WorkbenchService {
       throw new AppError("approval.not_pending", "Approval no longer pending");
     }
 
-    await this.runtime.resolveApproval(approval, decision);
+    await this.runtime.resolveServerRequest(
+      approval,
+      buildDefaultServerRequestResolveInput(approval, decision),
+    );
+    this.approvalBroker.resolve(requestId);
+    this.broadcast("approval.resolved", { requestId });
+    this.broadcast("serverRequest.resolved", { requestId });
+    return { ok: true };
+  }
+
+  private async handleServerRequestResolve(
+    input: ServerRequestResolveInput | LegacyServerRequestResolveInput,
+  ): Promise<{ ok: true }> {
+    const requestId = input.requestId;
+    const request = this.approvalBroker.get(requestId);
+    if (!request) {
+      throw new AppError("approval.not_pending", "Approval no longer pending");
+    }
+
+    const normalized = isLegacyServerRequestResolveInput(input)
+      ? buildDefaultServerRequestResolveInput(request, input.decision)
+      : input;
+    await this.runtime.resolveServerRequest(request, normalized);
     this.approvalBroker.resolve(requestId);
     this.broadcast("approval.resolved", { requestId });
     this.broadcast("serverRequest.resolved", { requestId });

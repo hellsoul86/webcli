@@ -38,7 +38,7 @@ import type {
   InspectorTab,
   ModelRerouteEvent,
   ModelOption,
-  PendingApproval,
+  ServerRequestResolveInput,
   ProductSurface,
   ReasoningEffort,
   RemoteSkillSummary,
@@ -77,6 +77,7 @@ import {
   summarizeGitSnapshot,
   type GitFileTreeNode,
 } from "./inspector-helpers";
+import { DecisionCenter } from "./decision-center";
 
 const LazyGitReviewPanel = lazy(() =>
   import("./git-review-panel").then((module) => ({
@@ -2384,16 +2385,12 @@ export function App() {
     });
   }
 
-  async function handleResolveApproval(
-    approval: PendingApproval,
-    decision: "accept" | "decline",
+  async function handleResolveServerRequest(
+    resolution: ServerRequestResolveInput,
   ): Promise<void> {
     await runAction(async () => {
-      await codexClient.call("approval.resolve", {
-        requestId: approval.id,
-        decision,
-      });
-      resolveApprovalInStore(approval.id);
+      await codexClient.call("serverRequest.resolve", resolution);
+      resolveApprovalInStore(resolution.requestId);
     });
   }
 
@@ -3182,7 +3179,7 @@ export function App() {
               </>
             )}
 
-            <ApprovalRail approvals={pendingApprovals} onResolve={handleResolveApproval} />
+            <DecisionCenter requests={pendingApprovals} onResolve={handleResolveServerRequest} />
           </section>
         </div>
       </div>
@@ -4179,51 +4176,6 @@ function GitFileTreeRow(props: {
         <span className="window-stat window-stat--negative">{`-${fileNode.file.deletions}`}</span>
       </div>
     </button>
-  );
-}
-
-function ApprovalRail(props: {
-  approvals: Array<PendingApproval>;
-  onResolve: (approval: PendingApproval, decision: "accept" | "decline") => Promise<void>;
-}) {
-  const { t } = useAppLocale();
-  if (props.approvals.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="approval-rail">
-      <div className="inspector-section__header">
-        <strong>{t("settings.approvalPolicy")}</strong>
-        <span>{formatNumber(props.approvals.length)}</span>
-      </div>
-      {props.approvals.map((approval) => (
-        <div
-          key={String(approval.id)}
-          className="approval-card"
-          data-testid={`approval-card-${String(approval.id)}`}
-        >
-          <strong>{approval.method}</strong>
-          <pre>{JSON.stringify(approval.params, null, 2)}</pre>
-          <div className="approval-actions">
-            <button
-              className="primary-button"
-              data-testid={`approval-accept-${String(approval.id)}`}
-              onClick={() => void props.onResolve(approval, "accept")}
-            >
-              {t("common.accept")}
-            </button>
-            <button
-              className="ghost-button"
-              data-testid={`approval-decline-${String(approval.id)}`}
-              onClick={() => void props.onResolve(approval, "decline")}
-            >
-              {t("common.decline")}
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }
 
