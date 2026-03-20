@@ -37,6 +37,8 @@ const WAVE1_NOTIFICATIONS_NOT_MISSING = [
   "model/rerouted",
   "deprecationNotice",
   "configWarning",
+  "rawResponseItem/completed",
+  "item/commandExecution/terminalInteraction",
 ];
 const WAVE2_REQUESTS_DEFERRED = ["experimentalFeature/list", "feedback/upload"];
 const WAVE2_NOTIFICATIONS_DEFERRED = [
