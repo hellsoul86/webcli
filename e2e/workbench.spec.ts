@@ -123,7 +123,10 @@ test("renders markdown and media resources inside the timeline stream", async ({
   await expect(timeline.locator("strong").filter({ hasText: "beta" }).first()).toBeVisible();
   await expect(timeline.locator("img").first()).toHaveAttribute("src", /data:image\/png/i);
   await expect(timeline.locator("audio").first()).toHaveAttribute("src", /data:audio\/wav/i);
-  await timeline.locator("img").first().click();
+  await timeline
+    .locator("img")
+    .first()
+    .evaluate((node) => (node as HTMLImageElement).click());
   await expect(page.getByTestId("image-preview-modal")).toBeVisible();
   await expect(page.getByTestId("image-preview-full")).toHaveAttribute("src", /data:image\/png/i);
 });
