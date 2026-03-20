@@ -106,6 +106,65 @@ export type AppRequestMap = {
   }, { snapshot: IntegrationSnapshot }>;
   "integrations.mcp.login": RpcDefinition<{ name: string }, { authorizationUrl: string }>;
   "integrations.mcp.reload": RpcDefinition<Record<string, never>, { snapshot: IntegrationSnapshot }>;
+  "mcpServerStatus.list": RpcDefinition<Record<string, never>, {
+    servers: Array<import("./domain.js").McpServerSnapshot>;
+  }>;
+  "skills.list": RpcDefinition<{
+    workspaceId?: string | "all";
+  }, {
+    skills: Array<import("./domain.js").SkillGroupSnapshot>;
+  }>;
+  "skills.remote.list": RpcDefinition<{
+    hazelnutScope: import("./domain.js").HazelnutScope;
+    productSurface: import("./domain.js").ProductSurface;
+    enabled: boolean;
+  }, {
+    skills: Array<import("./domain.js").RemoteSkillSummary>;
+  }>;
+  "skills.remote.export": RpcDefinition<{
+    hazelnutId: string;
+    workspaceId?: string | "all";
+  }, {
+    skill: import("./domain.js").RemoteSkillExportResult;
+    skills: Array<import("./domain.js").SkillGroupSnapshot>;
+  }>;
+  "skills.config.write": RpcDefinition<{
+    path: string;
+    enabled: boolean;
+    workspaceId?: string | "all";
+  }, {
+    effectiveEnabled: boolean;
+    skills: Array<import("./domain.js").SkillGroupSnapshot>;
+  }>;
+  "app.list": RpcDefinition<{
+    threadId?: string | null;
+    forceRefetch?: boolean;
+  }, {
+    apps: Array<import("./domain.js").AppSnapshot>;
+  }>;
+  "plugin.list": RpcDefinition<{
+    workspaceId?: string | "all";
+  }, {
+    marketplaces: Array<import("./domain.js").PluginMarketplaceSnapshot>;
+  }>;
+  "plugin.install": RpcDefinition<{
+    marketplacePath: string;
+    pluginName: string;
+    workspaceId?: string | "all";
+    threadId?: string | null;
+  }, {
+    marketplaces: Array<import("./domain.js").PluginMarketplaceSnapshot>;
+    apps: Array<import("./domain.js").AppSnapshot>;
+    appsNeedingAuth: Array<import("./domain.js").AppInstallHint>;
+  }>;
+  "plugin.uninstall": RpcDefinition<{
+    pluginId: string;
+    workspaceId?: string | "all";
+    threadId?: string | null;
+  }, {
+    marketplaces: Array<import("./domain.js").PluginMarketplaceSnapshot>;
+    apps: Array<import("./domain.js").AppSnapshot>;
+  }>;
   "integrations.plugin.uninstall": RpcDefinition<{
     pluginId: string;
     workspaceId?: string | "all";
@@ -171,6 +230,8 @@ export type AppEventMap = {
   "serverRequest.requested": { request: PendingServerRequest };
   "serverRequest.resolved": { requestId: RequestId };
   "integrations.updated": { snapshot: IntegrationSnapshot };
+  "skills.changed": Record<string, never>;
+  "app.listUpdated": { apps: Array<import("./domain.js").AppSnapshot> };
 };
 
 export type AppEventMethod = keyof AppEventMap;

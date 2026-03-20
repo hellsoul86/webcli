@@ -387,6 +387,54 @@ export class WorkbenchService {
         return {
           snapshot: await this.refreshIntegrations(),
         };
+      case "mcpServerStatus.list":
+        return {
+          servers: await this.runtime.listMcpServerStatuses(),
+        };
+      case "skills.list":
+        return {
+          skills: await this.runtime.listSkills(
+            await this.resolveWorkspaceCwd(
+              (message.params as AppRequestParams<"skills.list">).workspaceId,
+            ),
+          ),
+        };
+      case "skills.remote.list":
+        return {
+          skills: await this.runtime.listRemoteSkills(
+            message.params as AppRequestParams<"skills.remote.list">,
+          ),
+        };
+      case "skills.remote.export":
+        return this.handleRemoteSkillExport(
+          message.params as AppRequestParams<"skills.remote.export">,
+        );
+      case "skills.config.write":
+        return this.handleSkillConfigWrite(
+          message.params as AppRequestParams<"skills.config.write">,
+        );
+      case "app.list":
+        return {
+          apps: await this.runtime.listApps(
+            message.params as AppRequestParams<"app.list">,
+          ),
+        };
+      case "plugin.list":
+        return {
+          marketplaces: await this.runtime.listPlugins(
+            await this.resolveWorkspaceCwd(
+              (message.params as AppRequestParams<"plugin.list">).workspaceId,
+            ),
+          ),
+        };
+      case "plugin.install":
+        return this.handlePluginInstall(
+          message.params as AppRequestParams<"plugin.install">,
+        );
+      case "plugin.uninstall":
+        return this.handlePluginUninstall(
+          message.params as AppRequestParams<"plugin.uninstall">,
+        );
       case "integrations.plugin.uninstall":
         await this.runtime.uninstallPlugin(
           (message.params as AppRequestParams<"integrations.plugin.uninstall">).pluginId,
@@ -575,6 +623,66 @@ export class WorkbenchService {
     this.invalidateWorkspaceCatalog();
     this.broadcast("thread.updated", { thread: thread.thread });
     return thread;
+  }
+
+  private async handleRemoteSkillExport(
+    params: AppRequestParams<"skills.remote.export">,
+  ): Promise<AppRequestResult<"skills.remote.export">> {
+    const skill = await this.runtime.exportRemoteSkill(params.hazelnutId);
+    const skills = await this.runtime.listSkills(await this.resolveWorkspaceCwd(params.workspaceId));
+    return {
+      skill,
+      skills,
+    };
+  }
+
+  private async handleSkillConfigWrite(
+    params: AppRequestParams<"skills.config.write">,
+  ): Promise<AppRequestResult<"skills.config.write">> {
+    const response = await this.runtime.writeSkillConfig(params.path, params.enabled);
+    const skills = await this.runtime.listSkills(await this.resolveWorkspaceCwd(params.workspaceId));
+    return {
+      effectiveEnabled: response.effectiveEnabled,
+      skills,
+    };
+  }
+
+  private async handlePluginInstall(
+    params: AppRequestParams<"plugin.install">,
+  ): Promise<AppRequestResult<"plugin.install">> {
+    const install = await this.runtime.installPlugin({
+      marketplacePath: params.marketplacePath,
+      pluginName: params.pluginName,
+    });
+    const [marketplaces, apps] = await Promise.all([
+      this.runtime.listPlugins(await this.resolveWorkspaceCwd(params.workspaceId)),
+      this.runtime.listApps({
+        threadId: params.threadId ?? null,
+        forceRefetch: true,
+      }),
+    ]);
+    return {
+      marketplaces,
+      apps,
+      appsNeedingAuth: install.appsNeedingAuth,
+    };
+  }
+
+  private async handlePluginUninstall(
+    params: AppRequestParams<"plugin.uninstall">,
+  ): Promise<AppRequestResult<"plugin.uninstall">> {
+    await this.runtime.uninstallPlugin(params.pluginId);
+    const [marketplaces, apps] = await Promise.all([
+      this.runtime.listPlugins(await this.resolveWorkspaceCwd(params.workspaceId)),
+      this.runtime.listApps({
+        threadId: params.threadId ?? null,
+        forceRefetch: true,
+      }),
+    ]);
+    return {
+      marketplaces,
+      apps,
+    };
   }
 
   private async handleThreadResume(
@@ -1027,6 +1135,12 @@ export class WorkbenchService {
         void this.refreshWorkspaceGitSnapshotForPath(session?.cwd ?? null);
         return;
       }
+      case "skills.changed":
+        this.broadcast("skills.changed", {});
+        return;
+      case "app.list.updated":
+        this.broadcast("app.listUpdated", { apps: event.apps });
+        return;
     }
   }
 
@@ -1099,11 +1213,17 @@ export class WorkbenchService {
     workspaceId?: string | "all",
     threadId?: string | null,
   ): Promise<IntegrationSnapshot> {
-    const workspace = workspaceId && workspaceId !== "all" ? await this.resolveWorkspace(workspaceId) : null;
     return this.runtime.getIntegrationSnapshot({
-      cwd: workspace?.absPath ?? null,
+      cwd: await this.resolveWorkspaceCwd(workspaceId),
       threadId: threadId ?? null,
     });
+  }
+
+  private async resolveWorkspaceCwd(
+    workspaceId?: string | "all",
+  ): Promise<string | null> {
+    const workspace = workspaceId && workspaceId !== "all" ? await this.resolveWorkspace(workspaceId) : null;
+    return workspace?.absPath ?? null;
   }
 
   private async resolveWorkspace(id: string): Promise<WorkspaceRecord | null> {

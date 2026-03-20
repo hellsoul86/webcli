@@ -6,6 +6,8 @@ import type {
   AccountLoginStartResponse,
   AccountStateSnapshot,
   AccountSummary,
+  AppInstallHint,
+  AppSnapshot,
   ApprovalPolicy,
   ConfigSnapshot,
   FuzzySearchSnapshot,
@@ -13,13 +15,20 @@ import type {
   GitFileReviewDetail,
   GitWorkingTreeFile,
   GitWorkingTreeSnapshot,
+  HazelnutScope,
   IntegrationSnapshot,
   ModelOption,
+  McpServerSnapshot,
   PendingApproval,
+  PluginMarketplaceSnapshot,
+  ProductSurface,
   ReasoningEffort,
+  RemoteSkillExportResult,
+  RemoteSkillSummary,
   RuntimeStatus,
   SandboxMode,
   ThreadMetadataGitInfoUpdate,
+  SkillGroupSnapshot,
   TimelineEntry,
 } from "@webcli/contracts";
 import type {
@@ -694,7 +703,15 @@ export class FakeRuntime implements SessionRuntime {
       skills: [
         {
           cwd: this.projectRoot,
-          skills: [{ name: "playwright" }],
+          skills: [
+            {
+              name: "playwright",
+              description: "Drive a browser from the shell.",
+              shortDescription: "Browser automation",
+              path: join(this.projectRoot, ".codex/skills/playwright"),
+              enabled: true,
+            },
+          ],
           errors: [],
         },
       ],
@@ -764,6 +781,104 @@ export class FakeRuntime implements SessionRuntime {
   }
 
   async reloadMcp(): Promise<void> {}
+
+  async listMcpServerStatuses(): Promise<Array<McpServerSnapshot>> {
+    return [
+      {
+        name: "filesystem",
+        authStatus: "connected",
+        toolsCount: 3,
+        resourcesCount: 1,
+      },
+    ];
+  }
+
+  async listSkills(): Promise<Array<SkillGroupSnapshot>> {
+    return [
+      {
+        cwd: this.projectRoot,
+        skills: [
+          {
+            name: "playwright",
+            description: "Drive a browser from the shell.",
+            shortDescription: "Browser automation",
+            path: join(this.projectRoot, ".codex/skills/playwright"),
+            enabled: true,
+          },
+        ],
+        errors: [],
+      },
+    ];
+  }
+
+  async listRemoteSkills(_input: {
+    hazelnutScope: HazelnutScope;
+    productSurface: ProductSurface;
+    enabled: boolean;
+  }): Promise<Array<RemoteSkillSummary>> {
+    return [
+      {
+        id: "remote-playwright",
+        name: "Remote Playwright",
+        description: "Shared browser automation skill.",
+      },
+    ];
+  }
+
+  async exportRemoteSkill(hazelnutId: string): Promise<RemoteSkillExportResult> {
+    return {
+      id: hazelnutId,
+      path: join(this.projectRoot, ".codex/skills", hazelnutId),
+    };
+  }
+
+  async writeSkillConfig(_path: string, enabled: boolean): Promise<{ effectiveEnabled: boolean }> {
+    return { effectiveEnabled: enabled };
+  }
+
+  async listApps(): Promise<Array<AppSnapshot>> {
+    return [
+      {
+        id: "github",
+        name: "GitHub",
+        description: "Connector",
+        isAccessible: true,
+        isEnabled: true,
+        pluginDisplayNames: ["Fake Plugin"],
+        installUrl: "https://example.com/install/github",
+      },
+    ];
+  }
+
+  async listPlugins(): Promise<Array<PluginMarketplaceSnapshot>> {
+    return [
+      {
+        path: join(this.projectRoot, "plugins"),
+        name: "Local plugins",
+        plugins: [
+          {
+            id: "fake-plugin",
+            name: "Fake Plugin",
+            installed: true,
+            enabled: true,
+          },
+        ],
+      },
+    ];
+  }
+
+  async installPlugin(): Promise<{ appsNeedingAuth: Array<AppInstallHint> }> {
+    return {
+      appsNeedingAuth: [
+        {
+          id: "github",
+          name: "GitHub",
+          description: "Connector",
+          installUrl: "https://example.com/install/github",
+        },
+      ],
+    };
+  }
 
   async uninstallPlugin(): Promise<void> {}
 

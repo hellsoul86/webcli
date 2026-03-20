@@ -62,6 +62,8 @@ export type ApprovalPolicy = "on-request" | "on-failure" | "untrusted" | "never"
 export type SandboxMode = "danger-full-access" | "workspace-write" | "read-only";
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ServiceTier = "fast" | "flex";
+export type HazelnutScope = "example" | "workspace-shared" | "all-shared" | "personal";
+export type ProductSurface = "chatgpt" | "codex" | "api" | "atlas";
 export type SettingsTab =
   | "account"
   | "general"
@@ -469,6 +471,10 @@ export type McpServerSnapshot = {
 
 export type SkillSummary = {
   name: string;
+  description: string;
+  shortDescription: string | null;
+  path: string;
+  enabled: boolean;
 };
 
 export type SkillErrorSummary = {
@@ -486,7 +492,15 @@ export type AppSnapshot = {
   name: string;
   description: string | null;
   isAccessible: boolean;
+  isEnabled: boolean;
   pluginDisplayNames: Array<string>;
+  installUrl: string | null;
+};
+
+export type AppInstallHint = {
+  id: string;
+  name: string;
+  description: string | null;
   installUrl: string | null;
 };
 
@@ -501,6 +515,17 @@ export type PluginMarketplaceSnapshot = {
   path: string;
   name: string;
   plugins: Array<PluginSnapshot>;
+};
+
+export type RemoteSkillSummary = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+export type RemoteSkillExportResult = {
+  id: string;
+  path: string;
 };
 
 export type IntegrationSnapshot = {

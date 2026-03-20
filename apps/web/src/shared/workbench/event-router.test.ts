@@ -104,6 +104,7 @@ describe("routeWorkbenchServerMessage", () => {
       resolveApproval: vi.fn(),
       setCommandSession: vi.fn(),
       appendCommandOutput: vi.fn(),
+      setIntegrations: vi.fn(),
       setIntegrationSnapshot: vi.fn(),
       setWorkspaceGitSnapshot: vi.fn(),
     });
@@ -157,6 +158,7 @@ describe("routeWorkbenchServerMessage", () => {
       resolveApproval: vi.fn(),
       setCommandSession: vi.fn(),
       appendCommandOutput: vi.fn(),
+      setIntegrations: vi.fn(),
       setIntegrationSnapshot: vi.fn(),
       setWorkspaceGitSnapshot: vi.fn(),
     });
@@ -191,6 +193,7 @@ describe("routeWorkbenchServerMessage", () => {
       resolveApproval: vi.fn(),
       setCommandSession: vi.fn(),
       appendCommandOutput: vi.fn(),
+      setIntegrations: vi.fn(),
       setIntegrationSnapshot: vi.fn(),
       setWorkspaceGitSnapshot: vi.fn(),
       onTimelineDeltaFlush: vi.fn(),
@@ -317,6 +320,7 @@ describe("routeWorkbenchServerMessage", () => {
         resolveApproval: vi.fn(),
         setCommandSession: vi.fn(),
         appendCommandOutput: vi.fn(),
+        setIntegrations: vi.fn(),
         setIntegrationSnapshot: vi.fn(),
         setWorkspaceGitSnapshot: vi.fn(),
       },
@@ -355,6 +359,7 @@ describe("routeWorkbenchServerMessage", () => {
         resolveApproval: vi.fn(),
         setCommandSession: vi.fn(),
         appendCommandOutput: vi.fn(),
+        setIntegrations: vi.fn(),
         setIntegrationSnapshot: vi.fn(),
         setWorkspaceGitSnapshot: vi.fn(),
       },
@@ -410,6 +415,7 @@ describe("routeWorkbenchServerMessage", () => {
         resolveApproval: vi.fn(),
         setCommandSession: vi.fn(),
         appendCommandOutput: vi.fn(),
+        setIntegrations: vi.fn(),
         setIntegrationSnapshot: vi.fn(),
         setWorkspaceGitSnapshot: vi.fn(),
       },
@@ -431,6 +437,102 @@ describe("routeWorkbenchServerMessage", () => {
         reasoningOutputTokens: 2,
       },
       modelContextWindow: 128000,
+    });
+  });
+
+  it("invalidates integrations when skills change", () => {
+    const queryClient = new QueryClient();
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "skills.changed",
+        params: {},
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        markThreadClosed: vi.fn(),
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        setTurnTokenUsage: vi.fn(),
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrations: vi.fn(),
+        setIntegrationSnapshot: vi.fn(),
+        setWorkspaceGitSnapshot: vi.fn(),
+      },
+    );
+
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["integrations"] });
+  });
+
+  it("updates app state when the runtime pushes an app list refresh", () => {
+    const queryClient = new QueryClient();
+    const setIntegrations = vi.fn();
+
+    routeWorkbenchServerMessage(
+      {
+        type: "server.notification",
+        method: "app.listUpdated",
+        params: {
+          apps: [
+            {
+              id: "github",
+              name: "GitHub",
+              description: "Connector",
+              isAccessible: true,
+              isEnabled: true,
+              pluginDisplayNames: ["plugins/github"],
+              installUrl: "https://example.com/install",
+            },
+          ],
+        },
+      },
+      {
+        queryClient,
+        setConnection: vi.fn(),
+        upsertThread: vi.fn(),
+        markThreadClosed: vi.fn(),
+        applyTurn: vi.fn(),
+        applyTimelineItem: vi.fn(),
+        appendDelta: vi.fn(),
+        appendDeltaBatch: vi.fn(),
+        setLatestDiff: vi.fn(),
+        setLatestPlan: vi.fn(),
+        setReview: vi.fn(),
+        setTurnTokenUsage: vi.fn(),
+        queueApproval: vi.fn(),
+        resolveApproval: vi.fn(),
+        setCommandSession: vi.fn(),
+        appendCommandOutput: vi.fn(),
+        setIntegrations,
+        setIntegrationSnapshot: vi.fn(),
+        setWorkspaceGitSnapshot: vi.fn(),
+      },
+    );
+
+    expect(setIntegrations).toHaveBeenCalledWith({
+      apps: [
+        {
+          id: "github",
+          name: "GitHub",
+          description: "Connector",
+          isAccessible: true,
+          isEnabled: true,
+          pluginDisplayNames: ["plugins/github"],
+          installUrl: "https://example.com/install",
+        },
+      ],
     });
   });
 });
