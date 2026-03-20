@@ -100,11 +100,11 @@
       "thread/compacted",
       "fuzzyFileSearch/sessionUpdated",
       "fuzzyFileSearch/sessionCompleted",
-      "account/login/completed"
+      "account/login/completed",
+      "rawResponseItem/completed",
+      "item/commandExecution/terminalInteraction"
     ],
     "missing": [
-      "rawResponseItem/completed",
-      "item/commandExecution/terminalInteraction",
       "windows/worldWritableWarning",
       "windowsSandbox/setupCompleted"
     ],
@@ -173,6 +173,8 @@
     "item/reasoning/summaryTextDelta": "timeline.delta",
     "item/reasoning/summaryPartAdded": "timeline.delta",
     "item/reasoning/textDelta": "timeline.delta",
+    "rawResponseItem/completed": "timeline.item",
+    "item/commandExecution/terminalInteraction": "timeline.item",
     "thread/compacted": "timeline.item",
     "thread/tokenUsage/updated": "thread.tokenUsageUpdated",
     "app/list/updated": "app.listUpdated",
@@ -189,6 +191,8 @@
     "getAuthStatus": "Bootstrap includes auth state, but not through a dedicated capability-plane request.",
     "error": "Runtime status and lastError capture some failures, but not the full raw error notification surface.",
     "mcpServer/oauthLogin/completed": "The UI refreshes integrations after login, but there is no dedicated completion event yet.",
+    "rawResponseItem/completed": "Implemented through the existing timeline.item path, so it is supported as a first-class timeline entry but still grouped under the generic timeline event surface.",
+    "item/commandExecution/terminalInteraction": "Implemented through the existing timeline.item path, so it is supported as a first-class timeline entry but still grouped under the generic timeline event surface.",
     "experimentalFeature/list": "Deferred to wave 2 long-tail capability work.",
     "feedback/upload": "Deferred to wave 2 long-tail capability work.",
     "thread/realtime/started": "Realtime thread and output-audio support are explicitly deferred to wave 2.",
