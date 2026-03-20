@@ -79,8 +79,15 @@ test("desktop parity matrix keeps implemented wave1 capability families out of m
 
   assertNotMissing(matrix.requests, WAVE1_REQUESTS_NOT_MISSING, "requests");
   assertNotMissing(matrix.notifications, WAVE1_NOTIFICATIONS_NOT_MISSING, "notifications");
-  assertDeferred(matrix.requests, WAVE2_REQUESTS_DEFERRED, "requests");
-  assertDeferred(matrix.notifications, WAVE2_NOTIFICATIONS_DEFERRED, "notifications");
+});
+
+test("desktop parity matrix keeps wave1 fully classified and wave2 explicitly deferred", () => {
+  const matrix = JSON.parse(readFileSync(matrixPath, "utf8"));
+
+  assertMissingEmpty(matrix.requests, "requests");
+  assertMissingEmpty(matrix.notifications, "notifications");
+  assertDeferredExactly(matrix.requests, WAVE2_REQUESTS_DEFERRED, "requests");
+  assertDeferredExactly(matrix.notifications, WAVE2_NOTIFICATIONS_DEFERRED, "notifications");
 });
 
 function assertStatusPartition(statusMap, expectedMethods, label) {
@@ -118,13 +125,20 @@ function assertNotMissing(statusMap, methods, label) {
   }
 }
 
-function assertDeferred(statusMap, methods, label) {
-  for (const method of methods) {
-    assert.ok(
-      statusMap["deferred-wave2"].includes(method),
-      `${label} method ${method} should stay in deferred-wave2`,
-    );
-  }
+function assertMissingEmpty(statusMap, label) {
+  assert.deepEqual(
+    [...statusMap.missing].sort(),
+    [],
+    `${label}.missing must stay empty for the wave1 release gate`,
+  );
+}
+
+function assertDeferredExactly(statusMap, methods, label) {
+  assert.deepEqual(
+    [...statusMap["deferred-wave2"]].sort(),
+    [...methods].sort(),
+    `${label}.deferred-wave2 must match the explicit wave2 allowlist`,
+  );
 }
 
 function extractMethods(source) {
