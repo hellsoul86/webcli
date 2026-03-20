@@ -21,6 +21,9 @@ export type {
   CommandSession,
   IntegrationState,
   PendingApproval,
+  RealtimeAudioState,
+  RealtimeSessionState,
+  RealtimeTranscriptEntry,
   ThreadView,
   TimelineEntry,
 } from "./workbench-store.types";

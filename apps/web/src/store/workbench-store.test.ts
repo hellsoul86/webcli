@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitWorkingTreeSnapshot, WorkbenchThread } from "@webcli/contracts";
 import {
   countTimelineEntries,
@@ -119,6 +119,7 @@ afterEach(() => {
     gitSnapshotsByWorkspaceId: {},
     selectedGitFileByWorkspaceId: {},
     pendingApprovals: [],
+    realtimeSessionsByThreadId: {},
     commandSessions: {},
     commandOrder: [],
     integrations: {
@@ -139,6 +140,13 @@ afterEach(() => {
     },
   });
   resetWorkbenchPersistStorage();
+  vi.restoreAllMocks();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
+beforeEach(() => {
+  vi.useFakeTimers();
 });
 
 describe("workbench store", () => {
@@ -353,5 +361,103 @@ describe("workbench store", () => {
     expect(useWorkbenchStore.getState().selectedGitFileByWorkspaceId["workspace-1"]).toBe(
       "README.md",
     );
+  });
+
+  it("tracks realtime sessions, rebuilds audio URLs, and replaces older sessions", () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi
+      .fn()
+      .mockReturnValueOnce("blob:realtime-1")
+      .mockReturnValueOnce("blob:realtime-2");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      writable: true,
+      value: revokeObjectURL,
+    });
+    const store = useWorkbenchStore.getState();
+
+    store.startRealtimeSession("thread-1", "session-1");
+    store.appendRealtimeItem("thread-1", {
+      type: "transcript",
+      text: "Realtime hello",
+    });
+    store.appendRealtimeAudio("thread-1", {
+      data: Buffer.from(new Int16Array([0, 512]).buffer).toString("base64"),
+      sampleRate: 16_000,
+      numChannels: 1,
+      samplesPerChannel: 2,
+    });
+
+    vi.advanceTimersByTime(500);
+
+    let session = useWorkbenchStore.getState().realtimeSessionsByThreadId["thread-1"];
+    expect(session.sessionId).toBe("session-1");
+    expect(session.items[0]?.textPreview).toBe("Realtime hello");
+    expect(session.audio.objectUrl).toBe("blob:realtime-1");
+
+    store.startRealtimeSession("thread-1", "session-2");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:realtime-1");
+
+    store.appendRealtimeAudio("thread-1", {
+      data: Buffer.from(new Int16Array([256, -256]).buffer).toString("base64"),
+      sampleRate: 16_000,
+      numChannels: 1,
+      samplesPerChannel: 2,
+    });
+    store.closeRealtimeSession("thread-1", "done");
+
+    session = useWorkbenchStore.getState().realtimeSessionsByThreadId["thread-1"];
+    expect(session.status).toBe("closed");
+    expect(session.closeReason).toBe("done");
+    expect(session.audio.objectUrl).toBe("blob:realtime-2");
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+
+    if (originalCreateObjectURL) {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        writable: true,
+        value: originalCreateObjectURL,
+      });
+    } else {
+      Reflect.deleteProperty(URL, "createObjectURL");
+    }
+
+    if (originalRevokeObjectURL) {
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        writable: true,
+        value: originalRevokeObjectURL,
+      });
+    } else {
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+    }
+  });
+
+  it("keeps realtime transcript visible when audio decoding fails", () => {
+    const store = useWorkbenchStore.getState();
+
+    store.startRealtimeSession("thread-1", "session-1");
+    store.appendRealtimeItem("thread-1", {
+      kind: "assistant.transcript",
+      transcript: "Still visible",
+    });
+    store.appendRealtimeAudio("thread-1", {
+      data: "AQ==",
+      sampleRate: 16_000,
+      numChannels: 1,
+      samplesPerChannel: 1,
+    });
+
+    const session = useWorkbenchStore.getState().realtimeSessionsByThreadId["thread-1"];
+    expect(session.items[0]?.textPreview).toBe("Still visible");
+    expect(String(session.audio.decodeError)).toMatch(/PCM16 bytes/i);
+    expect(session.audio.objectUrl).toBeNull();
   });
 });

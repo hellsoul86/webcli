@@ -1116,6 +1116,36 @@ export class WorkbenchService {
       case "thread.tokenUsage.updated":
         this.applyTurnTokenUsage(event.threadId, event.turnId, event.tokenUsage);
         return;
+      case "thread.realtime.started":
+        this.broadcast("thread.realtimeStarted", {
+          threadId: event.threadId,
+          sessionId: event.sessionId,
+        });
+        return;
+      case "thread.realtime.itemAdded":
+        this.broadcast("thread.realtimeItemAdded", {
+          threadId: event.threadId,
+          item: event.item,
+        });
+        return;
+      case "thread.realtime.outputAudio.delta":
+        this.broadcast("thread.realtimeOutputAudioDelta", {
+          threadId: event.threadId,
+          audio: event.audio,
+        });
+        return;
+      case "thread.realtime.error":
+        this.broadcast("thread.realtimeError", {
+          threadId: event.threadId,
+          message: event.message,
+        });
+        return;
+      case "thread.realtime.closed":
+        this.broadcast("thread.realtimeClosed", {
+          threadId: event.threadId,
+          reason: event.reason,
+        });
+        return;
       case "turn.updated": {
         const existing = this.threadViews.get(event.threadId);
         if (existing) {

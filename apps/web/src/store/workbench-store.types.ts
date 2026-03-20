@@ -4,7 +4,9 @@ import type {
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   InspectorTab,
+  JsonValue,
   PendingApproval as WorkbenchPendingApproval,
+  RealtimeAudioChunk,
   RequestId,
   ReviewOutput,
   RuntimeStatus,
@@ -23,6 +25,38 @@ export type PendingApproval = WorkbenchPendingApproval;
 export type TimelineEntry = WorkbenchTimelineEntry;
 export type ThreadView = WorkbenchThread;
 export type CommandSession = CommandSessionSnapshot;
+export type RealtimeSessionStatus = "live" | "error" | "closed";
+
+export type RealtimeTranscriptEntry = {
+  id: string;
+  receivedAt: number;
+  raw: JsonValue;
+  kindLabel: string;
+  textPreview: string | null;
+  jsonPreview: string;
+};
+
+export type RealtimeAudioState = {
+  sampleRate: number | null;
+  numChannels: number | null;
+  chunkCount: number;
+  pcmChunks: Array<Uint8Array>;
+  objectUrl: string | null;
+  decodeError: string | null;
+};
+
+export type RealtimeSessionState = {
+  threadId: string;
+  sessionId: string | null;
+  status: RealtimeSessionStatus;
+  startedAt: number;
+  updatedAt: number;
+  closedAt: number | null;
+  errorMessage: string | null;
+  closeReason: string | null;
+  items: Array<RealtimeTranscriptEntry>;
+  audio: RealtimeAudioState;
+};
 
 export type IntegrationState = IntegrationSnapshot & {
   settingsOpen: boolean;
@@ -52,6 +86,7 @@ export type SessionSlice = {
   gitSnapshotsByWorkspaceId: Record<string, GitWorkingTreeSnapshot>;
   selectedGitFileByWorkspaceId: Record<string, string | null>;
   pendingApprovals: Array<PendingApproval>;
+  realtimeSessionsByThreadId: Record<string, RealtimeSessionState>;
   syncBootstrapActiveThreads: (threads: Array<ThreadSummary>) => void;
   hydrateThread: (thread: ThreadView) => void;
   upsertThread: (thread: ThreadSummary) => void;
@@ -86,6 +121,11 @@ export type SessionSlice = {
     turnId: string,
     tokenUsage: ThreadTokenUsage,
   ) => void;
+  startRealtimeSession: (threadId: string, sessionId: string | null) => void;
+  appendRealtimeItem: (threadId: string, item: JsonValue) => void;
+  appendRealtimeAudio: (threadId: string, chunk: RealtimeAudioChunk) => void;
+  failRealtimeSession: (threadId: string, message: string) => void;
+  closeRealtimeSession: (threadId: string, reason: string | null) => void;
   queueApproval: (approval: PendingApproval) => void;
   resolveApproval: (id: RequestId) => void;
   touchHydratedThread: (threadId: string) => void;

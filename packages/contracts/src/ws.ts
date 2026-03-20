@@ -26,6 +26,8 @@ import type {
   ModelRerouteEvent,
   PendingApproval,
   PendingServerRequest,
+  JsonValue,
+  RealtimeAudioChunk,
   ReasoningEffort,
   RequestId,
   ReviewOutput,
@@ -253,6 +255,26 @@ export type AppEventMap = {
     threadId: string;
     turnId: string;
     tokenUsage: ThreadTokenUsage;
+  };
+  "thread.realtimeStarted": {
+    threadId: string;
+    sessionId: string | null;
+  };
+  "thread.realtimeItemAdded": {
+    threadId: string;
+    item: JsonValue;
+  };
+  "thread.realtimeOutputAudioDelta": {
+    threadId: string;
+    audio: RealtimeAudioChunk;
+  };
+  "thread.realtimeError": {
+    threadId: string;
+    message: string;
+  };
+  "thread.realtimeClosed": {
+    threadId: string;
+    reason: string | null;
   };
   "turn.updated": { threadId: string; turn: WorkbenchTurn };
   "timeline.item": { threadId: string; item: TimelineEntry };

@@ -13,8 +13,9 @@ import {
   type ImagePreviewReference,
   RenderableMarkdown,
 } from "../../shared/workbench/renderable-content";
-import type { ThreadView } from "../../store/workbench-store";
+import type { RealtimeSessionState, ThreadView } from "../../store/workbench-store";
 import { describeActivityDetails, describeActivitySummary, isMessageEntry, shouldCollapseActivityByDefault } from "./timeline-helpers";
+import { RealtimeSessionPanel } from "./realtime-session-panel";
 import { ComposerInlineDropdown, type ComposerDropdownOption } from "./workbench-shell-controls";
 import { InterruptIcon, SendArrowIcon } from "./workbench-icons";
 
@@ -92,6 +93,7 @@ type ConversationPaneProps = {
   timelineEntryCount: number;
   cwd?: string | null;
   streamingPlainItems: Record<string, true>;
+  realtimeSession: RealtimeSessionState | null;
   composerPane: ReactNode;
   conversationBodyRef: React.RefObject<HTMLDivElement | null>;
   onConversationScroll: (event: React.UIEvent<HTMLDivElement>) => void;
@@ -149,6 +151,7 @@ export function ConversationPane(props: ConversationPaneProps) {
             )}
           </div>
 
+          {props.realtimeSession ? <RealtimeSessionPanel session={props.realtimeSession} /> : null}
           {props.composerPane}
         </>
       )}

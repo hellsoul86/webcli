@@ -27,6 +27,11 @@ export type WorkbenchEventContext = {
   setLatestPlan: StoreState["setLatestPlan"];
   setReview: StoreState["setReview"];
   setTurnTokenUsage: StoreState["setTurnTokenUsage"];
+  startRealtimeSession?: StoreState["startRealtimeSession"];
+  appendRealtimeItem?: StoreState["appendRealtimeItem"];
+  appendRealtimeAudio?: StoreState["appendRealtimeAudio"];
+  failRealtimeSession?: StoreState["failRealtimeSession"];
+  closeRealtimeSession?: StoreState["closeRealtimeSession"];
   setWorkspaceGitSnapshot: StoreState["setWorkspaceGitSnapshot"];
   queueApproval: StoreState["queueApproval"];
   resolveApproval: StoreState["resolveApproval"];
@@ -121,6 +126,21 @@ export function routeWorkbenchServerMessage(
         message.params.turnId,
         message.params.tokenUsage,
       );
+      return;
+    case "thread.realtimeStarted":
+      context.startRealtimeSession?.(message.params.threadId, message.params.sessionId);
+      return;
+    case "thread.realtimeItemAdded":
+      context.appendRealtimeItem?.(message.params.threadId, message.params.item);
+      return;
+    case "thread.realtimeOutputAudioDelta":
+      context.appendRealtimeAudio?.(message.params.threadId, message.params.audio);
+      return;
+    case "thread.realtimeError":
+      context.failRealtimeSession?.(message.params.threadId, message.params.message);
+      return;
+    case "thread.realtimeClosed":
+      context.closeRealtimeSession?.(message.params.threadId, message.params.reason);
       return;
     case "turn.updated":
       context.applyTurn(message.params.threadId, message.params.turn);

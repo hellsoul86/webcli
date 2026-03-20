@@ -199,6 +199,22 @@ const zhCN = {
     },
     fileCount: "{{count}} 个文件",
   },
+  realtime: {
+    title: "实时会话",
+    transcript: "转录",
+    audio: "音频",
+    empty: "等待实时条目...",
+    audioWaiting: "等待音频分片...",
+    audioChunks: "{{count}} 个分片",
+    audioRate: "{{rate}} Hz",
+    audioError: "音频解码失败：{{error}}",
+    closedReason: "已关闭：{{reason}}",
+    status: {
+      live: "进行中",
+      closed: "已关闭",
+      error: "出错",
+    },
+  },
   settings: {
     titleEyebrow: "设置",
     title: "桌面工作台配置",

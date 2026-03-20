@@ -220,6 +220,37 @@ test("submits typed request-user-input decisions from the decision center", asyn
   await expect(page.locator('[data-testid^="decision-card-"]')).toHaveCount(0);
 });
 
+test("renders realtime transcript and audio sessions as a first-class panel", async ({ page }) => {
+  const consoleErrors: Array<string> = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("desktop-shell")).toBeVisible();
+  await ensureWorkspace(page);
+  await ensureThread(page);
+
+  await page
+    .getByTestId("composer-input")
+    .fill(`realtime-smoke:${Date.now()}`);
+  await page.getByTestId("send-button").click();
+
+  const panel = page.getByTestId("realtime-session-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("realtime-transcript")).toContainText("Realtime hello");
+  await expect(panel.getByTestId("realtime-transcript")).toContainText("Second realtime line");
+  await expect(panel.getByTestId("realtime-audio-player")).toBeVisible();
+  await expect(panel.getByTestId("realtime-session-status")).toContainText(
+    /Closed|已关闭|已结束/i,
+  );
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("opens local code links in a syntax-highlighted preview modal", async ({ page }) => {
   await page.goto("/");
 

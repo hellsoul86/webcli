@@ -1552,6 +1552,89 @@ describe("createApp", () => {
     await app.close();
   });
 
+  it("broadcasts realtime thread notifications over the app websocket", async () => {
+    const env: AppEnv = {
+      host: "127.0.0.1",
+      port: 0,
+      codexCommand: "codex",
+      dataDir: tempDir,
+      dbPath: join(tempDir, "app.sqlite"),
+      webDistDir: join(tempDir, "missing-web"),
+    };
+
+    const runtime = new FakeRuntime();
+    const { app } = await createApp(env, {
+      runtime,
+      workspaceRepo: new WorkspaceRepo(env.dbPath),
+    });
+    await app.listen({ host: env.host, port: 0 });
+    const port = getBoundPort(app);
+
+    const messages: Array<AppServerMessage> = [];
+    const ws = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=realtime-session`);
+    ws.on("message", (payload: WebSocket.RawData) => {
+      messages.push(JSON.parse(payload.toString()) as AppServerMessage);
+    });
+
+    await waitForOpen(ws);
+    await waitFor(() => hasNotification(messages, "runtime.statusChanged"));
+
+    runtime.emit({
+      type: "thread.realtime.started",
+      threadId: "thread-1",
+      sessionId: "session-1",
+    });
+    runtime.emit({
+      type: "thread.realtime.itemAdded",
+      threadId: "thread-1",
+      item: {
+        type: "transcript",
+        text: "Realtime hello",
+      },
+    });
+    runtime.emit({
+      type: "thread.realtime.outputAudio.delta",
+      threadId: "thread-1",
+      audio: {
+        data: "AQID",
+        sampleRate: 16000,
+        numChannels: 1,
+        samplesPerChannel: 2,
+      },
+    });
+    runtime.emit({
+      type: "thread.realtime.error",
+      threadId: "thread-1",
+      message: "microphone disconnected",
+    });
+    runtime.emit({
+      type: "thread.realtime.closed",
+      threadId: "thread-1",
+      reason: "session-finished",
+    });
+
+    await waitFor(() => hasNotification(messages, "thread.realtimeStarted"));
+    await waitFor(() => hasNotification(messages, "thread.realtimeItemAdded"));
+    await waitFor(() => hasNotification(messages, "thread.realtimeOutputAudioDelta"));
+    await waitFor(() => hasNotification(messages, "thread.realtimeError"));
+    await waitFor(() => hasNotification(messages, "thread.realtimeClosed"));
+
+    const realtimeClosed = messages.find(
+      (message) =>
+        message.type === "server.notification" && message.method === "thread.realtimeClosed",
+    );
+    expect(
+      realtimeClosed &&
+        realtimeClosed.type === "server.notification" &&
+        realtimeClosed.method === "thread.realtimeClosed"
+        ? realtimeClosed.params.reason
+        : null,
+    ).toBe("session-finished");
+
+    ws.close();
+    await app.close();
+  });
+
   it("serves home-scoped local resources for the web client", async () => {
     const mediaPath = join(tempDir, "preview.png");
     writeFileSync(mediaPath, Buffer.from("png-bytes"));
