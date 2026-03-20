@@ -17,7 +17,6 @@ import type {
   GitWorkingTreeSnapshot,
   HealthResponse,
   IntegrationSnapshot,
-  PendingApproval,
   RequestId,
   RuntimeStatus,
   ThreadSummary,
@@ -224,6 +223,7 @@ export class WorkbenchService {
     });
     for (const approval of this.approvalBroker.listForSession(sessionId)) {
       this.notifyConnection(connectionId, "approval.requested", { approval });
+      this.notifyConnection(connectionId, "serverRequest.requested", { request: approval });
     }
   }
 
@@ -347,6 +347,11 @@ export class WorkbenchService {
         return this.handleApprovalResolve(
           (message.params as AppRequestParams<"approval.resolve">).requestId,
           (message.params as AppRequestParams<"approval.resolve">).decision,
+        );
+      case "serverRequest.resolve":
+        return this.handleApprovalResolve(
+          (message.params as AppRequestParams<"serverRequest.resolve">).requestId,
+          (message.params as AppRequestParams<"serverRequest.resolve">).decision,
         );
       case "integrations.refresh":
         return {
@@ -649,6 +654,7 @@ export class WorkbenchService {
     await this.runtime.resolveApproval(approval, decision);
     this.approvalBroker.resolve(requestId);
     this.broadcast("approval.resolved", { requestId });
+    this.broadcast("serverRequest.resolved", { requestId });
     return { ok: true };
   }
 
@@ -927,11 +933,13 @@ export class WorkbenchService {
         }
         this.approvalBroker.queue(event.approval, sessionId);
         this.notifySession(sessionId, "approval.requested", { approval: event.approval });
+        this.notifySession(sessionId, "serverRequest.requested", { request: event.approval });
         return;
       }
       case "approval.resolved":
         this.approvalBroker.resolve(event.requestId);
         this.broadcast("approval.resolved", { requestId: event.requestId });
+        this.broadcast("serverRequest.resolved", { requestId: event.requestId });
         return;
       case "command.output": {
         const session = this.commandService.appendOutput(event.processId, event.stream, event.text);

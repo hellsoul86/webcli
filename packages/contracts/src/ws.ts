@@ -12,6 +12,7 @@ import type {
   IntegrationSnapshot,
   LivePlan,
   PendingApproval,
+  PendingServerRequest,
   ReasoningEffort,
   RequestId,
   ReviewOutput,
@@ -73,6 +74,10 @@ export type AppRequestMap = {
   "command.resize": RpcDefinition<{ processId: string; cols: number; rows: number }, { ok: true }>;
   "command.stop": RpcDefinition<{ processId: string }, { ok: true }>;
   "approval.resolve": RpcDefinition<{
+    requestId: RequestId;
+    decision: "accept" | "decline";
+  }, { ok: true }>;
+  "serverRequest.resolve": RpcDefinition<{
     requestId: RequestId;
     decision: "accept" | "decline";
   }, { ok: true }>;
@@ -138,6 +143,8 @@ export type AppEventMap = {
   };
   "approval.requested": { approval: PendingApproval };
   "approval.resolved": { requestId: RequestId };
+  "serverRequest.requested": { request: PendingServerRequest };
+  "serverRequest.resolved": { requestId: RequestId };
   "integrations.updated": { snapshot: IntegrationSnapshot };
 };
 

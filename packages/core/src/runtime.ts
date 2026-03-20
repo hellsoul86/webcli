@@ -14,7 +14,7 @@ import type {
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
-  PendingApproval,
+  PendingServerRequest,
   ReasoningEffort,
   RuntimeStatus,
   SandboxMode,
@@ -108,7 +108,7 @@ export type SessionRuntimeEvent =
     }
   | {
       type: "approval.requested";
-      approval: PendingApproval;
+      approval: PendingServerRequest;
     }
   | {
       type: "approval.resolved";
@@ -192,5 +192,5 @@ export interface SessionRuntime {
   reloadMcp(): Promise<void>;
   uninstallPlugin(pluginId: string): Promise<void>;
   searchFiles(input: { query: string; roots: Array<string> }): Promise<FuzzySearchSnapshot>;
-  resolveApproval(approval: PendingApproval, decision: "accept" | "decline"): Promise<void>;
+  resolveApproval(approval: PendingServerRequest, decision: "accept" | "decline"): Promise<void>;
 }

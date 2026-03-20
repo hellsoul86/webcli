@@ -632,6 +632,7 @@ describe("createApp", () => {
 
     const approval: PendingApproval = {
       id: "approval-1",
+      kind: "commandExecutionApproval",
       method: "item/commandExecution/requestApproval",
       threadId: openedThreadId ?? null,
       turnId: null,

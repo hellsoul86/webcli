@@ -19,7 +19,7 @@ import type {
   GitWorkingTreeSnapshot,
   IntegrationSnapshot,
   ModelOption,
-  PendingApproval,
+  PendingServerRequest,
   RuntimeStatus,
   SandboxMode,
   TimelineEntry,
@@ -98,7 +98,7 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
-type PendingServerRequest = {
+type RuntimePendingServerRequest = {
   method: ServerRequestMethod;
   params: ServerRequestParams<ServerRequestMethod>;
 };
@@ -119,7 +119,7 @@ export class CodexRuntime implements SessionRuntime {
   private restartTimer: NodeJS.Timeout | null = null;
   private readonly listeners = new Set<SessionRuntimeListener>();
   private readonly pendingRequests = new Map<RequestId, PendingRequest>();
-  private readonly pendingServerRequests = new Map<RequestId, PendingServerRequest>();
+  private readonly pendingServerRequests = new Map<RequestId, RuntimePendingServerRequest>();
   private readonly pendingDeviceCodeLogins = new Map<string, PendingDeviceCodeLogin>();
   private readonly canceledDeviceCodeLogins = new Set<string>();
   private account: AccountSummary = {
@@ -685,7 +685,7 @@ export class CodexRuntime implements SessionRuntime {
   }
 
   async resolveApproval(
-    approval: PendingApproval,
+    approval: PendingServerRequest,
     decision: "accept" | "decline",
   ): Promise<void> {
     const pending = this.pendingServerRequests.get(approval.id);
@@ -1112,7 +1112,7 @@ export class CodexRuntime implements SessionRuntime {
     this.pendingServerRequests.set(id, { method, params });
     this.emit({
       type: "approval.requested",
-      approval: mapPendingApproval(id, method, params),
+      approval: mapPendingServerRequest(id, method, params),
     });
   }
 
@@ -1687,15 +1687,14 @@ function parseReviewFromTurn(turn: Turn): ReviewOutputEvent | null {
   }
 }
 
-function mapPendingApproval(
+function mapPendingServerRequest(
   id: RequestId,
   method: ServerRequestMethod,
   params: ServerRequestParams<ServerRequestMethod>,
-): PendingApproval {
+): PendingServerRequest {
   const payload = params as Record<string, unknown>;
-  return {
+  const base = {
     id,
-    method,
     threadId:
       typeof payload.threadId === "string"
         ? payload.threadId
@@ -1704,8 +1703,29 @@ function mapPendingApproval(
           : null,
     turnId: typeof payload.turnId === "string" ? payload.turnId : null,
     itemId: typeof payload.itemId === "string" ? payload.itemId : null,
-    params,
+    params: payload,
   };
+
+  switch (method) {
+    case "item/commandExecution/requestApproval":
+      return { ...base, kind: "commandExecutionApproval", method };
+    case "item/fileChange/requestApproval":
+      return { ...base, kind: "fileChangeApproval", method };
+    case "item/tool/requestUserInput":
+      return { ...base, kind: "requestUserInput", method };
+    case "mcpServer/elicitation/request":
+      return { ...base, kind: "mcpServerElicitation", method };
+    case "item/permissions/requestApproval":
+      return { ...base, kind: "permissionsApproval", method };
+    case "item/tool/call":
+      return { ...base, kind: "dynamicToolCall", method };
+    case "account/chatgptAuthTokens/refresh":
+      return { ...base, kind: "chatgptAuthTokensRefresh", method };
+    case "applyPatchApproval":
+      return { ...base, kind: "applyPatchApproval", method };
+    case "execCommandApproval":
+      return { ...base, kind: "execCommandApproval", method };
+  }
 }
 
 function mapApprovalDecision(

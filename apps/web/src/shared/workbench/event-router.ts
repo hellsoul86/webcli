@@ -128,6 +128,12 @@ export function routeWorkbenchServerMessage(
     case "approval.resolved":
       context.resolveApproval(message.params.requestId);
       return;
+    case "serverRequest.requested":
+      context.queueApproval(message.params.request);
+      return;
+    case "serverRequest.resolved":
+      context.resolveApproval(message.params.requestId);
+      return;
     case "integrations.updated":
       context.setIntegrationSnapshot(message.params.snapshot);
       return;

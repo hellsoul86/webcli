@@ -364,6 +364,7 @@ export class FakeRuntime implements SessionRuntime {
     const approvalId = `approval-${randomUUID()}`;
     const approval: PendingApproval = {
       id: approvalId,
+      kind: "commandExecutionApproval",
       method: "item/commandExecution/requestApproval",
       threadId,
       turnId,
