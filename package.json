@@ -16,6 +16,7 @@
     "build": "npm run build:workspaces",
     "deploy:staging": "bash ./deploy/staging/bin/deploy.sh",
     "deploy:staging:rollback": "bash ./deploy/staging/bin/rollback.sh",
+    "test:parity:wave1": "playwright test e2e/wave1-parity.spec.ts",
     "test:repo": "node --test ./scripts/task-workflow.test.mjs ./scripts/parity-matrix.test.mjs",
     "test:workspaces": "npm run test --workspaces --if-present",
     "test": "npm run test:repo && npm run test:workspaces",
