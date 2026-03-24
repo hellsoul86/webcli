@@ -870,8 +870,8 @@ describe("createApp", () => {
 
     const sessionAMessages: Array<AppServerMessage> = [];
     const sessionBMessages: Array<AppServerMessage> = [];
-    const wsA = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=session-a`);
-    const wsB = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=session-b`);
+    const { ws: wsA } = await createSessionWs(env.host, port);
+    const { ws: wsB } = await createSessionWs(env.host, port);
     wsA.on("message", (payload: WebSocket.RawData) => {
       sessionAMessages.push(JSON.parse(payload.toString()) as AppServerMessage);
     });
@@ -1274,7 +1274,7 @@ describe("createApp", () => {
     const port = getBoundPort(app);
 
     const messages: Array<AppServerMessage> = [];
-    const ws = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=account-session`);
+    const { ws } = await createSessionWs(env.host, port);
     ws.on("message", (payload: WebSocket.RawData) => {
       messages.push(JSON.parse(payload.toString()) as AppServerMessage);
     });
@@ -1414,7 +1414,7 @@ describe("createApp", () => {
     const port = getBoundPort(app);
 
     const messages: Array<AppServerMessage> = [];
-    const ws = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=extensions-session`);
+    const { ws } = await createSessionWs(env.host, port);
     ws.on("message", (payload: WebSocket.RawData) => {
       messages.push(JSON.parse(payload.toString()) as AppServerMessage);
     });
@@ -1571,7 +1571,7 @@ describe("createApp", () => {
     const port = getBoundPort(app);
 
     const messages: Array<AppServerMessage> = [];
-    const ws = new WebSocket(`ws://${env.host}:${port}/ws?clientSessionId=realtime-session`);
+    const { ws } = await createSessionWs(env.host, port);
     ws.on("message", (payload: WebSocket.RawData) => {
       messages.push(JSON.parse(payload.toString()) as AppServerMessage);
     });
@@ -1940,4 +1940,19 @@ async function waitForAsync(predicate: () => Promise<boolean>, timeoutMs = 1000)
     }
     await delay(10);
   }
+}
+
+async function createSessionWs(
+  host: string,
+  port: number,
+  options?: { workspaceId?: string; cwd?: string },
+): Promise<{ ws: WebSocket; sessionId: string }> {
+  const response = await fetch(`http://${host}:${port}/api/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options ?? {}),
+  });
+  const data = (await response.json()) as { sessionId: string };
+  const ws = new WebSocket(`ws://${host}:${port}/ws/sessions/${data.sessionId}`);
+  return { ws, sessionId: data.sessionId };
 }

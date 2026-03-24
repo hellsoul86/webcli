@@ -12,14 +12,17 @@ import type {
   BootstrapResponse,
   HealthResponse,
   PathSuggestionsResponse,
+  SessionSummary,
   ThreadSummaryPageResponse,
   WorkspaceCreateInput,
   WorkspaceDismissInput,
-  WorkspaceRecord,
   WorkspaceUpdateInput,
 } from "@webcli/contracts";
 import {
+  SessionManager,
+  ThreadProjectionService,
   WorkbenchService,
+  WorkspaceCatalogService,
   WorkspaceRepo,
   type SessionRuntime,
 } from "@webcli/core";
@@ -29,6 +32,7 @@ import type { AppEnv } from "./env.js";
 type AppContext = {
   app: FastifyInstance;
   service: WorkbenchService;
+  sessionManager: SessionManager;
   runtime: SessionRuntime;
   workspaceRepo: WorkspaceRepo;
 };
@@ -47,14 +51,26 @@ export async function createApp(
     overrides?.runtime ??
     (new CodexRuntime({ codexCommand: env.codexCommand }) as SessionRuntime);
   const workspaceRepo = overrides?.workspaceRepo ?? new WorkspaceRepo(env.dbPath);
+  const workspaceCatalog = new WorkspaceCatalogService();
+  const threadProjection = new ThreadProjectionService(workspaceCatalog);
   const service =
     overrides?.service ?? new WorkbenchService(runtime, workspaceRepo);
+
+  // Create SessionManager (new session-oriented architecture)
+  const sessionManager = new SessionManager({
+    runtime,
+    workspaceRepo,
+    threadProjection,
+  });
 
   app.addHook("onClose", async () => {
     await service.stop();
   });
 
   await service.start();
+  // Event routing is handled by WorkbenchService (registers connections,
+  // broadcasts thread/approval/git events). SessionManager provides
+  // session CRUD and connection lifecycle only.
   await app.register(fastifyWebsocket);
 
   const webDistExists = existsSync(env.webDistDir);
@@ -67,6 +83,10 @@ export async function createApp(
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Health & Bootstrap (unchanged)
+  // -------------------------------------------------------------------------
+
   app.get("/api/health", async () => {
     const response: HealthResponse = service.createHealthResponse(env.codexCommand);
     return response;
@@ -76,6 +96,10 @@ export async function createApp(
     const response: BootstrapResponse = await service.getBootstrap();
     return response;
   });
+
+  // -------------------------------------------------------------------------
+  // Thread summaries (legacy, kept for backward compat)
+  // -------------------------------------------------------------------------
 
   app.get("/api/thread-summaries", async (request, reply) => {
     try {
@@ -97,6 +121,131 @@ export async function createApp(
       return toApiErrorResponse(error, "Invalid thread summary query");
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Session REST API (new, aligned with Kimi CLI)
+  // -------------------------------------------------------------------------
+
+  app.get("/api/sessions", async () => {
+    const sessions: SessionSummary[] = sessionManager.listSessions();
+    return { items: sessions };
+  });
+
+  app.post("/api/sessions", async (request, reply) => {
+    try {
+      const body = request.body as {
+        workspaceId?: string;
+        cwd?: string;
+      } | null;
+      const session = sessionManager.createSession({
+        workspaceId: body?.workspaceId,
+        cwd: body?.cwd,
+      });
+      reply.code(201);
+      return { sessionId: session.id, status: session.getStatus() };
+    } catch (error) {
+      reply.code(400);
+      return toApiErrorResponse(error, "Failed to create session");
+    }
+  });
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+    const session = sessionManager.getSession(request.params.id);
+    if (!session) {
+      reply.code(404);
+      return toApiErrorResponse(
+        new AppError("thread.not_found", "Session not found"),
+        "Session not found",
+      );
+    }
+    return { sessionId: session.id, status: session.getStatus() };
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+    const deleted = sessionManager.deleteSession(request.params.id);
+    if (!deleted) {
+      reply.code(404);
+      return toApiErrorResponse(
+        new AppError("thread.not_found", "Session not found"),
+        "Session not found",
+      );
+    }
+    reply.code(204);
+    return null;
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-session WebSocket (new, aligned with Kimi CLI)
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: { id: string } }>(
+    "/ws/sessions/:id",
+    { websocket: true },
+    (socket, request) => {
+      const sessionId = request.params.id;
+      const connectionId = randomUUID();
+      const session = sessionManager.getSession(sessionId);
+
+      if (!session) {
+        socket.close(4004, "Session not found");
+        return;
+      }
+
+      const sender = (message: import("@webcli/contracts").AppServerMessage) => {
+        try {
+          socket.send(JSON.stringify(message));
+        } catch {
+          // Socket is dead; unregister will happen on close event
+        }
+      };
+
+      const registered = sessionManager.registerConnection(
+        sessionId,
+        connectionId,
+        sender,
+      );
+
+      if (!registered) {
+        socket.close(4004, "Failed to register connection");
+        return;
+      }
+
+      // Register in WorkbenchService for event broadcasting (thread updates,
+      // approvals, git snapshots, etc.). SessionManager handles session CRUD only.
+      service.registerConnection(sessionId, connectionId, sender);
+
+      socket.on("message", (raw: Buffer) => {
+        void handleSessionWsMessage(
+          service,
+          sessionManager,
+          sessionId,
+          connectionId,
+          raw.toString(),
+          (data: string) => {
+            try {
+              socket.send(data);
+            } catch {
+              // ignore dead socket
+            }
+          },
+        );
+      });
+
+      socket.on("close", () => {
+        sessionManager.unregisterConnection(connectionId);
+        service.unregisterConnection(connectionId);
+      });
+
+      socket.on("error", () => {
+        sessionManager.unregisterConnection(connectionId);
+        service.unregisterConnection(connectionId);
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Workspace REST API
+  // -------------------------------------------------------------------------
 
   app.get("/api/workspaces", async () => {
     return service.listWorkspaces();
@@ -154,7 +303,7 @@ export async function createApp(
 
   app.post("/api/workspaces/dismiss", async (request, reply) => {
     try {
-      const payload = request.body as WorkspaceDismissInput;
+      const payload = request.body as { absPath: string };
       service.dismissWorkspace(payload);
       reply.code(204);
       return null;
@@ -166,7 +315,7 @@ export async function createApp(
 
   app.patch<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {
     try {
-      const payload = request.body as WorkspaceUpdateInput;
+      const payload = request.body as Partial<WorkspaceCreateInput>;
       const updated = service.updateWorkspace(request.params.id, payload);
       if (!updated) {
         reply.code(404);
@@ -197,23 +346,9 @@ export async function createApp(
     return null;
   });
 
-  app.get("/ws", { websocket: true }, (socket, request) => {
-    const query = request.query as { clientSessionId?: string };
-    const clientSessionId = query.clientSessionId?.trim() || randomUUID();
-    const connectionId = randomUUID();
-
-    service.registerConnection(clientSessionId, connectionId, (message) => {
-      socket.send(JSON.stringify(message));
-    });
-
-    socket.on("message", (raw: Buffer) => {
-      void handleWsMessage(service, clientSessionId, raw.toString(), socket.send.bind(socket));
-    });
-
-    socket.on("close", () => {
-      service.unregisterConnection(connectionId);
-    });
-  });
+  // -------------------------------------------------------------------------
+  // SPA fallback
+  // -------------------------------------------------------------------------
 
   if (webDistExists) {
     app.get("/*", async (_request, reply) => {
@@ -221,75 +356,52 @@ export async function createApp(
     });
   }
 
-  return { app, service, runtime, workspaceRepo };
+  return { app, service, sessionManager, runtime, workspaceRepo };
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function contentTypeForPath(value: string): string {
   const extension = extname(value).toLowerCase();
-  if (extension === ".png") {
-    return "image/png";
-  }
-  if (extension === ".jpg" || extension === ".jpeg") {
-    return "image/jpeg";
-  }
-  if (extension === ".gif") {
-    return "image/gif";
-  }
-  if (extension === ".webp") {
-    return "image/webp";
-  }
-  if (extension === ".svg") {
-    return "image/svg+xml";
-  }
-  if (extension === ".bmp") {
-    return "image/bmp";
-  }
-  if (extension === ".ico") {
-    return "image/x-icon";
-  }
-  if (extension === ".avif") {
-    return "image/avif";
-  }
-  if (extension === ".mp3") {
-    return "audio/mpeg";
-  }
-  if (extension === ".wav") {
-    return "audio/wav";
-  }
-  if (extension === ".ogg" || extension === ".oga") {
-    return "audio/ogg";
-  }
-  if (extension === ".m4a") {
-    return "audio/mp4";
-  }
-  if (extension === ".aac") {
-    return "audio/aac";
-  }
-  if (extension === ".flac") {
-    return "audio/flac";
-  }
-  if (extension === ".mp4" || extension === ".m4v") {
-    return "video/mp4";
-  }
-  if (extension === ".webm") {
-    return "video/webm";
-  }
-  if (extension === ".mov") {
-    return "video/quicktime";
-  }
-  if (extension === ".md") {
-    return "text/markdown; charset=utf-8";
-  }
-  if (extension === ".txt") {
-    return "text/plain; charset=utf-8";
-  }
-
-  return "application/octet-stream";
+  const map: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".avif": "image/avif",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+  };
+  return map[extension] ?? "application/octet-stream";
 }
 
-async function handleWsMessage(
+/**
+ * Handle WebSocket message on a per-session connection (new architecture).
+ * Routes RPC calls through WorkbenchService but sends responses via the
+ * session's connection.
+ */
+async function handleSessionWsMessage(
   service: WorkbenchService,
+  sessionManager: SessionManager,
   sessionId: string,
+  connectionId: string,
   raw: string,
   send: (data: string) => void,
 ): Promise<void> {
@@ -316,6 +428,35 @@ async function handleWsMessage(
 
   try {
     const result = await service.handleClientCall(sessionId, message);
+
+    // Bind thread to session after thread.open / thread.resume / thread.unarchive / thread.fork
+    if (
+      result &&
+      typeof result === "object" &&
+      "thread" in result &&
+      result.thread &&
+      typeof result.thread === "object" &&
+      "thread" in result.thread
+    ) {
+      const threadData = result.thread as { thread?: { id?: string } };
+      if (threadData.thread?.id) {
+        sessionManager.bindThread(sessionId, threadData.thread.id);
+      }
+    }
+
+    // Bind command process to session after command.start
+    if (
+      message.method === "command.start" &&
+      result &&
+      typeof result === "object" &&
+      "session" in result
+    ) {
+      const cmdResult = result as { session?: { processId?: string } };
+      if (cmdResult.session?.processId) {
+        sessionManager.bindProcess(sessionId, cmdResult.session.processId);
+      }
+    }
+
     send(
       JSON.stringify({
         type: "server.response",
@@ -330,19 +471,18 @@ async function handleWsMessage(
         id: message.id,
         error: {
           code: -32000,
-          message: error instanceof Error ? error.message : "Workbench request failed",
-          data: toAppErrorPayload(error, "Workbench request failed"),
+          message: error instanceof Error ? error.message : "Request failed",
+          data: toAppErrorPayload(error, "Request failed"),
         },
       }),
     );
   }
 }
 
-function toAppErrorPayload(error: unknown, fallbackMessage: string): AppErrorPayload | undefined {
+function toAppErrorPayload(error: unknown, _fallbackMessage: string): AppErrorPayload | undefined {
   if (isAppError(error)) {
     return error.toPayload();
   }
-
   return undefined;
 }
 

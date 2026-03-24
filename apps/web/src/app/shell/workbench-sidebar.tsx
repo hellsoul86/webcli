@@ -22,6 +22,7 @@ export type SidebarWorkspaceGroup = {
 };
 
 type WorkbenchSidebarProps = {
+  className?: string;
   visibleWorkspaceCount: number;
   workspaceGroups: Array<SidebarWorkspaceGroup>;
   activeWorkspaceId: string | "all";
@@ -43,7 +44,7 @@ export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
   const { t } = useAppLocale();
 
   return (
-    <aside className="sidebar-shell">
+    <aside className={`sidebar-shell${props.className ? ` ${props.className}` : ""}`}>
       <div className="sidebar-brand">
         <div className="sidebar-brand__mark">C</div>
         <div className="sidebar-brand__body">
