@@ -1802,7 +1802,10 @@ export function App() {
     try {
       await action();
     } catch (error) {
-      setErrorMessage(localizeErrorWithFallback(error, "errors.requestFailed"));
+      const msg = localizeErrorWithFallback(error, "errors.requestFailed");
+      setErrorMessage(msg);
+      // Auto-dismiss error after 5 seconds
+      setTimeout(() => setErrorMessage((cur) => (cur === msg ? null : cur)), 5000);
     } finally {
       setBusyMessage(null);
     }
