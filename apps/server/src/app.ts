@@ -68,7 +68,9 @@ export async function createApp(
   });
 
   await service.start();
-  sessionManager.subscribeToRuntime();
+  // Event routing is handled by WorkbenchService (registers connections,
+  // broadcasts thread/approval/git events). SessionManager provides
+  // session CRUD and connection lifecycle only.
   await app.register(fastifyWebsocket);
 
   const webDistExists = existsSync(env.webDistDir);
@@ -208,8 +210,8 @@ export async function createApp(
         return;
       }
 
-      // Also register in WorkbenchService so its broadcasts
-      // (e.g. workspace.git.updated) reach session clients.
+      // Register in WorkbenchService for event broadcasting (thread updates,
+      // approvals, git snapshots, etc.). SessionManager handles session CRUD only.
       service.registerConnection(sessionId, connectionId, sender);
 
       socket.on("message", (raw: Buffer) => {
