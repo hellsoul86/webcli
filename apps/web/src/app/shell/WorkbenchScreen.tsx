@@ -51,11 +51,12 @@ import type {
   WorkspaceRecord,
 } from "@webcli/contracts";
 import { api } from "../../api";
+import { useActiveClient } from "../../hooks/use-active-client";
+import { useIsMobile } from "../../hooks/use-is-mobile";
 import { localizeError, localizeErrorWithFallback } from "../../i18n/errors";
 import { formatDateTime, formatNumber, formatPercent, formatRelativeShort } from "../../i18n/format";
 import { translate } from "../../i18n/init";
 import { useAppLocale } from "../../i18n/use-i18n";
-import { codexClient } from "../../lib/codex-client";
 import { createWorkbenchMessageDispatcher } from "../../shared/workbench/event-router";
 import {
   type CodeLinkReference,
@@ -242,6 +243,11 @@ function getWorkspaceDuplicateHint(
 export function App() {
   const { t, locale, setLocale } = useAppLocale();
   const queryClient = useQueryClient();
+
+  // Session-aware client: connects via per-session WebSocket (/ws/sessions/:id).
+  const codexClient = useActiveClient();
+  const isMobile = useIsMobile();
+
   const connection = useWorkbenchStore((state) => state.connection);
   const activeWorkspaceId = useWorkbenchStore((state) => state.activeWorkspaceId);
   const activeThreadId = useWorkbenchStore((state) => state.activeThreadId);
@@ -295,6 +301,12 @@ export function App() {
   const clearFuzzySearch = useWorkbenchStore((state) => state.clearFuzzySearch);
   const touchHydratedThread = useWorkbenchStore((state) => state.touchHydratedThread);
   const sweepHydratedThreads = useWorkbenchStore((state) => state.sweepHydratedThreads);
+
+  // Mobile sidebar: visible when no thread is active or user taps back.
+  const [mobileSidebarForced, setMobileSidebarForced] = useState(false);
+  const mobileSidebarVisible = isMobile
+    ? mobileSidebarForced || !activeThreadId
+    : true;
 
   const [composer, setComposer] = useState("");
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceRecord | null>(null);
@@ -1173,6 +1185,10 @@ export function App() {
     applyTimelineItem,
     applyTurn,
     closeRealtimeSession,
+    codexClient.connect,
+    codexClient.subscribe,
+    codexClient.onConnectionChange,
+    codexClient.sessionId,
     failRealtimeSession,
     markThreadClosed,
     markStreamingItems,
@@ -1892,6 +1908,7 @@ export function App() {
       setActiveWorkspace(workspaceId);
       setActiveThread(response.thread.thread.id);
       setInspectorTab("diff");
+      if (isMobile) setMobileSidebarForced(false);
     });
   }
 
@@ -1901,6 +1918,7 @@ export function App() {
       setActiveWorkspace(workspaceId);
     }
     setActiveThread(threadId);
+    if (isMobile) setMobileSidebarForced(false);
 
     if (hydratedThreads[threadId]?.turnOrder.length) {
       return;
@@ -2849,7 +2867,15 @@ export function App() {
       ref={desktopShellRef}
       style={desktopShellStyle}
     >
+      {isMobile && (
+        <div
+          className={`mobile-drawer-overlay${mobileSidebarVisible ? " mobile-drawer-overlay--visible" : ""}`}
+          onClick={() => setMobileSidebarForced(false)}
+        />
+      )}
+
       <WorkbenchSidebar
+        className={isMobile ? (mobileSidebarVisible ? "sidebar-shell--open" : undefined) : undefined}
         visibleWorkspaceCount={visibleSidebarWorkspaces.length}
         workspaceGroups={sidebarGroups}
         activeWorkspaceId={activeWorkspaceId}
@@ -2903,6 +2929,8 @@ export function App() {
           composerSpeedMode={composerSpeedMode}
           locale={locale}
           toolbarLocaleOptions={toolbarLocaleOptions}
+          isMobile={isMobile}
+          onMobileBack={() => setMobileSidebarForced(true)}
           onThreadTitleDraftChange={setThreadTitleDraft}
           onCommitThreadTitle={() => {
             if (activeThreadEntry) {

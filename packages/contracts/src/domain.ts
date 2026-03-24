@@ -1040,3 +1040,41 @@ export type IntegrationSnapshot = {
 export type BootstrapSettingsSummary = {
   config: ConfigSnapshot | null;
 };
+
+// ---------------------------------------------------------------------------
+// Session types (aligned with Kimi CLI web mode)
+// ---------------------------------------------------------------------------
+
+export type SessionState = "stopped" | "idle" | "busy" | "restarting" | "error";
+
+export type SessionStatus = {
+  sessionId: string;
+  state: SessionState;
+  seq: number;
+  reason: string | null;
+  detail: string | null;
+  updatedAt: number;
+};
+
+export type SessionSummary = {
+  id: string;
+  title: string | null;
+  preview: string;
+  threadId: string | null;
+  workspaceId: string | null;
+  workspaceName: string | null;
+  cwd: string;
+  archived: boolean;
+  status: SessionStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SessionNoticeKind = "restart";
+
+export type SessionNotice = {
+  text: string;
+  kind: SessionNoticeKind;
+  reason: string | null;
+  restartMs: number | null;
+};

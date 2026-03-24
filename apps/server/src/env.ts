@@ -17,7 +17,7 @@ export function readEnv(): AppEnv {
 
   return {
     host: process.env.HOST ?? "127.0.0.1",
-    port: Number.parseInt(process.env.PORT ?? "4000", 10),
+    port: Number.parseInt(process.env.WEBCLI_PORT ?? process.env.PORT ?? "4000", 10),
     codexCommand: process.env.CODEX_COMMAND ?? "codex",
     dataDir,
     dbPath: resolve(dataDir, "webcli.sqlite"),

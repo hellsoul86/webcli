@@ -18,6 +18,8 @@ type WorkbenchHeaderProps = {
   composerSpeedMode: ComposerSpeedMode;
   locale: "zh-CN" | "en-US";
   toolbarLocaleOptions: Array<ComposerDropdownOption<"zh-CN" | "en-US">>;
+  isMobile?: boolean;
+  onMobileBack?: () => void;
   onThreadTitleDraftChange: (value: string) => void;
   onCommitThreadTitle: () => void;
   onCancelThreadTitle: () => void;
@@ -34,6 +36,15 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
     <header className="window-toolbar">
       <div className="window-toolbar__title">
         <div className="toolbar-breadcrumb toolbar-breadcrumb--full">
+          {props.isMobile && props.onMobileBack && (
+            <button
+              className="mobile-menu-button"
+              onClick={props.onMobileBack}
+              aria-label="Menu"
+            >
+              {"☰"}
+            </button>
+          )}
           <span className="toolbar-breadcrumb__workspace">{props.headerWorkspaceLabel}</span>
           <span className="toolbar-breadcrumb__separator">{">"}</span>
           {props.threadTitleEditing && props.activeThreadEntry ? (

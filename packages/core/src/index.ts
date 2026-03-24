@@ -2,6 +2,8 @@ export * from "./approval-broker.js";
 export * from "./command-service.js";
 export * from "./home-paths.js";
 export * from "./runtime.js";
+export * from "./session-manager.js";
+export * from "./session-process.js";
 export * from "./thread-projection-service.js";
 export * from "./workbench-service.js";
 export * from "./workspace-catalog-service.js";
