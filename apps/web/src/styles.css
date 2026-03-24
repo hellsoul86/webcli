@@ -3978,15 +3978,23 @@ samp {
     border-top: 1px solid var(--border);
   }
 
-  /* Hide selectors toolbar on mobile — keep it minimal */
+  /* Compact toolbar above composer */
   .composer-shell__toolbar {
-    display: none;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 0 4px;
+    font-size: 13px;
+  }
+
+  .composer-toolbar__selectors {
+    gap: 8px 12px;
   }
 
   .composer-button-row {
     width: 100%;
     flex-wrap: wrap;
     justify-content: flex-start;
+    gap: 6px;
   }
 
   /* --- Git workbench: single column, hide tree --- */
