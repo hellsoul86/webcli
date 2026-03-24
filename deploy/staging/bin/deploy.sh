@@ -54,6 +54,14 @@ runuser -u "${SERVICE_USER}" -- npm --prefix "${RELEASE_DIR}" run build
 
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 
+# Sync nginx config from the release
+NGINX_SRC="${RELEASE_DIR}/deploy/staging/nginx/webcli-staging.conf"
+NGINX_DST="/etc/nginx/conf.d/webcli-staging.conf"
+if [[ -f "${NGINX_SRC}" ]]; then
+  cp "${NGINX_SRC}" "${NGINX_DST}"
+  nginx -t 2>&1 || { echo "nginx config test failed"; exit 1; }
+fi
+
 systemctl restart "${SERVICE_NAME}"
 systemctl reload nginx
 
