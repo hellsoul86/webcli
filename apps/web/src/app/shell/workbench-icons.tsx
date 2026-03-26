@@ -189,3 +189,67 @@ export function InterruptIcon() {
     </svg>
   );
 }
+
+export function AttachIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path
+        d="M15.5 9.7l-6.4 6.4a3.5 3.5 0 0 1-5-5l7.8-7.8a2.2 2.2 0 0 1 3.1 3.1L7.3 14a.9.9 0 0 1-1.3-1.3L12.6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path
+        d="M3 7V3h4M17 7V3h-4M3 13v4h4M17 13v4h-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function SearchIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M12.5 12.5L17 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ListIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M3 5h14M3 10h14M3 15h14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function GroupIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M3 4h5M3 8h5M3 12h5M3 16h5M11 4h6M11 8h6M11 12h6M11 16h6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ArchiveIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <rect x="2" y="3" width="16" height="4" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 7v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7M8 11h4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}

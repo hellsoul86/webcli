@@ -116,6 +116,7 @@ function Harness(props: { initialSelectedPath?: string | null }) {
       onReadRemoteDiff={async () => remoteDiff}
       onResizeStart={() => {}}
       onResizeKeyDown={() => {}}
+      isMobile={false}
     />
   );
 }

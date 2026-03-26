@@ -40,6 +40,7 @@ const enUS = {
     untitledSession: "New session",
     editThreadTitle: "Edit thread title",
     toggleLanguage: "Toggle language",
+    menu: "Menu",
   },
   shell: {
     loadingEyebrow: "Loading",
@@ -77,6 +78,10 @@ const enUS = {
     manageProject: "Manage project",
     composeThread: "New session",
     resizeSidebar: "Resize sidebar",
+    searchPlaceholder: "Search sessions...",
+    listView: "List view",
+    groupedView: "Grouped view",
+    archived: "Archived",
   },
   composer: {
     placeholder:
@@ -95,6 +100,11 @@ const enUS = {
     approvalMenu: "Select command approval",
     sandboxMenu: "Select sandbox mode",
     branchMenu: "Switch Git branch",
+    statusAwaiting: "Awaiting input",
+    statusWorking: "Working",
+    inputPlaceholder: "Ask anything, / for commands, @ to mention files",
+    attach: "Attach files",
+    expand: "Expand input",
     gitFilesCount: "{{count}} files",
     busy: {
       resumingThread: "Resuming thread...",
@@ -162,6 +172,9 @@ const enUS = {
     noCurrentProjectDetail: "Select a project from the left before viewing its uncommitted changes.",
     changedContent: "Changed content",
     backToSession: "Back to session",
+    mobileFilesTab: "Files",
+    mobileDiffTab: "Changes",
+    backToFiles: "\u2190 Files",
     initializingPatch: "Working tree is initializing.",
     selectPatchHint: "Select a changed file from the tree on the right to preview its patch here.",
     unavailablePatch: "There is no patch to display for this project.",

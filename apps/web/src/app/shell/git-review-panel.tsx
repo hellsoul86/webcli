@@ -53,6 +53,7 @@ type GitReviewPanelProps = {
   onReadRemoteDiff: () => Promise<GitRemoteDiffSnapshot>;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+  isMobile: boolean;
 };
 
 export function GitReviewPanel(props: GitReviewPanelProps) {
@@ -73,7 +74,9 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
     treeResizing,
     treeWidth,
     workspace,
+    isMobile,
   } = props;
+  const [mobileView, setMobileView] = useState<"tree" | "diff">("tree");
   const summary = useMemo(() => summarizeGitSnapshot(snapshot), [snapshot]);
   const groups = useMemo(
     () => buildGitReviewGroups(snapshot?.files ?? [], treeFilter),
@@ -106,8 +109,11 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
     (path: string | null) => {
       setDiffMode("working-tree");
       onSelectFile(path);
+      if (isMobile && path) {
+        setMobileView("diff");
+      }
     },
-    [onSelectFile],
+    [isMobile, onSelectFile],
   );
 
   useEffect(() => {
@@ -255,35 +261,61 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
           </div>
         </div>
         <div className="git-review-panel__header-actions">
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => {
-              setRemoteDiff(null);
-              setRemoteDiffError(null);
-              void onRefresh();
-            }}
-          >
-            {t("git.refresh")}
-          </button>
-          <button
-            type="button"
-            className="ghost-button"
-            data-testid="git-remote-diff-button"
-            aria-pressed={diffMode === "remote"}
-            disabled={!snapshot?.isGitRepository}
-            onClick={() => setDiffMode((current) => (current === "remote" ? "working-tree" : "remote"))}
-          >
-            {t("git.remoteDiff")}
-          </button>
-          <button type="button" className="ghost-button" onClick={onClose}>
-            {t("git.backToSession")}
-          </button>
+          {isMobile ? (
+            <>
+              <div className="git-review-panel__mobile-tabs" data-testid="git-mobile-tabs">
+                <button
+                  type="button"
+                  className={`ghost-button${mobileView === "tree" ? " ghost-button--active" : ""}`}
+                  onClick={() => setMobileView("tree")}
+                >
+                  {t("git.mobileFilesTab")}
+                </button>
+                <button
+                  type="button"
+                  className={`ghost-button${mobileView === "diff" ? " ghost-button--active" : ""}`}
+                  onClick={() => setMobileView("diff")}
+                >
+                  {t("git.mobileDiffTab")}
+                </button>
+              </div>
+              <button type="button" className="ghost-button" onClick={onClose}>
+                {t("git.backToSession")}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  setRemoteDiff(null);
+                  setRemoteDiffError(null);
+                  void onRefresh();
+                }}
+              >
+                {t("git.refresh")}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                data-testid="git-remote-diff-button"
+                aria-pressed={diffMode === "remote"}
+                disabled={!snapshot?.isGitRepository}
+                onClick={() => setDiffMode((current) => (current === "remote" ? "working-tree" : "remote"))}
+              >
+                {t("git.remoteDiff")}
+              </button>
+              <button type="button" className="ghost-button" onClick={onClose}>
+                {t("git.backToSession")}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="git-review-panel__body">
-        <aside className="git-review-panel__tree">
+      <div className={`git-review-panel__body${isMobile ? " git-review-panel__body--mobile" : ""}`}>
+        {(!isMobile || mobileView === "tree") && <aside className="git-review-panel__tree">
           <div className="git-review-panel__tree-header">
             <div>
               <p className="git-review-panel__eyebrow">{t("git.treeTitle")}</p>
@@ -346,27 +378,29 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
               </div>
             )}
           </div>
-        </aside>
+        </aside>}
 
-        <div
-          className={
-            treeResizing
-              ? "git-review-panel__resizer git-review-panel__resizer--active"
-              : "git-review-panel__resizer"
-          }
-          data-testid="git-workbench-resizer"
-          role="separator"
-          tabIndex={0}
-          aria-label={t("git.resizeTreeAria")}
-          aria-orientation="vertical"
-          aria-valuemin={treeBounds.min}
-          aria-valuemax={treeBounds.max}
-          aria-valuenow={Math.round(treeWidth)}
-          onPointerDown={onResizeStart}
-          onKeyDown={onResizeKeyDown}
-        />
+        {!isMobile && (
+          <div
+            className={
+              treeResizing
+                ? "git-review-panel__resizer git-review-panel__resizer--active"
+                : "git-review-panel__resizer"
+            }
+            data-testid="git-workbench-resizer"
+            role="separator"
+            tabIndex={0}
+            aria-label={t("git.resizeTreeAria")}
+            aria-orientation="vertical"
+            aria-valuemin={treeBounds.min}
+            aria-valuemax={treeBounds.max}
+            aria-valuenow={Math.round(treeWidth)}
+            onPointerDown={onResizeStart}
+            onKeyDown={onResizeKeyDown}
+          />
+        )}
 
-        <section className="git-review-panel__diff">
+        {(!isMobile || mobileView === "diff") && <section className="git-review-panel__diff">
           <div className="git-review-panel__diff-header">
             <div className="git-review-panel__diff-header-main">
               <p className="git-review-panel__eyebrow">{t("git.changedContent")}</p>
@@ -489,7 +523,7 @@ export function GitReviewPanel(props: GitReviewPanelProps) {
               <GitReviewEmptyState title={t("git.selectPatchHint")} detail={t("git.noDiffYet")} />
             )}
           </div>
-        </section>
+        </section>}
       </div>
     </div>
   );

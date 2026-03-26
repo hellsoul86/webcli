@@ -2896,6 +2896,11 @@ export function App() {
         onRenameThread={(thread) => void handleRenameThread(thread)}
         onForkThread={(thread) => void handleForkThread(thread)}
         onArchiveThread={(thread) => void handleArchiveThread(thread)}
+        archivedCount={archivedThreadCount}
+        onOpenArchived={() => {
+          setSettingsOpen(true);
+          setSettingsTab("history");
+        }}
       />
 
       <div
@@ -2997,6 +3002,7 @@ export function App() {
                   onReadRemoteDiff={handleReadGitDiffToRemote}
                   onResizeStart={handleInspectorResizeStart}
                   onResizeKeyDown={handleInspectorResizeKeyDown}
+                  isMobile={isMobile}
                 />
               </Suspense>
             }
