@@ -21,6 +21,7 @@ import type {
   ConfigSnapshot,
   ConversationSummarySnapshot,
   DeprecationNotice,
+  ExperimentalFeatureSnapshot,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   ForcedLoginMethod,
@@ -82,6 +83,7 @@ import type { CancelLoginAccountResponse } from "./generated/v2/CancelLoginAccou
 import type { ChatgptAuthTokensRefreshResponse } from "./generated/v2/ChatgptAuthTokensRefreshResponse";
 import type { CommandExecutionRequestApprovalResponse } from "./generated/v2/CommandExecutionRequestApprovalResponse";
 import type { DynamicToolCallResponse } from "./generated/v2/DynamicToolCallResponse";
+import type { ExperimentalFeatureListResponse } from "./generated/v2/ExperimentalFeatureListResponse";
 import type { ListMcpServerStatusResponse } from "./generated/v2/ListMcpServerStatusResponse";
 import type { McpServerElicitationRequestResponse } from "./generated/v2/McpServerElicitationRequestResponse";
 import type { McpServerOauthLoginResponse } from "./generated/v2/McpServerOauthLoginResponse";
@@ -718,6 +720,32 @@ export class CodexRuntime implements SessionRuntime {
         },
       ],
     });
+  }
+
+  async listExperimentalFeatures(input?: {
+    cursor?: string | null;
+    limit?: number | null;
+  }): Promise<{ data: Array<ExperimentalFeatureSnapshot>; nextCursor: string | null }> {
+    const response = await this.call<ExperimentalFeatureListResponse, "experimentalFeature/list">(
+      "experimentalFeature/list",
+      {
+        cursor: input?.cursor ?? undefined,
+        limit: input?.limit ?? undefined,
+      },
+    );
+
+    return {
+      data: response.data.map((feature) => ({
+        name: feature.name,
+        stage: feature.stage,
+        displayName: feature.displayName ?? null,
+        description: feature.description ?? null,
+        announcement: feature.announcement ?? null,
+        enabled: feature.enabled,
+        defaultEnabled: feature.defaultEnabled,
+      })),
+      nextCursor: response.nextCursor ?? null,
+    };
   }
 
   async batchWriteConfig(input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {

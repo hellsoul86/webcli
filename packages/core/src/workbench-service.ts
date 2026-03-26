@@ -453,6 +453,10 @@ export class WorkbenchService {
             (message.params as AppRequestParams<"integrations.plugin.uninstall">).threadId,
           ),
         };
+      case "experimentalFeature.list":
+        return this.runtime.listExperimentalFeatures(
+          message.params as AppRequestParams<"experimentalFeature.list">,
+        );
       case "settings.save":
         {
           const params = message.params as AppRequestParams<"settings.save">;

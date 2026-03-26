@@ -34,6 +34,7 @@ const WAVE1_REQUESTS_NOT_MISSING = [
   "getConversationSummary",
   "gitDiffToRemote",
 ];
+const IMPLEMENTED_WAVE2_REQUESTS_SUPPORTED = ["experimentalFeature/list"];
 const WAVE1_NOTIFICATIONS_NOT_MISSING = [
   "account/rateLimits/updated",
   "model/rerouted",
@@ -48,7 +49,6 @@ const WAVE1_NOTIFICATIONS_NOT_MISSING = [
   "thread/realtime/closed",
 ];
 const WAVE2_REQUESTS_DEFERRED = [
-  "experimentalFeature/list",
   "feedback/upload",
   "windowsSandbox/setupStart",
 ];
@@ -79,6 +79,11 @@ test("desktop parity matrix keeps implemented wave1 capability families out of m
 
   assertNotMissing(matrix.requests, WAVE1_REQUESTS_NOT_MISSING, "requests");
   assertNotMissing(matrix.notifications, WAVE1_NOTIFICATIONS_NOT_MISSING, "notifications");
+  assertSupported(
+    matrix.requests,
+    IMPLEMENTED_WAVE2_REQUESTS_SUPPORTED,
+    "requests",
+  );
 });
 
 test("desktop parity matrix keeps wave1 fully classified and wave2 explicitly deferred", () => {
@@ -131,6 +136,15 @@ function assertMissingEmpty(statusMap, label) {
     [],
     `${label}.missing must stay empty for the wave1 release gate`,
   );
+}
+
+function assertSupported(statusMap, methods, label) {
+  for (const method of methods) {
+    assert.ok(
+      statusMap.supported.includes(method),
+      `${label} method ${method} should be marked supported`,
+    );
+  }
 }
 
 function assertDeferredExactly(statusMap, methods, label) {

@@ -15,6 +15,7 @@ import type {
   ConfigRequirementsSnapshot,
   ConfigSnapshot,
   ConversationSummarySnapshot,
+  ExperimentalFeatureSnapshot,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
@@ -138,6 +139,36 @@ export class FakeRuntime implements SessionRuntime {
       defaultReasoningEffort: "medium",
       hidden: false,
       isDefault: false,
+    },
+  ];
+
+  private experimentalFeatures: Array<ExperimentalFeatureSnapshot> = [
+    {
+      name: "multi_agent",
+      stage: "beta",
+      displayName: "Multi-agent",
+      description: "Run scoped sub-agents for bounded tasks.",
+      announcement: "Lets Codex delegate sidecar tasks without leaving the current workflow.",
+      enabled: true,
+      defaultEnabled: false,
+    },
+    {
+      name: "apps",
+      stage: "stable",
+      displayName: "Apps",
+      description: "Expose installed app connectors directly in the workbench.",
+      announcement: null,
+      enabled: true,
+      defaultEnabled: true,
+    },
+    {
+      name: "prevent_idle_sleep",
+      stage: "underDevelopment",
+      displayName: "Prevent idle sleep",
+      description: "Keep the host awake while long-running Codex tasks are active.",
+      announcement: "Useful for unattended review and deploy sessions.",
+      enabled: false,
+      defaultEnabled: false,
     },
   ];
 
@@ -907,7 +938,32 @@ export class FakeRuntime implements SessionRuntime {
     };
   }
 
-  async batchWriteConfig(_input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+  async batchWriteConfig(input: ConfigBatchWriteInput): Promise<ConfigBatchWriteResult> {
+    for (const edit of input.edits) {
+      if (!edit.keyPath.startsWith("features.")) {
+        continue;
+      }
+
+      const name = edit.keyPath.slice("features.".length);
+      const enabled = Boolean(edit.value);
+      const existing = this.experimentalFeatures.find((feature) => feature.name === name);
+
+      if (existing) {
+        existing.enabled = enabled;
+        continue;
+      }
+
+      this.experimentalFeatures.push({
+        name,
+        stage: "underDevelopment",
+        displayName: null,
+        description: null,
+        announcement: null,
+        enabled,
+        defaultEnabled: false,
+      });
+    }
+
     return {
       status: "ok",
       version: "fake-runtime",
@@ -926,6 +982,22 @@ export class FakeRuntime implements SessionRuntime {
 
   async saveSettings(input: ConfigSnapshot): Promise<void> {
     this.config = { ...input };
+  }
+
+  async listExperimentalFeatures(input?: {
+    cursor?: string | null;
+    limit?: number | null;
+  }): Promise<{ data: Array<ExperimentalFeatureSnapshot>; nextCursor: string | null }> {
+    const start = Math.max(0, Number.parseInt(input?.cursor ?? "0", 10) || 0);
+    const limit = input?.limit && input.limit > 0 ? input.limit : this.experimentalFeatures.length;
+    const data = this.experimentalFeatures
+      .slice(start, start + limit)
+      .map((feature) => ({ ...feature }));
+
+    return {
+      data,
+      nextCursor: start + limit < this.experimentalFeatures.length ? String(start + limit) : null,
+    };
   }
 
   async readWorkspaceGitSnapshot(

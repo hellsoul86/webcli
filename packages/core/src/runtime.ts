@@ -16,6 +16,7 @@ import type {
   ConversationSummarySnapshot,
   ConfigSnapshot,
   DeprecationNotice,
+  ExperimentalFeatureSnapshot,
   ExternalAgentConfigDetectInput,
   ExternalAgentConfigMigrationItem,
   FuzzySearchSnapshot,
@@ -265,6 +266,10 @@ export interface SessionRuntime {
     threadId?: string | null;
   }): Promise<IntegrationSnapshot>;
   saveSettings(input: ConfigSnapshot): Promise<void>;
+  listExperimentalFeatures(input?: {
+    cursor?: string | null;
+    limit?: number | null;
+  }): Promise<{ data: Array<ExperimentalFeatureSnapshot>; nextCursor: string | null }>;
   readWorkspaceGitSnapshot(
     cwd: string,
     workspaceId: string,

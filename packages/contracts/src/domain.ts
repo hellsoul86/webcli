@@ -1004,6 +1004,23 @@ export type AppInstallHint = {
   installUrl: string | null;
 };
 
+export type ExperimentalFeatureStage =
+  | "beta"
+  | "underDevelopment"
+  | "stable"
+  | "deprecated"
+  | "removed";
+
+export type ExperimentalFeatureSnapshot = {
+  name: string;
+  stage: ExperimentalFeatureStage;
+  displayName: string | null;
+  description: string | null;
+  announcement: string | null;
+  enabled: boolean;
+  defaultEnabled: boolean;
+};
+
 export type PluginSnapshot = {
   id: string;
   name: string;

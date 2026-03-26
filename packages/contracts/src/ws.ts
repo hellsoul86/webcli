@@ -189,6 +189,13 @@ export type AppRequestMap = {
     workspaceId?: string | "all";
     threadId?: string | null;
   }, { snapshot: IntegrationSnapshot }>;
+  "experimentalFeature.list": RpcDefinition<{
+    cursor?: string | null;
+    limit?: number | null;
+  }, {
+    data: Array<import("./domain.js").ExperimentalFeatureSnapshot>;
+    nextCursor: string | null;
+  }>;
   "settings.save": RpcDefinition<{
     model: string | null;
     reasoningEffort: ReasoningEffort | null;

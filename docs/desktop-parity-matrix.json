@@ -19,6 +19,7 @@
       "skills/config/write",
       "plugin/install",
       "plugin/uninstall",
+      "experimentalFeature/list",
       "configRequirements/read",
       "externalAgentConfig/detect",
       "externalAgentConfig/import",
@@ -55,7 +56,6 @@
     ],
     "missing": [],
     "deferred-wave2": [
-      "experimentalFeature/list",
       "feedback/upload",
       "windowsSandbox/setupStart"
     ]
@@ -134,6 +134,7 @@
     "skills/config/write": "skills.config.write",
     "plugin/install": "plugin.install",
     "plugin/uninstall": "plugin.uninstall",
+    "experimentalFeature/list": "experimentalFeature.list",
     "turn/start": "turn.start",
     "turn/steer": "turn.steer",
     "turn/interrupt": "turn.interrupt",
@@ -200,7 +201,7 @@
     "mcpServer/oauthLogin/completed": "The UI refreshes integrations after login, but there is no dedicated completion event yet.",
     "rawResponseItem/completed": "Implemented through the existing timeline.item path, so it is supported as a first-class timeline entry but still grouped under the generic timeline event surface.",
     "item/commandExecution/terminalInteraction": "Implemented through the existing timeline.item path, so it is supported as a first-class timeline entry but still grouped under the generic timeline event surface.",
-    "experimentalFeature/list": "Deferred to wave 2 long-tail capability work.",
+    "experimentalFeature/list": "Supported through experimentalFeature.list; feature toggles are written back through config.batchWrite(features.<name>).",
     "feedback/upload": "Deferred to wave 2 long-tail capability work.",
     "windowsSandbox/setupStart": "Deferred to wave 2 because Windows-host-specific sandbox setup is outside the first-wave desktop parity scope.",
     "thread/realtime/started": "Realtime sessions are now surfaced through dedicated app-level notifications and a first-class panel, but WebCLI still does not expose a start/stop request or restore sessions after reload.",
