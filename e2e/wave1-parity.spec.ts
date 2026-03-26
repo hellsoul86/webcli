@@ -94,6 +94,7 @@ test("covers wave1 review and remote diff flows", async ({ page }) => {
   await ensureWorkspace(page);
   await ensureThread(page);
 
+  await expect(page.getByTestId("git-workbench-open-button")).toBeEnabled();
   await page.getByTestId("git-workbench-open-button").click();
   await expect(page.getByTestId("git-workbench")).toBeVisible();
   const unstagedGroup = page.getByTestId("git-review-group-unstaged");

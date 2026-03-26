@@ -40,6 +40,7 @@ const zhCN = {
     untitledSession: "新会话",
     editThreadTitle: "编辑会话标题",
     toggleLanguage: "切换语言",
+    menu: "菜单",
   },
   shell: {
     loadingEyebrow: "加载中",
@@ -76,6 +77,10 @@ const zhCN = {
     manageProject: "维护项目",
     composeThread: "新增会话",
     resizeSidebar: "调整边栏宽度",
+    searchPlaceholder: "搜索会话...",
+    listView: "列表视图",
+    groupedView: "分组视图",
+    archived: "已归档",
   },
   composer: {
     placeholder:
@@ -94,6 +99,11 @@ const zhCN = {
     approvalMenu: "选择命令审批",
     sandboxMenu: "选择沙箱权限",
     branchMenu: "切换 Git 分支",
+    statusAwaiting: "等待输入",
+    statusWorking: "执行中",
+    inputPlaceholder: "输入问题，/ 打开命令，@ 引用文件",
+    attach: "添加附件",
+    expand: "展开输入框",
     gitFilesCount: "{{count}} 个文件",
     busy: {
       resumingThread: "正在恢复线程...",
@@ -161,6 +171,9 @@ const zhCN = {
     noCurrentProjectDetail: "先在左侧选择一个项目，再查看它的未提交改动。",
     changedContent: "变更内容",
     backToSession: "返回会话",
+    mobileFilesTab: "文件",
+    mobileDiffTab: "变更",
+    backToFiles: "\u2190 文件",
     initializingPatch: "工作树正在初始化。",
     selectPatchHint: "从右侧目录树选择一个改动文件，这里会显示对应 patch。",
     unavailablePatch: "这个项目没有可显示的 patch。",

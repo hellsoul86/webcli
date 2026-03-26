@@ -90,6 +90,14 @@ test("updates defaults and searches workspace files from the command palette", a
   await expect(page.getByTestId("settings-reasoning-effort")).toHaveValue("xhigh");
   await expect(page.getByTestId("settings-approval-policy")).toHaveValue("never");
   await expect(page.getByTestId("settings-sandbox-mode")).toHaveValue("read-only");
+
+  // Restore defaults so subsequent tests are not affected
+  await page.getByTestId("settings-model-input").fill("gpt-5-codex");
+  await page.getByTestId("settings-reasoning-effort").selectOption("xhigh");
+  await page.getByTestId("settings-approval-policy").selectOption("on-request");
+  await page.getByTestId("settings-sandbox-mode").selectOption("danger-full-access");
+  await page.getByTestId("settings-save-button").click();
+
   await page.getByTestId("settings-panel").getByRole("button", { name: "关闭" }).click();
 
   await openCommandPalette(page);
@@ -325,8 +333,15 @@ test("does not log monaco dispose errors when closing review and code preview", 
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
   await ensureWorkspace(page);
-  await ensureThread(page);
+  // Reuse existing thread to avoid git snapshot loading delay with many threads
+  const threadRows = page.locator('[data-testid^="thread-row-"]');
+  if ((await threadRows.count()) > 0) {
+    await threadRows.first().click();
+  } else {
+    await ensureThread(page);
+  }
 
+  await expect(page.getByTestId("git-workbench-open-button")).toBeEnabled({ timeout: 30_000 });
   await page.getByTestId("git-workbench-open-button").click();
   await expect(page.getByTestId("git-workbench")).toBeVisible();
   const unstagedGroup = page.getByTestId("git-review-group-unstaged");

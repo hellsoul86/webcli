@@ -17,7 +17,7 @@ import type { RealtimeSessionState, ThreadView } from "../../store/workbench-sto
 import { describeActivityDetails, describeActivitySummary, isMessageEntry, shouldCollapseActivityByDefault } from "./timeline-helpers";
 import { RealtimeSessionPanel } from "./realtime-session-panel";
 import { ComposerInlineDropdown, type ComposerDropdownOption } from "./workbench-shell-controls";
-import { InterruptIcon, SendArrowIcon } from "./workbench-icons";
+import { AttachIcon, ExpandIcon, InterruptIcon, SendArrowIcon } from "./workbench-icons";
 
 type EditableApprovalPolicy =
   | "on-request"
@@ -161,44 +161,17 @@ export function ConversationPane(props: ConversationPaneProps) {
 
 export function ComposerPane(props: ComposerPaneProps) {
   const { t } = useAppLocale();
+  const [expanded, setExpanded] = useState(false);
+
+  const isWorking = !!props.activeTurn;
+  const statusLabel = isWorking ? t("composer.statusWorking") : t("composer.statusAwaiting");
 
   return (
     <div className="composer-shell">
-      <div className="composer-shell__toolbar">
-        <div className="composer-toolbar__selectors">
-          <ComposerInlineDropdown
-            testId="composer-model-select"
-            value={props.composerModelValue}
-            label={props.composerModelLabel}
-            options={props.composerModelOptions}
-            disabled={props.composerModelOptions.length === 0}
-            onChange={props.onModelChange}
-          />
-          <ComposerInlineDropdown
-            testId="composer-reasoning-select"
-            value={props.composerReasoningValue}
-            label={props.composerReasoningLabel}
-            options={props.composerReasoningOptions}
-            menuTitle={t("composer.reasoningMenu")}
-            onChange={props.onReasoningChange}
-          />
-          <ComposerInlineDropdown
-            testId="composer-approval-policy-select"
-            value={props.composerApprovalPolicy}
-            label={props.composerApprovalPolicyLabel}
-            options={props.approvalPolicyOptions}
-            menuTitle={t("composer.approvalMenu")}
-            onChange={props.onApprovalPolicyChange}
-          />
-          <ComposerInlineDropdown
-            testId="composer-sandbox-mode-select"
-            value={props.composerSandboxMode}
-            label={props.composerSandboxModeLabel}
-            options={props.sandboxModeOptions}
-            menuTitle={t("composer.sandboxMenu")}
-            onChange={props.onSandboxModeChange}
-          />
-        </div>
+      {/* --- Status bar: ● Awaiting input ... context% --- */}
+      <div className="composer-status-bar" data-testid="composer-status-bar">
+        <span className={`composer-status-bar__dot ${isWorking ? "composer-status-bar__dot--working" : ""}`} />
+        <span className="composer-status-bar__label">{statusLabel}</span>
         {props.currentGitWorkspace ? (
           <GitSummaryBar
             summary={props.gitSummary}
@@ -230,37 +203,97 @@ export function ComposerPane(props: ComposerPaneProps) {
         </div>
       ) : null}
 
-      <div className="composer-input-shell">
+      {/* --- Textarea with expand button --- */}
+      <div className={`composer-input-shell ${expanded ? "composer-input-shell--expanded" : ""}`}>
         <textarea
           data-testid="composer-input"
           value={props.composer}
           onChange={(event) => props.onComposerChange(event.target.value)}
           onKeyDown={props.onKeyDown}
-          placeholder={t("composer.placeholder")}
+          placeholder={t("composer.inputPlaceholder")}
         />
         <button
+          className="composer-expand-button"
+          data-testid="composer-expand-button"
+          type="button"
+          aria-label={t("composer.expand")}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <ExpandIcon />
+        </button>
+      </div>
+
+      {/* --- Bottom toolbar: 📎 | ⚙model | Thinking ●○ | Plan ●○ (approval+sandbox in dropdown) | ↵ send --- */}
+      <div className="composer-bottom-bar" data-testid="composer-bottom-bar">
+        <div className="composer-bottom-bar__left">
+          <button
+            className="composer-bottom-bar__icon-button"
+            data-testid="composer-attach-button"
+            type="button"
+            aria-label={t("composer.attach")}
+          >
+            <AttachIcon />
+          </button>
+          <span className="composer-bottom-bar__separator" />
+          <ComposerInlineDropdown
+            testId="composer-model-select"
+            value={props.composerModelValue}
+            label={props.composerModelLabel}
+            options={props.composerModelOptions}
+            disabled={props.composerModelOptions.length === 0}
+            onChange={props.onModelChange}
+          />
+          <span className="composer-bottom-bar__separator" />
+          <ComposerInlineDropdown
+            testId="composer-reasoning-select"
+            value={props.composerReasoningValue}
+            label={props.composerReasoningLabel}
+            options={props.composerReasoningOptions}
+            menuTitle={t("composer.reasoningMenu")}
+            onChange={props.onReasoningChange}
+          />
+          <span className="composer-bottom-bar__separator" />
+          <ComposerInlineDropdown
+            testId="composer-approval-policy-select"
+            value={props.composerApprovalPolicy}
+            label={props.composerApprovalPolicyLabel}
+            options={props.approvalPolicyOptions}
+            menuTitle={t("composer.approvalMenu")}
+            onChange={props.onApprovalPolicyChange}
+          />
+          <ComposerInlineDropdown
+            testId="composer-sandbox-mode-select"
+            value={props.composerSandboxMode}
+            label={props.composerSandboxModeLabel}
+            options={props.sandboxModeOptions}
+            menuTitle={t("composer.sandboxMenu")}
+            onChange={props.onSandboxModeChange}
+          />
+        </div>
+        <button
           className={
-            props.activeTurn
-              ? "composer-inline-button composer-inline-button--interrupt"
-              : "composer-inline-button composer-inline-button--send"
+            isWorking
+              ? "composer-submit-button composer-submit-button--interrupt"
+              : "composer-submit-button"
           }
           data-testid="send-button"
-          aria-label={props.activeTurn ? t("composer.interrupt") : t("composer.send")}
+          type="button"
+          aria-label={isWorking ? t("composer.interrupt") : t("composer.send")}
           onClick={() => {
-            if (props.activeTurn) {
+            if (isWorking) {
               props.onInterrupt();
               return;
             }
             props.onSend();
           }}
           disabled={
-            props.activeTurn
+            isWorking
               ? !props.activeThreadId
               : !props.composer.trim() ||
                 (!props.selectedWorkspaceForContext && !props.activeThreadId)
           }
         >
-          {props.activeTurn ? <InterruptIcon /> : <SendArrowIcon />}
+          {isWorking ? <InterruptIcon /> : <SendArrowIcon />}
         </button>
       </div>
     </div>

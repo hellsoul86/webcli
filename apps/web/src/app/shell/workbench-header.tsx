@@ -29,6 +29,8 @@ type WorkbenchHeaderProps = {
   onOpenSettings: () => void;
 };
 
+/** On mobile, usage/speed/locale are hidden from header and live in settings panel instead. */
+
 export function WorkbenchHeader(props: WorkbenchHeaderProps) {
   const { t } = useAppLocale();
 
@@ -40,7 +42,7 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
             <button
               className="mobile-menu-button"
               onClick={props.onMobileBack}
-              aria-label="Menu"
+              aria-label={t("toolbar.menu")}
             >
               {"☰"}
             </button>
@@ -96,7 +98,8 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
       </div>
 
       <div className="window-toolbar__actions">
-        {props.toolbarUsageWindows.map((window) => (
+        {/* On mobile, usage/speed/locale are in settings panel */}
+        {!props.isMobile && props.toolbarUsageWindows.map((window) => (
           <span
             key={window.label}
             className="window-toolbar__usage"
@@ -108,25 +111,29 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
             </span>
           </span>
         ))}
-        <ComposerSpeedSwitch
-          className="window-toolbar__speed"
-          mode={props.composerSpeedMode}
-          disabled={false}
-          onToggle={props.onToggleSpeed}
-        />
-        <ComposerInlineDropdown
-          className="window-toolbar__locale-select"
-          testId="locale-toggle-button"
-          ariaLabel={t("toolbar.toggleLanguage")}
-          icon={<GlobeIcon />}
-          iconOnly
-          menuPlacement="below"
-          value={props.locale}
-          label={t("settings.language")}
-          options={props.toolbarLocaleOptions}
-          menuTitle={t("settings.language")}
-          onChange={props.onLocaleChange}
-        />
+        {!props.isMobile && (
+          <ComposerSpeedSwitch
+            className="window-toolbar__speed"
+            mode={props.composerSpeedMode}
+            disabled={false}
+            onToggle={props.onToggleSpeed}
+          />
+        )}
+        {!props.isMobile && (
+          <ComposerInlineDropdown
+            className="window-toolbar__locale-select"
+            testId="locale-toggle-button"
+            ariaLabel={t("toolbar.toggleLanguage")}
+            icon={<GlobeIcon />}
+            iconOnly
+            menuPlacement="below"
+            value={props.locale}
+            label={t("settings.language")}
+            options={props.toolbarLocaleOptions}
+            menuTitle={t("settings.language")}
+            onChange={props.onLocaleChange}
+          />
+        )}
         <button
           type="button"
           className="toolbar-pill-button window-toolbar__icon-button"

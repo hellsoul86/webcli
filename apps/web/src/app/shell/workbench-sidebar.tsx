@@ -1,6 +1,7 @@
+import { useState } from "react";
 import type { ThreadSummary, WorkspaceRecord } from "@webcli/contracts";
 import { useAppLocale } from "../../i18n/use-i18n";
-import { ComposeIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GearIcon, MoreIcon } from "./workbench-icons";
+import { ArchiveIcon, ComposeIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, GearIcon, ListIcon, GroupIcon, MoreIcon, SearchIcon } from "./workbench-icons";
 
 export type SidebarThreadItem = {
   thread: ThreadSummary;
@@ -28,6 +29,7 @@ type WorkbenchSidebarProps = {
   activeWorkspaceId: string | "all";
   emptyProjects: boolean;
   emptyThreads: boolean;
+  archivedCount?: number;
   onSelectAll: () => void;
   onCreateWorkspace: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
@@ -38,10 +40,30 @@ type WorkbenchSidebarProps = {
   onRenameThread: (thread: ThreadSummary) => void;
   onForkThread: (thread: ThreadSummary) => void;
   onArchiveThread: (thread: ThreadSummary) => void;
+  onOpenArchived?: () => void;
 };
 
 export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
   const { t } = useAppLocale();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"grouped" | "list">("grouped");
+
+  const filteredGroups = searchQuery.trim()
+    ? props.workspaceGroups.map((group) => ({
+        ...group,
+        expanded: true,
+        threads: group.threads.filter((th) =>
+          th.title.toLowerCase().includes(searchQuery.toLowerCase()),
+        ),
+      })).filter((group) =>
+        group.threads.length > 0 ||
+        group.workspace.name.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : props.workspaceGroups;
+
+  const flatThreads = viewMode === "list"
+    ? filteredGroups.flatMap((group) => group.threads.map((th) => ({ ...th, workspaceId: group.workspace.id })))
+    : [];
 
   return (
     <aside className={`sidebar-shell${props.className ? ` ${props.className}` : ""}`}>
@@ -53,7 +75,8 @@ export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
         </div>
       </div>
 
-      <section className="sidebar-section">
+      <section className="sidebar-section sidebar-section--main">
+        {/* --- Header: SESSIONS + refresh + new --- */}
         <div className="sidebar-tree-toolbar">
           <button
             className={
@@ -76,41 +99,92 @@ export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
           </button>
         </div>
 
+        {/* --- Search box --- */}
+        <div className="sidebar-search" data-testid="sidebar-search">
+          <SearchIcon />
+          <input
+            type="text"
+            className="sidebar-search__input"
+            data-testid="sidebar-search-input"
+            placeholder={t("sidebar.searchPlaceholder")}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {/* --- View toggle: list / grouped --- */}
+          <div className="sidebar-view-toggle" data-testid="sidebar-view-toggle">
+            <button
+              className={`sidebar-view-toggle__button ${viewMode === "list" ? "sidebar-view-toggle__button--active" : ""}`}
+              type="button"
+              aria-label={t("sidebar.listView")}
+              onClick={() => setViewMode("list")}
+            >
+              <ListIcon />
+            </button>
+            <button
+              className={`sidebar-view-toggle__button ${viewMode === "grouped" ? "sidebar-view-toggle__button--active" : ""}`}
+              type="button"
+              aria-label={t("sidebar.groupedView")}
+              onClick={() => setViewMode("grouped")}
+            >
+              <GroupIcon />
+            </button>
+          </div>
+        </div>
+
+        {/* --- Thread/workspace list --- */}
         <div className="workspace-tree">
-          {props.workspaceGroups.map((group) => (
-            <div className="workspace-group" key={group.workspace.id}>
-              <WorkspaceListRow
-                workspace={group.workspace}
-                subtitle={group.subtitle}
-                active={group.active}
-                expanded={group.expanded}
-                onSelect={() => props.onSelectWorkspace(group.workspace.id)}
-                onCompose={() => props.onComposeWorkspace(group.workspace.id)}
-                onEdit={() => props.onEditWorkspace(group.workspace)}
-              />
-              {group.expanded && group.threads.length > 0 ? (
-                <div className="thread-list thread-list--nested">
-                  {group.threads.map((thread) => (
-                    <ThreadRow
-                      key={thread.thread.id}
-                      thread={thread}
-                      nested
-                      onClick={() => props.onResumeThread(thread.thread.id, group.workspace.id)}
-                      onToggleMenu={() => props.onToggleThreadMenu(thread.thread.id)}
-                      onRename={() => props.onRenameThread(thread.thread)}
-                      onFork={() => props.onForkThread(thread.thread)}
-                      onArchive={() => props.onArchiveThread(thread.thread)}
-                    />
-                  ))}
+          {viewMode === "grouped" ? (
+            <>
+              {filteredGroups.map((group) => (
+                <div className="workspace-group" key={group.workspace.id}>
+                  <WorkspaceListRow
+                    workspace={group.workspace}
+                    subtitle={group.subtitle}
+                    active={group.active}
+                    expanded={group.expanded}
+                    onSelect={() => props.onSelectWorkspace(group.workspace.id)}
+                    onCompose={() => props.onComposeWorkspace(group.workspace.id)}
+                    onEdit={() => props.onEditWorkspace(group.workspace)}
+                  />
+                  {group.expanded && group.threads.length > 0 ? (
+                    <div className="thread-list thread-list--nested">
+                      {group.threads.map((thread) => (
+                        <ThreadRow
+                          key={thread.thread.id}
+                          thread={thread}
+                          nested
+                          onClick={() => props.onResumeThread(thread.thread.id, group.workspace.id)}
+                          onToggleMenu={() => props.onToggleThreadMenu(thread.thread.id)}
+                          onRename={() => props.onRenameThread(thread.thread)}
+                          onFork={() => props.onForkThread(thread.thread)}
+                          onArchive={() => props.onArchiveThread(thread.thread)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                  {group.expanded && group.threads.length === 0 ? (
+                    <div className="sidebar-empty-state sidebar-empty-state--nested">
+                      {t("sidebar.emptyThreadsNested")}
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-              {group.expanded && group.threads.length === 0 ? (
-                <div className="sidebar-empty-state sidebar-empty-state--nested">
-                  {t("sidebar.emptyThreadsNested")}
-                </div>
-              ) : null}
+              ))}
+            </>
+          ) : (
+            <div className="thread-list">
+              {flatThreads.map((thread) => (
+                <ThreadRow
+                  key={thread.thread.id}
+                  thread={thread}
+                  onClick={() => props.onResumeThread(thread.thread.id, thread.workspaceId)}
+                  onToggleMenu={() => props.onToggleThreadMenu(thread.thread.id)}
+                  onRename={() => props.onRenameThread(thread.thread)}
+                  onFork={() => props.onForkThread(thread.thread)}
+                  onArchive={() => props.onArchiveThread(thread.thread)}
+                />
+              ))}
             </div>
-          ))}
+          )}
           {props.emptyThreads ? (
             <div className="sidebar-empty-state">{t("sidebar.emptyThreads")}</div>
           ) : null}
@@ -119,6 +193,21 @@ export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
           ) : null}
         </div>
       </section>
+
+      {/* --- Archived section at bottom --- */}
+      {props.onOpenArchived ? (
+        <div className="sidebar-archived" data-testid="sidebar-archived">
+          <button
+            className="sidebar-archived__button"
+            type="button"
+            onClick={props.onOpenArchived}
+          >
+            <ArchiveIcon />
+            <span>{t("sidebar.archived")}</span>
+            <span className="sidebar-archived__count">{props.archivedCount ?? 0}</span>
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }
