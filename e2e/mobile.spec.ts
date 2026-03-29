@@ -115,6 +115,32 @@ test.describe("Mobile layout", () => {
     ).toBeVisible();
   });
 
+  test("composer sticks to bottom when scrolling", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("desktop-shell")).toBeVisible();
+    await ensureWorkspace(page);
+    await ensureThread(page);
+
+    const timeline = page.getByTestId("timeline-list");
+
+    // Send a message to populate the timeline
+    const prompt = `scroll-test-${Date.now()}`;
+    await page.getByTestId("composer-input").fill(prompt);
+    await page.getByTestId("send-button").click();
+
+    // Wait for the full response
+    await expect(
+      timeline.locator("article").filter({ hasText: "READY" }).first(),
+    ).toBeVisible();
+
+    // Force scroll the timeline container to the top
+    await timeline.evaluate((el) => el.scrollTo(0, 0));
+
+    // Composer should remain visible (sticky at bottom of viewport)
+    await expect(page.getByTestId("composer-input")).toBeVisible();
+    await expect(page.getByTestId("composer-input")).toBeInViewport();
+  });
+
   test("decision center works on mobile", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
@@ -132,6 +158,29 @@ test.describe("Mobile layout", () => {
     await decisionCard.getByRole("combobox").selectOption("accept");
     await decisionCard.locator('[data-testid^="decision-submit-"]').click();
     await expect(page.locator('[data-testid^="decision-card-"]')).toHaveCount(0);
+  });
+});
+
+test.describe("Desktop layout unaffected by mobile code", () => {
+  test.describe.configure({ mode: "serial" });
+
+  // Default viewport is desktop-sized (1280x720 from Playwright defaults)
+
+  test("desktop shows persistent sidebar without hamburger", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("desktop-shell")).toBeVisible();
+    await ensureWorkspace(page);
+    await ensureThread(page);
+
+    // Sidebar should always be visible (no hamburger button needed)
+    await expect(page.getByRole("button", { name: "菜单" })).toHaveCount(0);
+
+    // Sidebar and content should be side by side
+    await expect(page.locator('[data-testid^="workspace-row-"]').first()).toBeVisible();
+    await expect(page.getByTestId("composer-input")).toBeVisible();
+
+    // Resizer handle should be present
+    await expect(page.getByTestId("sidebar-resizer")).toBeVisible();
   });
 });
 
