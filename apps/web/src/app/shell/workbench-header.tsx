@@ -98,6 +98,17 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
       </div>
 
       <div className="window-toolbar__actions">
+        {/* CWD pill — Kimi-style working directory indicator */}
+        {!props.isMobile && props.conversationSummary?.cwd ? (
+          <span
+            className="window-toolbar__cwd-pill"
+            data-testid="header-cwd-pill"
+            title={props.conversationSummary.cwd}
+          >
+            <span className="window-toolbar__cwd-icon">{">_"}</span>
+            <span className="window-toolbar__cwd-path">{shortenPath(props.conversationSummary.cwd)}</span>
+          </span>
+        ) : null}
         {/* On mobile, usage/speed/locale are in settings panel */}
         {!props.isMobile && props.toolbarUsageWindows.map((window) => (
           <span
@@ -204,4 +215,15 @@ function normalizeTimestamp(timestamp: number): number {
   }
 
   return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
+}
+
+function shortenPath(cwd: string): string {
+  const home = "/Users/";
+  if (cwd.startsWith(home)) {
+    const rest = cwd.slice(home.length);
+    const slash = rest.indexOf("/");
+    return slash === -1 ? `~` : `.../${rest.slice(rest.lastIndexOf("/") + 1)}`;
+  }
+  const parts = cwd.split("/").filter(Boolean);
+  return parts.length <= 2 ? cwd : `.../${parts[parts.length - 1]}`;
 }

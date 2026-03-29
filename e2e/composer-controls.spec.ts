@@ -26,18 +26,24 @@ test.describe("Composer controls", () => {
     await expect(menu).toHaveCount(0);
   });
 
-  test("changes reasoning effort", async ({ page }) => {
+  test("toggles thinking mode", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
     await ensureWorkspace(page);
     await ensureThread(page);
 
-    const reasoningSelect = page.getByTestId("composer-reasoning-select");
-    await expect(reasoningSelect).toBeVisible();
+    const toggle = page.getByTestId("composer-reasoning-select").getByRole("switch");
+    await expect(toggle).toBeVisible();
 
-    await reasoningSelect.click();
-    await page.getByTestId("composer-reasoning-select-option-low").click();
-    await expect(reasoningSelect).toHaveAttribute("data-value", "low");
+    // Toggle OFF (low)
+    if ((await toggle.getAttribute("aria-checked")) === "true") {
+      await toggle.click();
+    }
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+    // Toggle ON (xhigh)
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
   });
 
   test("changes approval policy", async ({ page }) => {

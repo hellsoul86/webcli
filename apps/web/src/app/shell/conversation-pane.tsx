@@ -66,6 +66,7 @@ type ComposerPaneProps = {
   gitBranchSwitchPending: boolean;
   activeGitSnapshot: GitWorkingTreeSnapshot | null;
   activePlan: ThreadView["latestPlan"] | null;
+  contextPercent: number | null;
   queuedPrompts: Array<QueuedPromptView>;
   onComposerChange: (value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -184,6 +185,12 @@ export function ComposerPane(props: ComposerPaneProps) {
             onBranchChange={props.onGitBranchChange}
           />
         ) : null}
+        {props.contextPercent !== null ? (
+          <span className="composer-status-bar__context" data-testid="composer-context-percent">
+            <ContextRing percent={props.contextPercent} />
+            <span>{formatContextPercent(props.contextPercent)} context</span>
+          </span>
+        ) : null}
       </div>
 
       {props.activePlan && (props.activePlan.explanation || props.activePlan.plan.length > 0) ? (
@@ -244,14 +251,23 @@ export function ComposerPane(props: ComposerPaneProps) {
             onChange={props.onModelChange}
           />
           <span className="composer-bottom-bar__separator" />
-          <ComposerInlineDropdown
-            testId="composer-reasoning-select"
-            value={props.composerReasoningValue}
-            label={props.composerReasoningLabel}
-            options={props.composerReasoningOptions}
-            menuTitle={t("composer.reasoningMenu")}
-            onChange={props.onReasoningChange}
-          />
+          <label className="composer-toggle" data-testid="composer-reasoning-select">
+            <span className="composer-toggle__label">{t("composer.thinking")}</span>
+            <button
+              type="button"
+              role="switch"
+              className={`composer-toggle__switch ${isThinkingOn(props.composerReasoningValue) ? "composer-toggle__switch--on" : ""}`}
+              aria-checked={isThinkingOn(props.composerReasoningValue)}
+              data-value={props.composerReasoningValue}
+              onClick={() => {
+                const lowestEffort = props.composerReasoningOptions[0]?.value ?? "low";
+                const highestEffort = props.composerReasoningOptions[props.composerReasoningOptions.length - 1]?.value ?? "xhigh";
+                props.onReasoningChange(isThinkingOn(props.composerReasoningValue) ? lowestEffort : highestEffort);
+              }}
+            >
+              <span className="composer-toggle__thumb" />
+            </button>
+          </label>
           <span className="composer-bottom-bar__separator" />
           <ComposerInlineDropdown
             testId="composer-approval-policy-select"
@@ -694,4 +710,32 @@ function formatPlanStepStatus(status: string | null | undefined): string {
   }
 
   return status || translate("timeline.planPending");
+}
+
+function isThinkingOn(effort: ReasoningEffort): boolean {
+  return effort !== "none" && effort !== "low";
+}
+
+function ContextRing({ percent }: { percent: number }) {
+  const r = 7;
+  const circ = 2 * Math.PI * r;
+  const filled = Math.min(1, Math.max(0, percent / 100)) * circ;
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" className="composer-context-ring">
+      <circle cx="9" cy="9" r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="2" />
+      <circle
+        cx="9" cy="9" r={r} fill="none"
+        stroke={percent > 80 ? "#f06d65" : percent > 50 ? "#facc15" : "rgba(220,225,235,0.5)"}
+        strokeWidth="2"
+        strokeDasharray={`${filled} ${circ - filled}`}
+        strokeDashoffset={circ / 4}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function formatContextPercent(percent: number): string {
+  if (percent < 1) return `${percent.toFixed(1)}%`;
+  return `${Math.round(percent)}%`;
 }

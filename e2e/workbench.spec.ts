@@ -69,9 +69,12 @@ test("updates defaults and searches workspace files from the command palette", a
   await expect(page.getByTestId("composer-speed-switch")).toHaveAttribute("aria-checked", "false");
   await page.getByTestId("composer-speed-switch").click();
   await expect(page.getByTestId("composer-speed-switch")).toHaveAttribute("aria-checked", "true");
-  await page.getByTestId("composer-reasoning-select").click();
-  await page.getByTestId("composer-reasoning-select-option-medium").click();
-  await expect(page.getByTestId("composer-reasoning-select")).toHaveAttribute("data-value", "medium");
+  // Thinking toggle: ensure it's ON
+  const thinkingToggle = page.getByTestId("composer-reasoning-select").getByRole("switch");
+  if ((await thinkingToggle.getAttribute("aria-checked")) === "false") {
+    await thinkingToggle.click();
+  }
+  await expect(thinkingToggle).toHaveAttribute("aria-checked", "true");
 
   await page.getByTestId("settings-button").click();
   await expect(page.getByTestId("settings-panel")).toBeVisible();

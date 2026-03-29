@@ -104,6 +104,7 @@ const zhCN = {
     inputPlaceholder: "输入问题，/ 打开命令，@ 引用文件",
     attach: "添加附件",
     expand: "展开输入框",
+    thinking: "思考",
     gitFilesCount: "{{count}} 个文件",
     busy: {
       resumingThread: "正在恢复线程...",
