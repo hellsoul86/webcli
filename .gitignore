@@ -11,3 +11,7 @@ apps/server/tmp
 apps/server/apps/server/data
 apps/server/apps/server/tmp
 output
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json
