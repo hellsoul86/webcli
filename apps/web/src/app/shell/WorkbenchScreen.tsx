@@ -3043,6 +3043,7 @@ export function App() {
                 gitBranchSwitchPending={gitBranchSwitchPending}
                 activeGitSnapshot={activeGitSnapshot}
                 activePlan={activePlan}
+                contextPercent={computeContextPercent(activeThreadView)}
                 queuedPrompts={activeQueuedPrompts}
                 onComposerChange={setComposer}
                 onKeyDown={(event) => {
@@ -5584,4 +5585,16 @@ function sanitizeTerminalSize(value: string, fallback: number): number {
   }
 
   return next;
+}
+
+function computeContextPercent(threadView: ThreadView | null): number | null {
+  if (!threadView) return null;
+  const turns = Object.values(threadView.turns);
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const usage = turns[i]?.turn.tokenUsage;
+    if (usage?.modelContextWindow && usage.modelContextWindow > 0) {
+      return (usage.total.totalTokens / usage.modelContextWindow) * 100;
+    }
+  }
+  return null;
 }

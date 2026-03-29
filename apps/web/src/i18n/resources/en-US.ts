@@ -105,6 +105,7 @@ const enUS = {
     inputPlaceholder: "Ask anything, / for commands, @ to mention files",
     attach: "Attach files",
     expand: "Expand input",
+    thinking: "Thinking",
     gitFilesCount: "{{count}} files",
     busy: {
       resumingThread: "Resuming thread...",
