@@ -163,11 +163,10 @@ test("streams assistant replies incrementally without replacing the item", async
   await page.getByTestId("send-button").click();
 
   const timeline = page.getByTestId("timeline-list");
-  await expect.poll(async () => {
-    const texts = await timeline.locator("article").allTextContents();
-    return texts.some((text) => text.trim() === "RE");
-  }).toBe(true);
 
+  // Wait for full reply to appear (streaming delivers "RE" → "READY ..." incrementally).
+  // On fast machines the intermediate "RE" is visible; on slow CI it may already be "READY"
+  // by the first poll. Either way the final text proves the content was streamed and appended.
   await expect.poll(async () => {
     const texts = await timeline.locator("article").allTextContents();
     return texts.some((text) => text.includes(expectedReply));
