@@ -30,7 +30,6 @@ import type {
   ForcedLoginMethod,
   GitBranchReference,
   GitRemoteDiffSnapshot,
-  GitWorkingTreeFile,
   HazelnutScope,
   IntegrationSnapshot,
   InspectorTab,
@@ -133,14 +132,6 @@ type QueuedPrompt = {
   threadId: string;
   text: string;
 };
-
-function buildPromptSuggestions(t: TFunction): Array<string> {
-  return [
-    t("prompts.summarizeRisks"),
-    t("prompts.reviewStructure"),
-    t("prompts.fixHighestRiskBug"),
-  ];
-}
 
 function buildSettingsTabs(t: TFunction): Array<{ id: SettingsTab; label: string }> {
   return [
@@ -315,10 +306,10 @@ export function App() {
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  const [commandInput, _setCommandInput] = useState("git status");
+  const [commandInput] = useState("git status");
   const [commandStdin, setCommandStdin] = useState("");
-  const [commandCols, _setCommandCols] = useState("120");
-  const [commandRows, _setCommandRows] = useState("30");
+  const [commandCols] = useState("120");
+  const [commandRows] = useState("30");
   const [workspaceMutationPending, setWorkspaceMutationPending] = useState(false);
   const [workspaceMutationError, setWorkspaceMutationError] = useState<string | null>(null);
   const [accountLoginState, setAccountLoginState] = useState<AccountLoginState | null>(null);
@@ -350,7 +341,7 @@ export function App() {
   const [queuedPrompts, setQueuedPrompts] = useState<Record<string, Array<QueuedPrompt>>>({});
   const [composerModel, setComposerModel] = useState("");
   const [composerReasoningEffort, setComposerReasoningEffort] = useState<"" | ReasoningEffort>("");
-  const [_busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [, setBusyMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [gitBranchesByWorkspaceId, setGitBranchesByWorkspaceId] = useState<
     Record<string, Array<GitBranchReference>>
@@ -390,15 +381,8 @@ export function App() {
       },
     [],
   );
-  const _promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
-  const _settingsTabs = useMemo(() => buildSettingsTabs(t), [t]);
-  const _reasoningEffortLabels = useMemo(() => getReasoningEffortLabels(t), [t]);
   const approvalPolicyOptions = useMemo(() => buildApprovalPolicyOptions(t), [t]);
   const sandboxModeOptions = useMemo(() => buildSandboxModeOptions(t), [t]);
-  const _settingsReasoningEffortOptions = useMemo(
-    () => buildSettingsReasoningEffortOptions(t),
-    [t],
-  );
 
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap"],
@@ -615,7 +599,6 @@ export function App() {
   const currentGitBranches = currentGitWorkspaceId
     ? gitBranchesByWorkspaceId[currentGitWorkspaceId] ?? []
     : [];
-  const _gitFiles = activeGitSnapshot?.files ?? [];
   const reviewThreadId =
     activeThreadEntry && activeThreadEntry.workspaceId === currentGitWorkspaceId
       ? activeThreadEntry.id
@@ -2050,7 +2033,9 @@ export function App() {
     }
   }
 
-  async function _handleRunReview(): Promise<void> {
+  // Wave 2: review.start — not yet wired to UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function handleRunReview(): Promise<void> {
     if (!reviewThreadId) {
       return;
     }
@@ -2190,7 +2175,9 @@ export function App() {
     });
   }
 
-  async function _handleCompactThread(threadId: string): Promise<void> {
+  // Wave 2: thread.compact — not yet wired to UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function handleCompactThread(threadId: string): Promise<void> {
     setBusyMessage(t("composer.busy.compactingThread"));
     await runAction(async () => {
       await codexClient.call("thread.compact", {
@@ -2410,7 +2397,9 @@ export function App() {
     });
   }
 
-  async function _handleRunCommand(): Promise<void> {
+  // Wave 2: command.start — not yet wired to UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function handleRunCommand(): Promise<void> {
     if (!searchableWorkspace || !commandInput.trim()) {
       return;
     }
@@ -2428,7 +2417,9 @@ export function App() {
     });
   }
 
-  async function _handleSendCommandInput(): Promise<void> {
+  // Wave 2: command.write — not yet wired to UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function handleSendCommandInput(): Promise<void> {
     if (!latestCommandSession || !commandStdin) {
       return;
     }
@@ -2442,7 +2433,9 @@ export function App() {
     });
   }
 
-  async function _handleResizeCommand(): Promise<void> {
+  // Wave 2: command.resize — not yet wired to UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function handleResizeCommand(): Promise<void> {
     if (!latestCommandSession) {
       return;
     }
@@ -2456,7 +2449,9 @@ export function App() {
     });
   }
 
-  async function _handleTerminateCommand(): Promise<void> {
+  // Wave 2: command.stop — not yet wired to UI
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async function handleTerminateCommand(): Promise<void> {
     if (!latestCommandSession) {
       return;
     }
@@ -5350,148 +5345,12 @@ function compactPath(value: string, keepSegments = 3): string {
   return `.../${parts.slice(-keepSegments).join("/")}`;
 }
 
-function _buildCodePreviewReference(
-  path: string,
-  line: number | null,
-  label: string | null,
-): CodeLinkReference {
-  return {
-    path,
-    line,
-    column: null,
-    href: path,
-    resolvedHref: path,
-    label,
-  };
-}
-
-function _describeThreadStatus(status: ThreadSummary["status"] | string | null | undefined): string {
-  if (!status) {
-    return translate("common.unknownState");
-  }
-
-  if (typeof status === "string") {
-    return status === "active" ? translate("common.active") : status;
-  }
-
-  if (status.type === "active") {
-    return translate("common.active");
-  }
-
-  return status.type ?? translate("common.unknownState");
-}
-
 function isThreadRunning(status: ThreadSummary["status"] | string | null | undefined): boolean {
   return typeof status === "object" && status !== null && status.type === "active";
 }
 
-function _normalizePlanStepStatus(status: string | null | undefined): "completed" | "active" | "pending" {
-  if (status === "completed" || status === "done") {
-    return "completed";
-  }
-
-  if (status === "in_progress" || status === "inProgress" || status === "running" || status === "active") {
-    return "active";
-  }
-
-  return "pending";
-}
-
-function _formatPlanStepStatus(status: string | null | undefined): string {
-  if (status === "completed" || status === "done") {
-    return translate("timeline.planCompleted");
-  }
-
-  if (status === "in_progress" || status === "inProgress" || status === "running" || status === "active") {
-    return translate("timeline.planActive");
-  }
-
-  if (status === "pending" || status === "not_started" || status === "todo") {
-    return translate("timeline.planPending");
-  }
-
-  return status || translate("timeline.planPending");
-}
-
 function isNearBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= 72;
-}
-
-function _summarizeDiff(diff: string): {
-  files: number;
-  additions: number;
-  deletions: number;
-} {
-  if (!diff) {
-    return { files: 0, additions: 0, deletions: 0 };
-  }
-
-  let files = 0;
-  let additions = 0;
-  let deletions = 0;
-
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("diff --git ")) {
-      files += 1;
-      continue;
-    }
-
-    if (line.startsWith("+++ ") || line.startsWith("--- ")) {
-      continue;
-    }
-
-    if (line.startsWith("+")) {
-      additions += 1;
-      continue;
-    }
-
-    if (line.startsWith("-")) {
-      deletions += 1;
-    }
-  }
-
-  return { files, additions, deletions };
-}
-
-function _formatGitFileStatus(file: GitWorkingTreeFile): string {
-  const parts = [formatGitFileBadge(file.status)];
-  if (file.oldPath) {
-    parts.push(`${file.oldPath} → ${file.path}`);
-  } else {
-    parts.push(
-      file.staged && file.unstaged
-        ? translate("git.stagedAndUnstaged")
-        : file.staged
-          ? translate("git.stagedTracked")
-          : file.unstaged
-            ? translate("git.unstagedTracked")
-            : translate("git.tracked"),
-    );
-  }
-  return parts.join(" · ");
-}
-
-function formatGitFileBadge(status: GitWorkingTreeFile["status"]): string {
-  switch (status) {
-    case "modified":
-      return translate("git.fileStatus.modified");
-    case "added":
-      return translate("git.fileStatus.added");
-    case "deleted":
-      return translate("git.fileStatus.deleted");
-    case "renamed":
-      return translate("git.fileStatus.renamed");
-    case "copied":
-      return translate("git.fileStatus.copied");
-    case "untracked":
-      return translate("git.fileStatus.untracked");
-    case "typechange":
-      return translate("git.fileStatus.typechange");
-    case "conflicted":
-      return translate("git.fileStatus.conflicted");
-    default:
-      return status;
-  }
 }
 
 function findActiveTurn(threadView: ThreadView): ThreadView["turns"][string] | null {

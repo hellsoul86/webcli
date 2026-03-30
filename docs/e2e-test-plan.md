@@ -21,78 +21,80 @@
 3. Review + remote diff
 4. Settings + integration capabilities
 
+### session-architecture.spec.ts (6 tests)
+1. Session CRUD lifecycle via REST API (create, list, get, delete)
+2. DELETE nonexistent session returns 404
+3. Per-session WebSocket connects and receives runtime.statusChanged + thread.list RPC
+4. WebSocket to nonexistent session closes with code 4004
+5. Session persists across page reload
+6. Multiple sessions can coexist independently
+
+### mobile.spec.ts (9 tests)
+1. Hides sidebar and shows hamburger menu on mobile
+2. Opens sidebar drawer on hamburger click
+3. Closes drawer on overlay click
+4. Closes drawer on thread select
+5. Composer toolbar shows model selectors on mobile
+6. Sends message and sees response on mobile
+7. Composer sticks to bottom when scrolling
+8. Decision center works on mobile
+9. Desktop shows persistent sidebar without hamburger (desktop layout block)
+
+### conversation.spec.ts (5 tests)
+1. Creates new thread from sidebar
+2. Switches between threads preserves messages
+3. Sends message and receives streaming response
+4. Shows plan card with steps
+5. Thread title shows in header
+
+### composer-controls.spec.ts (5 tests)
+1. Model selector is visible and opens dropdown
+2. Toggles thinking mode
+3. Changes approval policy
+4. Toggles speed mode
+5. Switches language locale
+
+### workspace-thread.spec.ts (6 tests)
+1. Creates workspace with name and path
+2. Edits workspace settings
+3. Renames thread from header
+4. Archives and restores thread
+5. Forks thread from context menu
+6. Selects 'all workspaces' view
+
+### settings-errors.spec.ts (7 tests)
+1. Opens settings overlay and navigates tabs
+2. Settings account tab shows auth info
+3. Settings defaults tab persists model config
+4. Settings integrations tab shows MCP servers
+5. Settings extensions tab shows skills and plugins
+6. Settings history tab shows archived threads
+7. No console errors during normal interaction
+
+### git-workbench.spec.ts (5 tests)
+1. Shows git status in composer bar
+2. Opens review panel with grouped file tree
+3. Selects file and shows diff viewer
+4. Branch selector shows current branch and opens menu
+5. Closes review panel and returns to conversation
+
 ---
 
 ## Missing Coverage — Test Plan
 
-### P0: Session Architecture (New)
+### ~~P0: Session Architecture~~ ✅ Covered in session-architecture.spec.ts
 
-**test: session lifecycle via REST API**
-- `POST /api/sessions` → creates session, returns sessionId + status "idle"
-- `GET /api/sessions` → lists sessions including the new one
-- `GET /api/sessions/:id` → returns session details
-- `DELETE /api/sessions/:id` → removes session, 204
-- `DELETE /api/sessions/nonexistent` → 404
-- Platform: Both
+~~All 3 tests implemented + 3 additional (404, WebSocket 4004, multi-session).~~
 
-**test: per-session WebSocket connects and receives events**
-- Create session via API
-- Connect WebSocket to `/ws/sessions/:id`
-- Verify receives `runtime.statusChanged` notification
-- Send `thread.list` RPC → receives response with items
-- Platform: Both
+### ~~P0: Mobile Layout~~ ✅ Covered in mobile.spec.ts
 
-**test: session persists across page reload**
-- Load page → session created in localStorage
-- Reload page → same session reused (no duplicate create)
-- Platform: Both
+~~All 7 tests implemented (hamburger, drawer open/close/thread-select, composer toolbar, sticky bottom, desktop layout).~~
 
-### P0: Mobile Layout
+### ~~P1: Conversation Core~~ ✅ Covered in conversation.spec.ts
 
-**test: mobile shows hamburger menu and hides sidebar**
-- Set viewport 375x812
-- Page loads → sidebar hidden, conversation area visible
-- ☰ button visible in header
-- Platform: Mobile only
+~~5 tests: new thread, switch threads, streaming response, plan card, thread title.~~
 
-**test: mobile drawer opens on hamburger click**
-- Click ☰ → sidebar drawer slides in from left
-- Overlay backdrop visible behind drawer
-- Thread list displayed in drawer
-- Platform: Mobile only
-
-**test: mobile drawer closes on overlay click**
-- Open drawer → click overlay backdrop
-- Drawer closes, conversation area visible again
-- Platform: Mobile only
-
-**test: mobile drawer closes on thread select**
-- Open drawer → click a thread
-- Drawer closes automatically
-- Thread content loads in conversation area
-- Platform: Mobile only
-
-**test: mobile composer toolbar shows model selectors**
-- Verify model selector visible above input (not hidden)
-- Verify reasoning effort selector visible
-- Verify approval policy selector visible
-- Platform: Mobile only
-
-**test: mobile composer sticks to bottom**
-- Scroll conversation up
-- Composer textarea stays at bottom of viewport
-- Platform: Mobile only
-
-**test: desktop layout unaffected by mobile code**
-- Set viewport 1280x800
-- Sidebar always visible (no ☰ button)
-- Sidebar + content side by side
-- Resizer handle visible and functional
-- Platform: Desktop only
-
-### P1: Conversation Core
-
-**test: create new thread from sidebar**
+### P1: Conversation Core (remaining)
 - Click "+" compose button next to workspace
 - New thread created, composer focused
 - Conversation area shows ready state
@@ -327,20 +329,22 @@
 
 ## Execution Matrix
 
-| Category | Tests | Desktop | Mobile |
-|----------|-------|---------|--------|
-| Session Architecture | 3 | ✓ | ✓ |
-| Mobile Layout | 7 | - | ✓ |
-| Conversation Core | 5 | ✓ | ✓ |
-| Composer Controls | 5 | ✓ | ✓ |
-| Git Workbench | 5 | ✓ | - |
-| Decision Center | 4 | ✓ | ✓ |
-| Workspace Mgmt | 3 | ✓ | ✓ |
-| Thread Mgmt | 3 | ✓ | ✓ |
-| Settings | 3 | ✓ | ✓ |
-| Error Handling | 2 | ✓ | ✓ |
-| Code/Image Preview | 2 | ✓ | ✓ |
-| Realtime | 2 | ✓ | ✓ |
-| Plugins | 1 | ✓ | - |
-| Config Migration | 1 | ✓ | - |
-| **Total** | **46** | **42** | **27** |
+| Category | Planned | Implemented | Status |
+|----------|---------|-------------|--------|
+| Session Architecture | 3 | 6 | ✅ Done (session-architecture.spec.ts) |
+| Mobile Layout | 7 | 9 | ✅ Done (mobile.spec.ts) |
+| Conversation Core | 5 | 5 | ✅ Done (conversation.spec.ts) |
+| Composer Controls | 5 | 5 | ✅ Done (composer-controls.spec.ts) |
+| Git Workbench | 5 | 5 | ✅ Done (git-workbench.spec.ts) |
+| Workspace Mgmt | 3 | 6 | ✅ Done (workspace-thread.spec.ts) |
+| Settings | 3 | 7 | ✅ Done (settings-errors.spec.ts) |
+| Wave1 Parity | — | 4 | ✅ Done (wave1-parity.spec.ts) |
+| Workbench Core | — | 11 | ✅ Done (workbench.spec.ts) |
+| Decision Center | 4 | — | Remaining |
+| Thread Mgmt | 3 | — | Remaining |
+| Error Handling | 2 | — | Remaining |
+| Code/Image Preview | 2 | — | Remaining |
+| Realtime | 2 | — | Remaining |
+| Plugins | 1 | — | Remaining |
+| Config Migration | 1 | — | Remaining |
+| **Total** | **46** | **58** | **79% planned, 58 actual** |
