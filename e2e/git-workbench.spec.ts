@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { ensureWorkspace, ensureThreadWithMessage } from "./fixtures";
 
 test.describe("Git workbench", () => {
   test.describe.configure({ mode: "serial" });
@@ -6,7 +7,7 @@ test.describe("Git workbench", () => {
   test("shows git status in composer bar", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-git-e2e");
     await ensureThreadWithMessage(page);
 
     // Wait for git snapshot to load (review button becomes enabled)
@@ -27,7 +28,7 @@ test.describe("Git workbench", () => {
   test("opens review panel with grouped file tree", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-git-e2e");
     await ensureThreadWithMessage(page);
 
     // Open the git review panel
@@ -48,7 +49,7 @@ test.describe("Git workbench", () => {
   test("selects file and shows diff viewer", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-git-e2e");
     await ensureThreadWithMessage(page);
 
     await page.getByTestId("git-workbench-open-button").click();
@@ -70,7 +71,7 @@ test.describe("Git workbench", () => {
   test("branch selector shows current branch and opens menu", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-git-e2e");
     await ensureThreadWithMessage(page);
 
     // Wait for git snapshot to load
@@ -98,7 +99,7 @@ test.describe("Git workbench", () => {
   test("closes review panel and returns to conversation", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-git-e2e");
     await ensureThreadWithMessage(page);
 
     // Open the review panel
@@ -115,54 +116,3 @@ test.describe("Git workbench", () => {
     await expect(page.getByTestId("composer-input")).toBeVisible();
   });
 });
-
-// --- Helpers ---
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (
-      !(await page
-        .getByTestId("workspace-name-input")
-        .isVisible()
-        .catch(() => false))
-    ) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-git-e2e");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThreadWithMessage(page: Page): Promise<void> {
-  const threadRows = page.locator('[data-testid^="thread-row-"]');
-  const existingCount = await threadRows.count();
-  await page.getByTestId("thread-open-button").click();
-  await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.first().click();
-
-  // Send a message to trigger full connection establishment + git snapshot load
-  const prompt = `git-init-${Date.now()}`;
-  await page.getByTestId("composer-input").fill(prompt);
-  await page.getByTestId("send-button").click();
-  await expect(
-    page.getByTestId("timeline-list").locator("article").filter({ hasText: "READY" }).first(),
-  ).toBeVisible();
-}

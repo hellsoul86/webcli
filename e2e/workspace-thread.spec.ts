@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { ensureWorkspace, ensureThread } from "./fixtures";
 
 test.describe("Workspace and thread management", () => {
   test.describe.configure({ mode: "serial" });
@@ -32,7 +33,7 @@ test.describe("Workspace and thread management", () => {
   test("edits workspace settings", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-ws-e2e");
 
     // Find the workspace gear / edit button
     const workspaceRow = page.locator('[data-testid^="workspace-row-"]').first();
@@ -55,7 +56,7 @@ test.describe("Workspace and thread management", () => {
   test("renames thread from header", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-ws-e2e");
     await ensureThread(page);
 
     // Check if thread title edit button exists
@@ -76,7 +77,7 @@ test.describe("Workspace and thread management", () => {
   test("archives and restores thread", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-ws-e2e");
     await ensureThread(page);
 
     const threadRows = page.locator('[data-testid^="thread-row-"]');
@@ -107,7 +108,7 @@ test.describe("Workspace and thread management", () => {
   test("forks thread from context menu", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-ws-e2e");
     await ensureThread(page);
 
     const threadRows = page.locator('[data-testid^="thread-row-"]');
@@ -128,7 +129,7 @@ test.describe("Workspace and thread management", () => {
   test("selects 'all workspaces' view", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-ws-e2e");
 
     // Click "all workspaces" button
     const allButton = page.getByTestId("workspace-all-button");
@@ -139,41 +140,3 @@ test.describe("Workspace and thread management", () => {
     }
   });
 });
-
-// --- Helpers ---
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (!(await page.getByTestId("workspace-name-input").isVisible().catch(() => false))) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-wt-e2e");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThread(page: Page): Promise<void> {
-  const threadRows = page.locator('[data-testid^="thread-row-"]');
-  const existingCount = await threadRows.count();
-  await page.getByTestId("thread-open-button").click();
-  await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.first().click();
-}

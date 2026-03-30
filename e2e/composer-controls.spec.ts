@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { ensureWorkspace, ensureThread } from "./fixtures";
 
 test.describe("Composer controls", () => {
   test.describe.configure({ mode: "serial" });
@@ -6,7 +7,7 @@ test.describe("Composer controls", () => {
   test("model selector is visible and opens dropdown", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-controls-e2e");
     await ensureThread(page);
 
     const modelSelect = page.getByTestId("composer-model-select");
@@ -29,7 +30,7 @@ test.describe("Composer controls", () => {
   test("toggles thinking mode", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-controls-e2e");
     await ensureThread(page);
 
     const toggle = page.getByTestId("composer-reasoning-select").getByRole("switch");
@@ -49,7 +50,7 @@ test.describe("Composer controls", () => {
   test("changes approval policy", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-controls-e2e");
     await ensureThread(page);
 
     const approvalSelect = page.getByTestId("composer-approval-policy-select");
@@ -63,7 +64,7 @@ test.describe("Composer controls", () => {
   test("toggles speed mode", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-controls-e2e");
     await ensureThread(page);
 
     const speedSwitch = page.getByTestId("composer-speed-switch");
@@ -84,7 +85,7 @@ test.describe("Composer controls", () => {
   test("switches language locale", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-controls-e2e");
     await ensureThread(page);
 
     // Find the locale selector in the header
@@ -108,41 +109,3 @@ test.describe("Composer controls", () => {
     }
   });
 });
-
-// --- Helpers ---
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (!(await page.getByTestId("workspace-name-input").isVisible().catch(() => false))) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-composer-e2e");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThread(page: Page): Promise<void> {
-  const threadRows = page.locator('[data-testid^="thread-row-"]');
-  const existingCount = await threadRows.count();
-  await page.getByTestId("thread-open-button").click();
-  await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.first().click();
-}
