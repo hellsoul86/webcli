@@ -20,12 +20,7 @@ import type {
   RequestId,
   SessionState,
   SessionStatus,
-  SessionNotice,
   WorkbenchThread,
-  TimelineEntry,
-  WorkbenchTurn,
-  LivePlan,
-  ReviewOutput,
   CommandSessionSnapshot,
   GitWorkingTreeSnapshot,
 } from "@webcli/contracts";

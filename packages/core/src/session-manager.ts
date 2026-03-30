@@ -21,7 +21,7 @@ import type {
 } from "@webcli/contracts";
 import type { SessionRuntime, SessionRuntimeEvent } from "./runtime.js";
 import { SessionProcess, type SessionSender } from "./session-process.js";
-import { ThreadProjectionService } from "./thread-projection-service.js";
+import type { ThreadProjectionService } from "./thread-projection-service.js";
 import type { WorkspaceRepo } from "./workspace-repo.js";
 
 // ---------------------------------------------------------------------------

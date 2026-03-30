@@ -937,7 +937,7 @@ function readEnumOptions(schema: Record<string, unknown>): Array<{ value: string
         value,
         label:
           Array.isArray(schema.enumNames) && typeof schema.enumNames[index] === "string"
-            ? (schema.enumNames[index] as string)
+            ? (schema.enumNames[index])
             : value,
       }));
   }
@@ -966,7 +966,7 @@ function readEnumOptions(schema: Record<string, unknown>): Array<{ value: string
         value,
         label:
           Array.isArray(items.enumNames) && typeof items.enumNames[index] === "string"
-            ? (items.enumNames[index] as string)
+            ? (items.enumNames[index])
             : value,
       }));
   }

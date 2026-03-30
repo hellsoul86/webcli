@@ -12,7 +12,6 @@
  */
 
 import type {
-  AppErrorPayload,
   AppClientMessage,
   AppRequestMethod,
   AppRequestParams,
@@ -122,7 +121,7 @@ export class SessionClient {
           if (!pending) return;
 
           if (message.error) {
-            const payload = message.error.data as AppErrorPayload | undefined;
+            const payload = message.error.data;
             if (payload?.code) {
               pending.reject(
                 new AppError(payload.code, message.error.message, payload.params),
