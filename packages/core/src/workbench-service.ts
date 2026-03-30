@@ -44,7 +44,7 @@ import {
 import type { RuntimeThreadRecord, SessionRuntime, SessionRuntimeEvent } from "./runtime.js";
 import { ThreadProjectionService } from "./thread-projection-service.js";
 import { WorkspaceCatalogService } from "./workspace-catalog-service.js";
-import { WorkspaceRepo } from "./workspace-repo.js";
+import type { WorkspaceRepo } from "./workspace-repo.js";
 
 type ConnectionSender = (message: AppServerMessage) => void;
 
@@ -259,11 +259,11 @@ export class WorkbenchService {
         return this.handleAccountRead();
       case "account.login.start":
         return this.handleAccountLoginStart(
-          message.params as AppRequestParams<"account.login.start">,
+          message.params,
         );
       case "account.login.cancel":
         return this.handleAccountLoginCancel(
-          message.params as AppRequestParams<"account.login.cancel">,
+          message.params,
         );
       case "account.logout":
         return this.handleAccountLogout();
@@ -274,38 +274,38 @@ export class WorkbenchService {
       case "thread.open":
         return this.handleThreadOpen(
           sessionId,
-          message.params as AppRequestParams<"thread.open">,
+          message.params,
         );
       case "thread.resume":
         return this.handleThreadResume(
           sessionId,
-          message.params as AppRequestParams<"thread.resume">,
+          message.params,
         );
       case "thread.list":
         return this.handleThreadList(
-          message.params as AppRequestParams<"thread.list">,
+          message.params,
         );
       case "thread.read":
         return this.handleThreadRead(
-          message.params as AppRequestParams<"thread.read">,
+          message.params,
         );
       case "thread.metadata.update":
         return this.handleThreadMetadataUpdate(
-          message.params as AppRequestParams<"thread.metadata.update">,
+          message.params,
         );
       case "thread.unsubscribe":
         return this.handleThreadUnsubscribe(
-          message.params as AppRequestParams<"thread.unsubscribe">,
+          message.params,
         );
       case "thread.rename":
         {
-          const params = message.params as AppRequestParams<"thread.rename">;
+          const params = message.params;
           await this.runtime.renameThread(params.threadId, params.name);
         }
         return { ok: true };
       case "thread.archive":
         {
-          const params = message.params as AppRequestParams<"thread.archive">;
+          const params = message.params;
           const summary = this.threadSummaries.get(params.threadId);
           await this.runtime.archiveThread(params.threadId, summary?.path ?? null);
         }
@@ -313,81 +313,81 @@ export class WorkbenchService {
       case "thread.unarchive":
         return this.handleThreadUnarchive(
           sessionId,
-          message.params as AppRequestParams<"thread.unarchive">,
+          message.params,
         );
       case "thread.fork":
         return this.handleThreadFork(
           sessionId,
-          message.params as AppRequestParams<"thread.fork">,
+          message.params,
         );
       case "thread.compact":
         await this.runtime.compactThread(
-          (message.params as AppRequestParams<"thread.compact">).threadId,
+          (message.params).threadId,
         );
         return { ok: true };
       case "thread.rollback":
         return this.handleThreadRollback(
           sessionId,
-          message.params as AppRequestParams<"thread.rollback">,
+          message.params,
         );
       case "turn.start":
-        return this.handleTurnStart(message.params as AppRequestParams<"turn.start">);
+        return this.handleTurnStart(message.params);
       case "turn.interrupt":
         {
-          const params = message.params as AppRequestParams<"turn.interrupt">;
+          const params = message.params;
           await this.runtime.interruptTurn(params.threadId, params.turnId);
         }
         return { ok: true };
       case "turn.steer":
         {
-          const params = message.params as AppRequestParams<"turn.steer">;
+          const params = message.params;
           await this.runtime.steerTurn(params.threadId, params.turnId, params.prompt);
         }
         return { ok: true };
       case "review.start":
-        return this.handleReviewStart(message.params as AppRequestParams<"review.start">);
+        return this.handleReviewStart(message.params);
       case "command.start":
         return this.handleCommandStart(
           sessionId,
-          message.params as AppRequestParams<"command.start">,
+          message.params,
         );
       case "command.write":
         {
-          const params = message.params as AppRequestParams<"command.write">;
+          const params = message.params;
           await this.runtime.writeCommand(params.processId, params.text);
         }
         return { ok: true };
       case "command.resize":
         {
-          const params = message.params as AppRequestParams<"command.resize">;
+          const params = message.params;
           await this.runtime.resizeCommand(params.processId, params.cols, params.rows);
         }
         return { ok: true };
       case "command.stop":
         await this.runtime.stopCommand(
-          (message.params as AppRequestParams<"command.stop">).processId,
+          (message.params).processId,
         );
         return { ok: true };
       case "approval.resolve":
         return this.handleApprovalResolve(
-          (message.params as AppRequestParams<"approval.resolve">).requestId,
-          (message.params as AppRequestParams<"approval.resolve">).decision,
+          (message.params).requestId,
+          (message.params).decision,
         );
       case "serverRequest.resolve":
         return this.handleServerRequestResolve(
-          message.params as AppRequestParams<"serverRequest.resolve">,
+          message.params,
         );
       case "integrations.refresh":
         return {
           snapshot: await this.refreshIntegrations(
-            (message.params as AppRequestParams<"integrations.refresh">).workspaceId,
-            (message.params as AppRequestParams<"integrations.refresh">).threadId,
+            (message.params).workspaceId,
+            (message.params).threadId,
           ),
         };
       case "integrations.mcp.login":
         return {
           authorizationUrl: await this.runtime.loginMcp(
-            (message.params as AppRequestParams<"integrations.mcp.login">).name,
+            (message.params).name,
           ),
         };
       case "integrations.mcp.reload":
@@ -403,59 +403,59 @@ export class WorkbenchService {
         return {
           skills: await this.runtime.listSkills(
             await this.resolveWorkspaceCwd(
-              (message.params as AppRequestParams<"skills.list">).workspaceId,
+              (message.params).workspaceId,
             ),
           ),
         };
       case "skills.remote.list":
         return {
           skills: await this.runtime.listRemoteSkills(
-            message.params as AppRequestParams<"skills.remote.list">,
+            message.params,
           ),
         };
       case "skills.remote.export":
         return this.handleRemoteSkillExport(
-          message.params as AppRequestParams<"skills.remote.export">,
+          message.params,
         );
       case "skills.config.write":
         return this.handleSkillConfigWrite(
-          message.params as AppRequestParams<"skills.config.write">,
+          message.params,
         );
       case "app.list":
         return {
           apps: await this.runtime.listApps(
-            message.params as AppRequestParams<"app.list">,
+            message.params,
           ),
         };
       case "plugin.list":
         return {
           marketplaces: await this.runtime.listPlugins(
             await this.resolveWorkspaceCwd(
-              (message.params as AppRequestParams<"plugin.list">).workspaceId,
+              (message.params).workspaceId,
             ),
           ),
         };
       case "plugin.install":
         return this.handlePluginInstall(
-          message.params as AppRequestParams<"plugin.install">,
+          message.params,
         );
       case "plugin.uninstall":
         return this.handlePluginUninstall(
-          message.params as AppRequestParams<"plugin.uninstall">,
+          message.params,
         );
       case "integrations.plugin.uninstall":
         await this.runtime.uninstallPlugin(
-          (message.params as AppRequestParams<"integrations.plugin.uninstall">).pluginId,
+          (message.params).pluginId,
         );
         return {
           snapshot: await this.refreshIntegrations(
-            (message.params as AppRequestParams<"integrations.plugin.uninstall">).workspaceId,
-            (message.params as AppRequestParams<"integrations.plugin.uninstall">).threadId,
+            (message.params).workspaceId,
+            (message.params).threadId,
           ),
         };
       case "settings.save":
         {
-          const params = message.params as AppRequestParams<"settings.save">;
+          const params = message.params;
           await this.runtime.saveSettings({
             model: params.model,
             reasoningEffort: params.reasoningEffort,
@@ -471,7 +471,7 @@ export class WorkbenchService {
       case "config.batchWrite":
         return {
           write: await this.runtime.batchWriteConfig(
-            message.params as AppRequestParams<"config.batchWrite">,
+            message.params,
           ),
         };
       case "configRequirements.read":
@@ -481,45 +481,45 @@ export class WorkbenchService {
       case "externalAgentConfig.detect":
         return {
           items: await this.runtime.detectExternalAgentConfig(
-            message.params as AppRequestParams<"externalAgentConfig.detect">,
+            message.params,
           ),
         };
       case "externalAgentConfig.import":
         await this.runtime.importExternalAgentConfig(
-          (message.params as AppRequestParams<"externalAgentConfig.import">).migrationItems,
+          (message.params).migrationItems,
         );
         return { ok: true };
       case "conversation.summary.read":
         return {
           summary: await this.runtime.readConversationSummary(
-            message.params as AppRequestParams<"conversation.summary.read">,
+            message.params,
           ),
         };
       case "workspace.git.read":
         return this.handleWorkspaceGitRead(
-          message.params as AppRequestParams<"workspace.git.read">,
+          message.params,
         );
       case "workspace.git.branches.read":
         return this.handleWorkspaceGitBranchesRead(
-          message.params as AppRequestParams<"workspace.git.branches.read">,
+          message.params,
         );
       case "workspace.git.branch.switch":
         return this.handleWorkspaceGitBranchSwitch(
-          message.params as AppRequestParams<"workspace.git.branch.switch">,
+          message.params,
         );
       case "workspace.git.file.read":
         return this.handleWorkspaceGitFileRead(
-          message.params as AppRequestParams<"workspace.git.file.read">,
+          message.params,
         );
       case "git.diffToRemote":
         return {
           diff: await this.runtime.readGitDiffToRemote(
-            (message.params as AppRequestParams<"git.diffToRemote">).cwd,
+            (message.params).cwd,
           ),
         };
       case "workspace.searchFiles":
         return this.handleWorkspaceSearch(
-          message.params as AppRequestParams<"workspace.searchFiles">,
+          message.params,
         );
       default:
         throw new Error(`Unsupported method: ${(message as AppClientCallEnvelope).method}`);

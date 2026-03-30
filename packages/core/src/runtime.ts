@@ -8,7 +8,6 @@ import type {
   AccountSummary,
   AppInstallHint,
   ApprovalPolicy,
-  CommandSessionSnapshot,
   ConfigBatchWriteInput,
   ConfigBatchWriteResult,
   ConfigRequirementsSnapshot,

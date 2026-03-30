@@ -770,7 +770,7 @@ function toGrantedPermissionProfile(params: Record<string, unknown>): GrantedPer
           network: {
             enabled:
               typeof network.enabled === "boolean" || network.enabled === null
-                ? (network.enabled as boolean | null)
+                ? (network.enabled)
                 : null,
           },
         }

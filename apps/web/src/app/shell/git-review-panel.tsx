@@ -17,7 +17,6 @@ import type {
   WorkspaceRecord,
 } from "@webcli/contracts";
 import { localizeErrorWithFallback } from "../../i18n/errors";
-import { formatNumber } from "../../i18n/format";
 import { useAppLocale } from "../../i18n/use-i18n";
 import { RenderableCodeBlock } from "../../shared/workbench/renderable-content";
 import { summarizeGitSnapshot } from "./inspector-helpers";

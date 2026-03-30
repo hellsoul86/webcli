@@ -9,7 +9,6 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { TFunction } from "i18next";
@@ -32,7 +31,6 @@ import type {
   GitBranchReference,
   GitRemoteDiffSnapshot,
   GitWorkingTreeFile,
-  GitWorkingTreeSnapshot,
   HazelnutScope,
   IntegrationSnapshot,
   InspectorTab,
@@ -54,7 +52,7 @@ import { api } from "../../api";
 import { useActiveClient } from "../../hooks/use-active-client";
 import { useIsMobile } from "../../hooks/use-is-mobile";
 import { localizeError, localizeErrorWithFallback } from "../../i18n/errors";
-import { formatDateTime, formatNumber, formatPercent, formatRelativeShort } from "../../i18n/format";
+import { formatDateTime, formatNumber, formatRelativeShort } from "../../i18n/format";
 import { translate } from "../../i18n/init";
 import { useAppLocale } from "../../i18n/use-i18n";
 import { createWorkbenchMessageDispatcher } from "../../shared/workbench/event-router";
@@ -66,11 +64,9 @@ import {
   countTimelineEntries,
   selectTimelineWindow,
   useWorkbenchStore,
-  type CommandSession,
   type ThreadView,
 } from "../../store/workbench-store";
 import {
-  resolvePreferredSelection,
   summarizeGitSnapshot,
 } from "./inspector-helpers";
 import { ConversationPane, ComposerPane } from "./conversation-pane";
@@ -319,10 +315,10 @@ export function App() {
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  const [commandInput, setCommandInput] = useState("git status");
+  const [commandInput, _setCommandInput] = useState("git status");
   const [commandStdin, setCommandStdin] = useState("");
-  const [commandCols, setCommandCols] = useState("120");
-  const [commandRows, setCommandRows] = useState("30");
+  const [commandCols, _setCommandCols] = useState("120");
+  const [commandRows, _setCommandRows] = useState("30");
   const [workspaceMutationPending, setWorkspaceMutationPending] = useState(false);
   const [workspaceMutationError, setWorkspaceMutationError] = useState<string | null>(null);
   const [accountLoginState, setAccountLoginState] = useState<AccountLoginState | null>(null);
@@ -354,7 +350,7 @@ export function App() {
   const [queuedPrompts, setQueuedPrompts] = useState<Record<string, Array<QueuedPrompt>>>({});
   const [composerModel, setComposerModel] = useState("");
   const [composerReasoningEffort, setComposerReasoningEffort] = useState<"" | ReasoningEffort>("");
-  const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [_busyMessage, setBusyMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [gitBranchesByWorkspaceId, setGitBranchesByWorkspaceId] = useState<
     Record<string, Array<GitBranchReference>>
@@ -394,12 +390,12 @@ export function App() {
       },
     [],
   );
-  const promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
-  const settingsTabs = useMemo(() => buildSettingsTabs(t), [t]);
-  const reasoningEffortLabels = useMemo(() => getReasoningEffortLabels(t), [t]);
+  const _promptSuggestions = useMemo(() => buildPromptSuggestions(t), [t]);
+  const _settingsTabs = useMemo(() => buildSettingsTabs(t), [t]);
+  const _reasoningEffortLabels = useMemo(() => getReasoningEffortLabels(t), [t]);
   const approvalPolicyOptions = useMemo(() => buildApprovalPolicyOptions(t), [t]);
   const sandboxModeOptions = useMemo(() => buildSandboxModeOptions(t), [t]);
-  const settingsReasoningEffortOptions = useMemo(
+  const _settingsReasoningEffortOptions = useMemo(
     () => buildSettingsReasoningEffortOptions(t),
     [t],
   );
@@ -619,7 +615,7 @@ export function App() {
   const currentGitBranches = currentGitWorkspaceId
     ? gitBranchesByWorkspaceId[currentGitWorkspaceId] ?? []
     : [];
-  const gitFiles = activeGitSnapshot?.files ?? [];
+  const _gitFiles = activeGitSnapshot?.files ?? [];
   const reviewThreadId =
     activeThreadEntry && activeThreadEntry.workspaceId === currentGitWorkspaceId
       ? activeThreadEntry.id
@@ -2054,7 +2050,7 @@ export function App() {
     }
   }
 
-  async function handleRunReview(): Promise<void> {
+  async function _handleRunReview(): Promise<void> {
     if (!reviewThreadId) {
       return;
     }
@@ -2194,7 +2190,7 @@ export function App() {
     });
   }
 
-  async function handleCompactThread(threadId: string): Promise<void> {
+  async function _handleCompactThread(threadId: string): Promise<void> {
     setBusyMessage(t("composer.busy.compactingThread"));
     await runAction(async () => {
       await codexClient.call("thread.compact", {
@@ -2414,7 +2410,7 @@ export function App() {
     });
   }
 
-  async function handleRunCommand(): Promise<void> {
+  async function _handleRunCommand(): Promise<void> {
     if (!searchableWorkspace || !commandInput.trim()) {
       return;
     }
@@ -2432,7 +2428,7 @@ export function App() {
     });
   }
 
-  async function handleSendCommandInput(): Promise<void> {
+  async function _handleSendCommandInput(): Promise<void> {
     if (!latestCommandSession || !commandStdin) {
       return;
     }
@@ -2446,7 +2442,7 @@ export function App() {
     });
   }
 
-  async function handleResizeCommand(): Promise<void> {
+  async function _handleResizeCommand(): Promise<void> {
     if (!latestCommandSession) {
       return;
     }
@@ -2460,7 +2456,7 @@ export function App() {
     });
   }
 
-  async function handleTerminateCommand(): Promise<void> {
+  async function _handleTerminateCommand(): Promise<void> {
     if (!latestCommandSession) {
       return;
     }
@@ -5148,7 +5144,7 @@ function formatThreadTitle(thread: Pick<ThreadSummary, "name" | "preview"> | nul
 
   const preview = thread.preview?.trim();
   if (preview) {
-    return preview.split("\n")[0]!.slice(0, 72);
+    return preview.split("\n")[0].slice(0, 72);
   }
 
   return translate("workspace.untitledThread");
@@ -5354,7 +5350,7 @@ function compactPath(value: string, keepSegments = 3): string {
   return `.../${parts.slice(-keepSegments).join("/")}`;
 }
 
-function buildCodePreviewReference(
+function _buildCodePreviewReference(
   path: string,
   line: number | null,
   label: string | null,
@@ -5369,7 +5365,7 @@ function buildCodePreviewReference(
   };
 }
 
-function describeThreadStatus(status: ThreadSummary["status"] | string | null | undefined): string {
+function _describeThreadStatus(status: ThreadSummary["status"] | string | null | undefined): string {
   if (!status) {
     return translate("common.unknownState");
   }
@@ -5389,7 +5385,7 @@ function isThreadRunning(status: ThreadSummary["status"] | string | null | undef
   return typeof status === "object" && status !== null && status.type === "active";
 }
 
-function normalizePlanStepStatus(status: string | null | undefined): "completed" | "active" | "pending" {
+function _normalizePlanStepStatus(status: string | null | undefined): "completed" | "active" | "pending" {
   if (status === "completed" || status === "done") {
     return "completed";
   }
@@ -5401,7 +5397,7 @@ function normalizePlanStepStatus(status: string | null | undefined): "completed"
   return "pending";
 }
 
-function formatPlanStepStatus(status: string | null | undefined): string {
+function _formatPlanStepStatus(status: string | null | undefined): string {
   if (status === "completed" || status === "done") {
     return translate("timeline.planCompleted");
   }
@@ -5421,7 +5417,7 @@ function isNearBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= 72;
 }
 
-function summarizeDiff(diff: string): {
+function _summarizeDiff(diff: string): {
   files: number;
   additions: number;
   deletions: number;
@@ -5457,7 +5453,7 @@ function summarizeDiff(diff: string): {
   return { files, additions, deletions };
 }
 
-function formatGitFileStatus(file: GitWorkingTreeFile): string {
+function _formatGitFileStatus(file: GitWorkingTreeFile): string {
   const parts = [formatGitFileBadge(file.status)];
   if (file.oldPath) {
     parts.push(`${file.oldPath} → ${file.path}`);

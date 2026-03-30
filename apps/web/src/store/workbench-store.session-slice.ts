@@ -1,5 +1,5 @@
 import type { StateCreator } from "zustand";
-import type { JsonValue, RealtimeAudioChunk } from "@webcli/contracts";
+import type { JsonValue } from "@webcli/contracts";
 import { buildRealtimeWavBlob, decodeRealtimeAudioChunk } from "../shared/workbench/realtime-audio";
 import {
   buildPlaceholderItem,

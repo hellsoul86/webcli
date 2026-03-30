@@ -1,7 +1,7 @@
 import type { TimelineEntry } from "@webcli/contracts";
 import { translate } from "../../i18n/init";
 
-export function isMessageEntry(kind: TimelineEntry["kind"] | string): boolean {
+export function isMessageEntry(kind: TimelineEntry["kind"]  ): boolean {
   return kind === "userMessage" || kind === "agentMessage";
 }
 

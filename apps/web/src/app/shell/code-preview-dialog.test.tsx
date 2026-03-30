@@ -46,18 +46,20 @@ const mockMonaco = {
   },
 };
 
+function MockEditor(props: EditorProps) {
+  latestEditorProps.current = props;
+
+  useEffect(() => {
+    props.beforeMount?.(mockMonaco);
+    props.onMount?.(mockEditor, mockMonaco);
+  }, [props]);
+
+  return <div data-testid="mock-code-editor" />;
+}
+
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,
-  default: (props: EditorProps) => {
-    latestEditorProps.current = props;
-
-    useEffect(() => {
-      props.beforeMount?.(mockMonaco);
-      props.onMount?.(mockEditor, mockMonaco);
-    }, [props]);
-
-    return <div data-testid="mock-code-editor" />;
-  },
+  default: MockEditor,
 }));
 
 describe("CodePreviewDialog", () => {

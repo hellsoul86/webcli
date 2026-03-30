@@ -83,7 +83,6 @@ test.describe("Workspace and thread management", () => {
     const initialCount = await threadRows.count();
 
     // Right-click or open thread menu for archive
-    const firstThread = threadRows.first();
     const threadMenu = page.locator('[data-testid^="thread-menu-"]').first();
     if (await threadMenu.isVisible().catch(() => false)) {
       await threadMenu.click();

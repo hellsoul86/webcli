@@ -23,15 +23,22 @@
     "typecheck:workspaces": "npm run typecheck --workspaces --if-present",
     "typecheck": "npm run typecheck:workspaces",
     "e2e": "playwright test",
-    "verify": "npm run build && npm run typecheck && npm run test && npm run e2e",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "verify": "npm run lint && npm run build && npm run typecheck && npm run test && npm run e2e",
     "task:start": "node ./scripts/task-workflow.mjs start",
     "task:sync": "node ./scripts/task-workflow.mjs sync",
     "task:finish": "node ./scripts/task-workflow.mjs finish"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.58.2",
     "@types/node": "^24.0.0",
     "concurrently": "^9.1.2",
-    "typescript": "^5.8.3"
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^17.4.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.57.2"
   }
 }

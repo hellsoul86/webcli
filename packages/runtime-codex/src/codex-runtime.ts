@@ -38,7 +38,6 @@ import type {
   PendingServerRequest,
   PluginMarketplaceSnapshot,
   ProductSurface,
-  RealtimeAudioChunk,
   RemoteSkillExportResult,
   RemoteSkillSummary,
   RuntimeStatus,
@@ -2106,7 +2105,7 @@ function normalizeItem(item: ThreadItem, turnId: string): TimelineEntry {
         body: "",
         raw: item,
       };
-    default:
+    default: {
       const unknownItem = item as { id: string; type: string };
       return {
         id: unknownItem.id,
@@ -2116,6 +2115,7 @@ function normalizeItem(item: ThreadItem, turnId: string): TimelineEntry {
         body: JSON.stringify(item, null, 2),
         raw: item,
       };
+    }
   }
 }
 
@@ -2534,10 +2534,6 @@ function clampPercent(value: number | null | undefined): number | null {
   }
 
   return Math.min(100, Math.max(0, value));
-}
-
-function normalizeNullableString<T extends string>(value: T | null | undefined): T | null {
-  return value ?? null;
 }
 
 function normalizeApprovalPolicy(value: AskForApproval | null | undefined): ApprovalPolicy | null {

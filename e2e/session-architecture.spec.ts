@@ -136,7 +136,7 @@ test.describe("Session architecture", () => {
         m.type === "server.response" && m.id === "test-thread-list",
     );
     expect(threadListResponse).toBeTruthy();
-    expect(threadListResponse!.result).toBeTruthy();
+    expect(threadListResponse.result).toBeTruthy();
 
     // Cleanup
     await api.delete(`/api/sessions/${sessionId}`);

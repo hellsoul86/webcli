@@ -15,8 +15,6 @@ import type {
   SessionSummary,
   ThreadSummaryPageResponse,
   WorkspaceCreateInput,
-  WorkspaceDismissInput,
-  WorkspaceUpdateInput,
 } from "@webcli/contracts";
 import {
   SessionManager,
