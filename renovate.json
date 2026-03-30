@@ -1,0 +1,17 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "group:monorepos"],
+  "schedule": ["before 9am on Monday"],
+  "automerge": true,
+  "automergeType": "pr",
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "matchPackageNames": ["typescript", "@playwright/test"],
+      "automerge": false
+    }
+  ]
+}

@@ -118,9 +118,11 @@ jobs:
         run: npm run e2e
 
       - name: Upload Playwright artifacts
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-output
-          path: output/playwright
+          path: |
+            output/playwright
+            output/playwright-report
           if-no-files-found: ignore
