@@ -229,6 +229,18 @@ const zhCN = {
       error: "出错",
     },
   },
+  command: {
+    title: "终端",
+    close: "关闭",
+    run: "运行",
+    stop: "停止",
+    send: "发送",
+    inputPlaceholder: "输入命令...",
+    stdinPlaceholder: "发送输入到进程...",
+    waitingForOutput: "等待输出...",
+    emptyDescription: "在上方输入命令以在工作区中运行。",
+    openTerminal: "终端",
+  },
   settings: {
     titleEyebrow: "设置",
     title: "桌面工作台配置",
