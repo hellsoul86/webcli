@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { ensureWorkspace, ensureThread } from "./fixtures";
 
 test.describe("Conversation core", () => {
   test.describe.configure({ mode: "serial" });
@@ -6,7 +7,7 @@ test.describe("Conversation core", () => {
   test("creates new thread from sidebar", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-conv-e2e");
 
     const threadRows = page.locator('[data-testid^="thread-row-"]');
     const initialCount = await threadRows.count();
@@ -22,7 +23,7 @@ test.describe("Conversation core", () => {
   test("switches between threads preserves messages", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-conv-e2e");
 
     // Create thread A and send a message
     await ensureThread(page);
@@ -60,7 +61,7 @@ test.describe("Conversation core", () => {
   test("sends message and receives streaming response", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-conv-e2e");
     await ensureThread(page);
 
     const prompt = `stream-verify-${Date.now()}`;
@@ -84,7 +85,7 @@ test.describe("Conversation core", () => {
   test("shows plan card with steps", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-conv-e2e");
     await ensureThread(page);
 
     const prompt = `plan-test-${Date.now()}`;
@@ -101,48 +102,10 @@ test.describe("Conversation core", () => {
   test("thread title shows in header", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-conv-e2e");
     await ensureThread(page);
 
     // Thread summary/title should be visible in header area
     await expect(page.getByTestId("thread-summary-display")).toBeVisible();
   });
 });
-
-// --- Helpers ---
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (!(await page.getByTestId("workspace-name-input").isVisible().catch(() => false))) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-conv-e2e");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThread(page: Page): Promise<void> {
-  const threadRows = page.locator('[data-testid^="thread-row-"]');
-  const existingCount = await threadRows.count();
-  await page.getByTestId("thread-open-button").click();
-  await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.first().click();
-}

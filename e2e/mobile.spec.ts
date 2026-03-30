@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { ensureWorkspace, ensureThread, ensureThreadMobile } from "./fixtures";
 
 // Mobile viewport: iPhone 14-ish
 const MOBILE = { width: 375, height: 812 };
@@ -13,8 +14,8 @@ test.describe("Mobile layout", () => {
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
 
     // Create workspace and thread so sidebar auto-hides
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     // After selecting a thread on mobile, sidebar should close (no --open class)
     await expect(page.locator(".sidebar-shell--open")).toHaveCount(0);
@@ -29,8 +30,8 @@ test.describe("Mobile layout", () => {
   test("opens sidebar drawer on hamburger click", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     // Sidebar should be hidden
     await expect(page.locator(".sidebar-shell--open")).toHaveCount(0);
@@ -48,8 +49,8 @@ test.describe("Mobile layout", () => {
   test("closes drawer on overlay click", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     // Open drawer
     await page.getByRole("button", { name: "菜单" }).click();
@@ -65,8 +66,8 @@ test.describe("Mobile layout", () => {
   test("closes drawer on thread select", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     // Open drawer
     await page.getByRole("button", { name: "菜单" }).click();
@@ -84,8 +85,8 @@ test.describe("Mobile layout", () => {
   test("composer toolbar shows model selectors on mobile", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     // Composer input visible
     await expect(page.getByTestId("composer-input")).toBeVisible();
@@ -99,8 +100,8 @@ test.describe("Mobile layout", () => {
   test("sends message and sees response on mobile", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     const prompt = `mobile-test-${Date.now()}`;
     await page.getByTestId("composer-input").fill(prompt);
@@ -118,8 +119,8 @@ test.describe("Mobile layout", () => {
   test("composer sticks to bottom when scrolling", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     const timeline = page.getByTestId("timeline-list");
 
@@ -144,8 +145,8 @@ test.describe("Mobile layout", () => {
   test("decision center works on mobile", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
-    await ensureThread(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
+    await ensureThreadMobile(page);
 
     // Trigger a decision request
     await page.getByTestId("composer-input").fill(`request-user-input:${Date.now()}`);
@@ -169,7 +170,7 @@ test.describe("Desktop layout unaffected by mobile code", () => {
   test("desktop shows persistent sidebar without hamburger", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("desktop-shell")).toBeVisible();
-    await ensureWorkspace(page);
+    await ensureWorkspace(page, "webcli-mobile-e2e");
     await ensureThread(page);
 
     // Sidebar should always be visible (no hamburger button needed)
@@ -183,40 +184,3 @@ test.describe("Desktop layout unaffected by mobile code", () => {
     await expect(page.getByTestId("sidebar-resizer")).toBeVisible();
   });
 });
-
-// --- Helpers ---
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (!(await page.getByTestId("workspace-name-input").isVisible().catch(() => false))) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-mobile-e2e");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThread(page: Page): Promise<void> {
-  // On mobile, clicking thread-open-button creates AND auto-selects the thread,
-  // which also closes the sidebar. We just need to wait for the composer to appear.
-  await page.getByTestId("thread-open-button").click();
-  await expect(page.getByTestId("composer-input")).toBeVisible();
-}

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { ensureWorkspace, ensureThread } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
 
@@ -10,7 +11,7 @@ test("creates a workspace, opens a thread, and replays approvals after reload", 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
   await expect(page.getByTestId("settings-button")).toBeVisible();
 
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
   await expect(page.getByTestId("thread-summary-display")).toBeVisible();
 
@@ -64,7 +65,7 @@ test("updates defaults and searches workspace files from the command palette", a
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
   await expect(page.getByTestId("composer-speed-switch")).toHaveAttribute("aria-checked", "false");
   await page.getByTestId("composer-speed-switch").click();
@@ -112,7 +113,7 @@ test("renders markdown and media resources inside the timeline stream", async ({
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   const prompt = [
@@ -154,7 +155,7 @@ test("streams assistant replies incrementally without replacing the item", async
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   const prompt = `stream-${Date.now()}`;
@@ -181,7 +182,7 @@ test("renders raw response items and terminal interactions as first-class timeli
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   const prompt = `timeline-parity:${Date.now()}`;
@@ -215,7 +216,7 @@ test("submits typed request-user-input decisions from the decision center", asyn
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   await page
@@ -241,7 +242,7 @@ test("renders realtime transcript and audio sessions as a first-class panel", as
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   await page
@@ -265,7 +266,7 @@ test("opens local code links in a syntax-highlighted preview modal", async ({ pa
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   const filePath = `${process.cwd()}/apps/web/src/App.tsx`;
@@ -304,7 +305,7 @@ test("opens /srv absolute code links in the preview modal", async ({ page }) => 
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   await ensureThread(page);
 
   await page.getByTestId("composer-input").fill(`[App.tsx](${filePath}#L1)`);
@@ -334,7 +335,7 @@ test("does not log monaco dispose errors when closing review and code preview", 
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-e2e");
   // Reuse existing thread to avoid git snapshot loading delay with many threads
   const threadRows = page.locator('[data-testid^="thread-row-"]');
   if ((await threadRows.count()) > 0) {
@@ -414,42 +415,6 @@ test("groups outside-home threads under a derived workspace and can dismiss it",
     page.locator('[data-testid^="workspace-row-"]').filter({ hasText: "repo" }),
   ).toHaveCount(0);
 });
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (!(await page.getByTestId("workspace-name-input").isVisible().catch(() => false))) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-e2e");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThread(page: Page): Promise<void> {
-  const threadRows = page.locator('[data-testid^="thread-row-"]');
-  const existingCount = await threadRows.count();
-  await page.getByTestId("thread-open-button").click();
-  await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.first().click();
-}
 
 async function openCommandPalette(page: Page): Promise<void> {
   await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");

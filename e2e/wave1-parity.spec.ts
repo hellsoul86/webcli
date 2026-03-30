@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { ensureWorkspace, ensureThread } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
 
@@ -13,7 +14,7 @@ test("covers wave1 thread and decision flows", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-wave1");
   await ensureThread(page);
   await expect(page.locator('[data-testid^="thread-row-"]').first()).toBeVisible();
   await expect(page.getByTestId("thread-summary-display")).toBeVisible();
@@ -62,7 +63,7 @@ test("covers wave1 file preview flows", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-wave1");
   await ensureThread(page);
 
   await page.getByTestId("composer-input").fill(`[srv-preview](${srvPath}#L1)`);
@@ -91,7 +92,7 @@ test("covers wave1 review and remote diff flows", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-wave1");
   await ensureThread(page);
 
   await expect(page.getByTestId("git-workbench-open-button")).toBeEnabled();
@@ -120,7 +121,7 @@ test("covers wave1 settings and integration capability surfaces", async ({ page 
   await page.goto("/");
 
   await expect(page.getByTestId("desktop-shell")).toBeVisible();
-  await ensureWorkspace(page);
+  await ensureWorkspace(page, "webcli-wave1");
   await ensureThread(page);
 
   await page.getByTestId("settings-button").click();
@@ -152,39 +153,3 @@ test("covers wave1 settings and integration capability surfaces", async ({ page 
 
   expect(consoleErrors).toEqual([]);
 });
-
-async function ensureWorkspace(page: Page): Promise<void> {
-  const workspaceRows = page.locator('[data-testid^="workspace-row-"]');
-  const threadOpenButton = page.getByTestId("thread-open-button");
-
-  await page.waitForTimeout(250);
-
-  if ((await workspaceRows.count()) === 0) {
-    if (!(await page.getByTestId("workspace-name-input").isVisible().catch(() => false))) {
-      await page.getByTestId("workspace-create-button").click();
-    }
-
-    const workspacePath = process.cwd();
-    const homePath = process.env.HOME ?? "";
-    const workspaceDisplayPath = workspacePath.startsWith(homePath)
-      ? `~${workspacePath.slice(homePath.length)}`
-      : workspacePath;
-
-    await page.getByTestId("workspace-name-input").fill("webcli-wave1");
-    await page.getByTestId("workspace-path-input").fill(workspaceDisplayPath);
-    await page.getByTestId("workspace-save-button").click();
-    await expect(workspaceRows.first()).toBeVisible();
-  } else {
-    await workspaceRows.first().click();
-  }
-
-  await expect(threadOpenButton).toBeEnabled();
-}
-
-async function ensureThread(page: Page): Promise<void> {
-  const threadRows = page.locator('[data-testid^="thread-row-"]');
-  const existingCount = await threadRows.count();
-  await page.getByTestId("thread-open-button").click();
-  await expect(threadRows).toHaveCount(existingCount + 1);
-  await threadRows.first().click();
-}

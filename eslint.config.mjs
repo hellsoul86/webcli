@@ -33,6 +33,7 @@ export default tseslint.config(
             "e2e/*.spec.ts",
             "e2e/*.ts",
             "apps/*/vitest.config.ts",
+            "vitest.workspace.ts",
           ],
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20,
         },
