@@ -230,6 +230,18 @@ const enUS = {
       error: "Error",
     },
   },
+  command: {
+    title: "Terminal",
+    close: "Close",
+    run: "Run",
+    stop: "Stop",
+    send: "Send",
+    inputPlaceholder: "Enter command...",
+    stdinPlaceholder: "Send input to process...",
+    waitingForOutput: "Waiting for output...",
+    emptyDescription: "Enter a command above to run it in the workspace.",
+    openTerminal: "Terminal",
+  },
   settings: {
     titleEyebrow: "Settings",
     title: "Desktop workbench configuration",

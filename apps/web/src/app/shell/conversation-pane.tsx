@@ -76,6 +76,7 @@ type ComposerPaneProps = {
   onSandboxModeChange: (value: EditableSandboxMode) => void;
   onGitBranchChange: (branch: string) => void;
   onOpenReview: () => void;
+  onOpenTerminal: () => void;
   onInterrupt: () => void;
   onSend: () => void;
 };
@@ -182,6 +183,7 @@ export function ComposerPane(props: ComposerPaneProps) {
               !props.activeGitSnapshot?.isGitRepository || props.gitBranchSwitchPending
             }
             onOpen={props.onOpenReview}
+            onOpenTerminal={props.onOpenTerminal}
             onBranchChange={props.onGitBranchChange}
           />
         ) : null}
@@ -627,6 +629,7 @@ function GitSummaryBar(props: {
   branchOptions: Array<ComposerDropdownOption<string>>;
   branchDisabled: boolean;
   onOpen: () => void;
+  onOpenTerminal: () => void;
   onBranchChange: (branch: string) => void;
 }) {
   const { t } = useAppLocale();
@@ -663,6 +666,14 @@ function GitSummaryBar(props: {
         disabled={!props.summary.expandable}
       >
         {t("composer.review")}
+      </button>
+      <button
+        type="button"
+        className="ghost-button composer-gitbar__review"
+        data-testid="command-terminal-button"
+        onClick={props.onOpenTerminal}
+      >
+        {t("command.openTerminal")}
       </button>
     </div>
   );

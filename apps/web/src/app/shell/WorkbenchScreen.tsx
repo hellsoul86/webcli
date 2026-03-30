@@ -71,6 +71,7 @@ import {
 import { ConversationPane, ComposerPane } from "./conversation-pane";
 import { WorkbenchHeader } from "./workbench-header";
 import { RightRail } from "./right-rail";
+import { CommandPanel } from "./command-panel";
 import { type ComposerDropdownOption, type ComposerSpeedMode } from "./workbench-shell-controls";
 import { WorkbenchSidebar } from "./workbench-sidebar";
 import { WorkbenchOverlays } from "./workbench-overlays";
@@ -253,6 +254,7 @@ export function App() {
   const setConnection = useWorkbenchStore((state) => state.setConnection);
   const setActiveWorkspace = useWorkbenchStore((state) => state.setActiveWorkspace);
   const setActiveThread = useWorkbenchStore((state) => state.setActiveThread);
+  const inspectorTab = useWorkbenchStore((state) => state.inspectorTab);
   const setInspectorTab = useWorkbenchStore((state) => state.setInspectorTab);
   const setArchivedMode = useWorkbenchStore((state) => state.setArchivedMode);
   const setSettingsOpen = useWorkbenchStore((state) => state.setSettingsOpen);
@@ -306,7 +308,7 @@ export function App() {
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  const [commandInput] = useState("git status");
+  const [commandInput, setCommandInput] = useState("");
   const [commandStdin, setCommandStdin] = useState("");
   const [commandCols] = useState("120");
   const [commandRows] = useState("30");
@@ -2397,8 +2399,6 @@ export function App() {
     });
   }
 
-  // Wave 2: command.start — not yet wired to UI
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleRunCommand(): Promise<void> {
     if (!searchableWorkspace || !commandInput.trim()) {
       return;
@@ -2417,8 +2417,6 @@ export function App() {
     });
   }
 
-  // Wave 2: command.write — not yet wired to UI
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleSendCommandInput(): Promise<void> {
     if (!latestCommandSession || !commandStdin) {
       return;
@@ -2433,7 +2431,7 @@ export function App() {
     });
   }
 
-  // Wave 2: command.resize — not yet wired to UI
+  // Wave 2: resize will be wired when terminal gets dynamic sizing
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleResizeCommand(): Promise<void> {
     if (!latestCommandSession) {
@@ -2449,8 +2447,6 @@ export function App() {
     });
   }
 
-  // Wave 2: command.stop — not yet wired to UI
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleTerminateCommand(): Promise<void> {
     if (!latestCommandSession) {
       return;
@@ -3053,6 +3049,7 @@ export function App() {
                 onSandboxModeChange={(value) => void handleComposerSandboxModeChange(value)}
                 onGitBranchChange={(branch) => void handleGitBranchChange(branch)}
                 onOpenReview={() => setGitWorkbenchExpanded(true)}
+                onOpenTerminal={() => setInspectorTab("command")}
                 onInterrupt={() => void handleInterrupt()}
                 onSend={() => void handleSendMessage()}
               />
@@ -3065,7 +3062,26 @@ export function App() {
             onCreateWorkspace={openCreateWorkspaceModal}
             onSuggestionClick={setComposer}
           />
-          <RightRail requests={pendingApprovals} onResolve={handleResolveServerRequest} />
+          <RightRail
+            requests={pendingApprovals}
+            onResolve={handleResolveServerRequest}
+            commandPanel={
+              inspectorTab === "command" ? (
+                <CommandPanel
+                  workspace={selectedWorkspaceForContext}
+                  session={latestCommandSession}
+                  commandInput={commandInput}
+                  stdinInput={commandStdin}
+                  onCommandInputChange={setCommandInput}
+                  onStdinInputChange={setCommandStdin}
+                  onRunCommand={handleRunCommand}
+                  onSendStdin={handleSendCommandInput}
+                  onTerminate={handleTerminateCommand}
+                  onClose={() => setInspectorTab("diff")}
+                />
+              ) : null
+            }
+          />
         </div>
       </div>
 
