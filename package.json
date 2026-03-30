@@ -13,7 +13,7 @@
   "scripts": {
     "build:workspaces": "npm run build --workspaces --if-present",
     "dev": "npm run build -w @webcli/contracts && npm run build -w @webcli/core && npm run build -w @webcli/runtime-codex && concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @webcli/server\" \"npm run dev -w @webcli/web\"",
-    "build": "npm run build:workspaces",
+    "build": "tsc --build tsconfig.build.json && npm run build -w @webcli/web",
     "deploy:staging": "bash ./deploy/staging/bin/deploy.sh",
     "deploy:staging:rollback": "bash ./deploy/staging/bin/rollback.sh",
     "test:parity:wave1": "playwright test e2e/wave1-parity.spec.ts",

@@ -1,6 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.build.tsbuildinfo",
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
@@ -11,5 +13,8 @@
       "@webcli/contracts": ["../contracts/dist/index.d.ts"]
     }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../contracts/tsconfig.build.json" }
+  ]
 }
