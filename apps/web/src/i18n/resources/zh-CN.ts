@@ -243,6 +243,7 @@ const zhCN = {
     waitingForOutput: "等待输出...",
     emptyDescription: "在上方输入命令以在工作区中运行。",
     openTerminal: "终端",
+    codeReview: "代码审查",
   },
   settings: {
     titleEyebrow: "设置",

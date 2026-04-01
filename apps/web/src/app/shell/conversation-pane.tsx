@@ -672,7 +672,7 @@ function GitSummaryBar(props: {
       </button>
       <button
         type="button"
-        className="ghost-button composer-gitbar__review"
+        className="ghost-button composer-gitbar__action"
         data-testid="command-terminal-button"
         onClick={props.onOpenTerminal}
       >
@@ -680,11 +680,11 @@ function GitSummaryBar(props: {
       </button>
       <button
         type="button"
-        className="ghost-button composer-gitbar__review"
+        className="ghost-button composer-gitbar__action"
         data-testid="run-review-button"
         onClick={props.onRunReview}
       >
-        {t("composer.review")}
+        {t("command.codeReview")}
       </button>
     </div>
   );
