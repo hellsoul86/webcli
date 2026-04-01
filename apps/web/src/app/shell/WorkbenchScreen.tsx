@@ -308,6 +308,7 @@ export function App() {
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [activeConfig, setActiveConfig] = useState<import("@webcli/contracts").ConfigSnapshot | null>(null);
   const [commandInput, setCommandInput] = useState("");
   const [commandStdin, setCommandStdin] = useState("");
   const [commandCols] = useState("120");
@@ -2497,6 +2498,22 @@ export function App() {
     });
   }
 
+  async function handleRefreshModels(): Promise<void> {
+    await runAction(async () => {
+      await codexClient.call("model.list", {});
+      await invalidateBootstrap();
+    });
+  }
+
+  async function handleReadConfig(): Promise<void> {
+    await runAction(async () => {
+      const response = await codexClient.call("config.read", {});
+      if (response.config) {
+        setActiveConfig(response.config);
+      }
+    });
+  }
+
   async function handleMcpLogin(name: string): Promise<void> {
     setBusyMessage(t("composer.busy.openingLogin", { name }));
     await runAction(async () => {
@@ -3153,7 +3170,7 @@ export function App() {
           externalAgentConfigPending={externalAgentConfigPending}
           lastAccountLoginCompletion={lastAccountLoginCompletion}
           loginState={accountLoginState}
-          config={bootstrap?.settings.config ?? integrations.config ?? null}
+          config={activeConfig ?? bootstrap?.settings.config ?? integrations.config ?? null}
           models={models}
           mcpServers={integrations.mcpServers}
           skills={integrations.skills}
@@ -3170,6 +3187,8 @@ export function App() {
           onTabChange={(tab) => setSettingsTab(tab)}
           onConfigSave={(payload) => void handleConfigSave(payload)}
           onRefresh={() => void handleRefreshIntegrations()}
+          onRefreshModels={() => void handleRefreshModels()}
+          onReadConfig={() => void handleReadConfig()}
           onAccountRefresh={() => void handleAccountRefresh()}
           onChatgptLogin={() => void handleChatgptLogin()}
           onDeviceCodeLogin={() => void handleDeviceCodeLogin()}
@@ -3266,6 +3285,8 @@ function SettingsOverlay(props: {
   onTabChange: (tab: SettingsTab) => void;
   onConfigSave: (payload: ConfigSnapshot) => void;
   onRefresh: () => void;
+  onRefreshModels: () => void;
+  onReadConfig: () => void;
   onAccountRefresh: () => void;
   onChatgptLogin: () => void;
   onDeviceCodeLogin: () => void;
@@ -3871,6 +3892,38 @@ function SettingsOverlay(props: {
                   </select>
                 </label>
               </div>
+
+              <div className="settings-card">
+                <div className="inspector-section__header">
+                  <strong>{t("settings.runtimeConfig")}</strong>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    data-testid="settings-read-config"
+                    onClick={props.onReadConfig}
+                  >
+                    {t("common.refresh")}
+                  </button>
+                </div>
+                {props.config ? (
+                  <div className="settings-config-snapshot" data-testid="settings-config-snapshot">
+                    <dl className="settings-config-dl">
+                      <dt>{t("settings.model")}</dt>
+                      <dd>{props.config.model ?? "—"}</dd>
+                      <dt>{t("settings.reasoningEffort")}</dt>
+                      <dd>{props.config.reasoningEffort ?? "—"}</dd>
+                      <dt>{t("settings.serviceTier")}</dt>
+                      <dd>{props.config.serviceTier ?? "—"}</dd>
+                      <dt>{t("settings.approvalPolicy")}</dt>
+                      <dd>{props.config.approvalPolicy ?? "—"}</dd>
+                      <dt>{t("settings.sandboxMode")}</dt>
+                      <dd>{props.config.sandboxMode ?? "—"}</dd>
+                    </dl>
+                  </div>
+                ) : (
+                  <p className="settings-config-empty">{t("settings.configNotLoaded")}</p>
+                )}
+              </div>
             </div>
           ) : null}
 
@@ -3944,6 +3997,14 @@ function SettingsOverlay(props: {
                 <div className="inspector-section__header">
                   <strong>{t("settings.defaultAgentConfig")}</strong>
                   <span>{t("settings.modelCount", { count: props.models.length })}</span>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    data-testid="settings-refresh-models"
+                    onClick={props.onRefreshModels}
+                  >
+                    {t("common.refresh")}
+                  </button>
                 </div>
                 <div className="settings-form-grid">
                   <label>

@@ -478,6 +478,16 @@ export class WorkbenchService {
         return {
           requirements: await this.runtime.readConfigRequirements(),
         };
+      case "model.list":
+        return {
+          models: await this.runtime.listModels(),
+        };
+      case "config.read":
+        return {
+          config: await this.runtime.readConfigSnapshot(
+            (message.params as { cwd?: string | null }).cwd,
+          ),
+        };
       case "externalAgentConfig.detect":
         return {
           items: await this.runtime.detectExternalAgentConfig(

@@ -234,6 +234,12 @@ export type AppRequestMap = {
     workspaceId: string;
     query: string;
   }, { search: FuzzySearchSnapshot }>;
+  "model.list": RpcDefinition<Record<string, never>, {
+    models: Array<import("./domain.js").ModelOption>;
+  }>;
+  "config.read": RpcDefinition<{ cwd?: string | null }, {
+    config: import("./domain.js").ConfigSnapshot | null;
+  }>;
 };
 
 export type AppRequestMethod = keyof AppRequestMap;
