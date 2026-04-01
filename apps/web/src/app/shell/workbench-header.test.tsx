@@ -84,6 +84,8 @@ describe("WorkbenchHeader", () => {
         onStartThreadTitleEdit={onStartThreadTitleEdit}
         onToggleSpeed={() => {}}
         onLocaleChange={() => {}}
+        onOpenTerminal={() => {}}
+        onRunReview={() => {}}
         onOpenSettings={onOpenSettings}
       />,
     );
@@ -123,6 +125,8 @@ describe("WorkbenchHeader", () => {
         onStartThreadTitleEdit={() => {}}
         onToggleSpeed={() => {}}
         onLocaleChange={() => {}}
+        onOpenTerminal={() => {}}
+        onRunReview={() => {}}
         onOpenSettings={() => {}}
       />,
     );
@@ -159,6 +163,8 @@ describe("WorkbenchHeader", () => {
         onStartThreadTitleEdit={() => {}}
         onToggleSpeed={() => {}}
         onLocaleChange={() => {}}
+        onOpenTerminal={() => {}}
+        onRunReview={() => {}}
         onOpenSettings={() => {}}
       />,
     );
