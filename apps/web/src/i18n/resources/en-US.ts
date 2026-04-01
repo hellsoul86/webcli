@@ -266,6 +266,8 @@ const enUS = {
     accountApiKeyPlaceholder: "Enter API key",
     accountApiKeyHelp: "The API key is only used for the current login action and is never persisted in the browser.",
     generalTitle: "Interface and language",
+    runtimeConfig: "Runtime config",
+    configNotLoaded: "Click Refresh to load the current runtime configuration.",
     defaultAgentConfig: "Default agent configuration",
     modelCount: "{{count}} models",
     model: "Model",

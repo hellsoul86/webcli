@@ -265,6 +265,8 @@ const zhCN = {
     accountApiKeyPlaceholder: "输入 API Key",
     accountApiKeyHelp: "API Key 只用于当前登录动作，前端不会持久化。",
     generalTitle: "界面与语言",
+    runtimeConfig: "运行时配置",
+    configNotLoaded: "点击「刷新」以加载当前运行时配置。",
     defaultAgentConfig: "默认代理配置",
     modelCount: "{{count}} models",
     model: "模型",

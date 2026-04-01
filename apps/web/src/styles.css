@@ -4131,6 +4131,30 @@ samp {
   gap: 8px;
 }
 
+.settings-config-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: var(--type-body-size);
+}
+
+.settings-config-dl dt {
+  color: rgba(220, 225, 235, 0.62);
+  font-weight: var(--type-label-weight);
+}
+
+.settings-config-dl dd {
+  margin: 0;
+  color: rgba(235, 239, 244, 0.96);
+  font-family: var(--mono-family);
+}
+
+.settings-config-empty {
+  color: rgba(220, 225, 235, 0.5);
+  margin: 0;
+}
+
 .field-note {
   color: var(--muted);
   font-size: var(--type-meta-size);
