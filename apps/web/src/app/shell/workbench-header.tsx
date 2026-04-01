@@ -26,6 +26,8 @@ type WorkbenchHeaderProps = {
   onStartThreadTitleEdit: () => void;
   onToggleSpeed: () => void;
   onLocaleChange: (locale: "zh-CN" | "en-US") => void;
+  onOpenTerminal: () => void;
+  onRunReview: () => void;
   onOpenSettings: () => void;
 };
 
@@ -144,6 +146,28 @@ export function WorkbenchHeader(props: WorkbenchHeaderProps) {
             menuTitle={t("settings.language")}
             onChange={props.onLocaleChange}
           />
+        )}
+        {!props.isMobile && (
+          <button
+            type="button"
+            className="toolbar-pill-button"
+            data-testid="command-terminal-button"
+            title={t("command.openTerminal")}
+            onClick={props.onOpenTerminal}
+          >
+            {t("command.openTerminal")}
+          </button>
+        )}
+        {!props.isMobile && (
+          <button
+            type="button"
+            className="toolbar-pill-button"
+            data-testid="run-review-button"
+            title={t("command.codeReview")}
+            onClick={props.onRunReview}
+          >
+            {t("command.codeReview")}
+          </button>
         )}
         <button
           type="button"

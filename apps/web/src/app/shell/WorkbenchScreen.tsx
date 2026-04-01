@@ -2970,6 +2970,8 @@ export function App() {
             void handleComposerSpeedChange(composerSpeedMode === "fast" ? "standard" : "fast")
           }
           onLocaleChange={setLocale}
+          onOpenTerminal={() => setInspectorTab("command")}
+          onRunReview={() => void handleRunReview()}
           onOpenSettings={() => {
             setSettingsOpen(true);
             setSettingsTab("account");
@@ -3075,8 +3077,6 @@ export function App() {
                 onSandboxModeChange={(value) => void handleComposerSandboxModeChange(value)}
                 onGitBranchChange={(branch) => void handleGitBranchChange(branch)}
                 onOpenReview={() => setGitWorkbenchExpanded(true)}
-                onOpenTerminal={() => setInspectorTab("command")}
-                onRunReview={() => void handleRunReview()}
                 onInterrupt={() => void handleInterrupt()}
                 onSend={() => void handleSendMessage()}
               />
