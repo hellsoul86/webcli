@@ -74,6 +74,8 @@ describe("WorkbenchSidebar", () => {
     const onRenameThread = vi.fn();
     const onForkThread = vi.fn();
     const onArchiveThread = vi.fn();
+    const onCompactThread = vi.fn();
+    const onRollbackThread = vi.fn();
 
     render(
       <WorkbenchSidebar
@@ -92,6 +94,8 @@ describe("WorkbenchSidebar", () => {
         onRenameThread={onRenameThread}
         onForkThread={onForkThread}
         onArchiveThread={onArchiveThread}
+        onCompactThread={onCompactThread}
+        onRollbackThread={onRollbackThread}
       />,
     );
 

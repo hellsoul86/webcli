@@ -77,6 +77,7 @@ type ComposerPaneProps = {
   onGitBranchChange: (branch: string) => void;
   onOpenReview: () => void;
   onOpenTerminal: () => void;
+  onRunReview: () => void;
   onInterrupt: () => void;
   onSend: () => void;
 };
@@ -184,6 +185,7 @@ export function ComposerPane(props: ComposerPaneProps) {
             }
             onOpen={props.onOpenReview}
             onOpenTerminal={props.onOpenTerminal}
+            onRunReview={props.onRunReview}
             onBranchChange={props.onGitBranchChange}
           />
         ) : null}
@@ -630,6 +632,7 @@ function GitSummaryBar(props: {
   branchDisabled: boolean;
   onOpen: () => void;
   onOpenTerminal: () => void;
+  onRunReview: () => void;
   onBranchChange: (branch: string) => void;
 }) {
   const { t } = useAppLocale();
@@ -674,6 +677,14 @@ function GitSummaryBar(props: {
         onClick={props.onOpenTerminal}
       >
         {t("command.openTerminal")}
+      </button>
+      <button
+        type="button"
+        className="ghost-button composer-gitbar__review"
+        data-testid="run-review-button"
+        onClick={props.onRunReview}
+      >
+        {t("composer.review")}
       </button>
     </div>
   );
