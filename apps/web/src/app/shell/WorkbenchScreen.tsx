@@ -2035,8 +2035,6 @@ export function App() {
     }
   }
 
-  // Wave 2: review.start — not yet wired to UI
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleRunReview(): Promise<void> {
     if (!reviewThreadId) {
       return;
@@ -2177,14 +2175,23 @@ export function App() {
     });
   }
 
-  // Wave 2: thread.compact — not yet wired to UI
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleCompactThread(threadId: string): Promise<void> {
     setBusyMessage(t("composer.busy.compactingThread"));
     await runAction(async () => {
       await codexClient.call("thread.compact", {
         threadId,
       });
+    });
+  }
+
+  async function handleRollbackThread(threadId: string): Promise<void> {
+    setBusyMessage(t("composer.busy.rollingBackThread"));
+    await runAction(async () => {
+      const response = await codexClient.call("thread.rollback", {
+        threadId,
+        numTurns: 1,
+      });
+      hydrateThread(response.thread);
     });
   }
 
@@ -2883,6 +2890,8 @@ export function App() {
         onRenameThread={(thread) => void handleRenameThread(thread)}
         onForkThread={(thread) => void handleForkThread(thread)}
         onArchiveThread={(thread) => void handleArchiveThread(thread)}
+        onCompactThread={(thread) => void handleCompactThread(thread.id)}
+        onRollbackThread={(thread) => void handleRollbackThread(thread.id)}
         archivedCount={archivedThreadCount}
         onOpenArchived={() => {
           setSettingsOpen(true);
@@ -3050,6 +3059,7 @@ export function App() {
                 onGitBranchChange={(branch) => void handleGitBranchChange(branch)}
                 onOpenReview={() => setGitWorkbenchExpanded(true)}
                 onOpenTerminal={() => setInspectorTab("command")}
+                onRunReview={() => void handleRunReview()}
                 onInterrupt={() => void handleInterrupt()}
                 onSend={() => void handleSendMessage()}
               />

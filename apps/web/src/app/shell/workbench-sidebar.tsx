@@ -40,6 +40,8 @@ type WorkbenchSidebarProps = {
   onRenameThread: (thread: ThreadSummary) => void;
   onForkThread: (thread: ThreadSummary) => void;
   onArchiveThread: (thread: ThreadSummary) => void;
+  onCompactThread: (thread: ThreadSummary) => void;
+  onRollbackThread: (thread: ThreadSummary) => void;
   onOpenArchived?: () => void;
 };
 
@@ -158,6 +160,8 @@ export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
                           onRename={() => props.onRenameThread(thread.thread)}
                           onFork={() => props.onForkThread(thread.thread)}
                           onArchive={() => props.onArchiveThread(thread.thread)}
+                          onCompact={() => props.onCompactThread(thread.thread)}
+                          onRollback={() => props.onRollbackThread(thread.thread)}
                         />
                       ))}
                     </div>
@@ -181,6 +185,8 @@ export function WorkbenchSidebar(props: WorkbenchSidebarProps) {
                   onRename={() => props.onRenameThread(thread.thread)}
                   onFork={() => props.onForkThread(thread.thread)}
                   onArchive={() => props.onArchiveThread(thread.thread)}
+                  onCompact={() => props.onCompactThread(thread.thread)}
+                  onRollback={() => props.onRollbackThread(thread.thread)}
                 />
               ))}
             </div>
@@ -271,6 +277,8 @@ function ThreadRow(props: {
   onRename: () => void;
   onFork: () => void;
   onArchive: () => void;
+  onCompact: () => void;
+  onRollback: () => void;
 }) {
   const { t } = useAppLocale();
   return (
@@ -324,6 +332,8 @@ function ThreadRow(props: {
           <button onClick={props.onArchive}>
             {props.thread.thread.archived ? t("sidebar.restoreThread") : t("sidebar.archiveThread")}
           </button>
+          <button onClick={props.onCompact}>{t("sidebar.compactThread")}</button>
+          <button onClick={props.onRollback}>{t("sidebar.rollbackThread")}</button>
         </div>
       ) : null}
     </div>
