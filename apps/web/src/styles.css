@@ -180,13 +180,27 @@ samp {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   contain: layout paint;
   padding: 14px 10px 12px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 16%),
     var(--bg-sidebar);
   border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-section--main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-section--main .workspace-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebar-resizer {
