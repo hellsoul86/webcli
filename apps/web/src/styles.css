@@ -2756,6 +2756,16 @@ samp {
   flex: 0 0 auto;
 }
 
+.composer-gitbar__action {
+  flex: 0 0 auto;
+  font-size: var(--type-meta-size);
+  opacity: 0.7;
+}
+
+.composer-gitbar__action:hover {
+  opacity: 1;
+}
+
 .composer-queue__item {
   display: grid;
   gap: 4px;

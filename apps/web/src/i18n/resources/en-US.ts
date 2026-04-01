@@ -244,6 +244,7 @@ const enUS = {
     waitingForOutput: "Waiting for output...",
     emptyDescription: "Enter a command above to run it in the workspace.",
     openTerminal: "Terminal",
+    codeReview: "Review code",
   },
   settings: {
     titleEyebrow: "Settings",
